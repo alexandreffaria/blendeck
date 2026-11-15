@@ -1604,6 +1604,33 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(plays[0][2].status, 0, "the 1.1x sound stopped")
         self.assertEqual(plays[1][1][1], ("stretch", 10 / 12, 1.0))
 
+    def test_an_edit_restarts_the_sound(self):
+        # A ripple delete or cut changes what is heard, even when the
+        # playhead doesn't move: the sound starts again from the strips as
+        # they are now
+        plays = self._fake_aud()
+        self._clock()
+        scene = self._shuttle_scene()
+        scene.sequence_editor = types.SimpleNamespace(strips=[self._sound("voice", 50, 400, 50)], channels=None)
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)
+        addon._apply([], PREFS)
+        self.assertEqual(len(plays), 1)
+        scene.sequence_editor.strips = []  # the strip went away
+        for edit in ("ripple_delete", "cut"):
+            addon._apply([{"type": edit}], PREFS)
+            addon._apply([], PREFS)
+        self.assertEqual(plays[0][2].status, 0, "the deleted strip's sound stopped")
+        self.assertEqual(len(plays), 1, "and nothing replaced it")
+        self.assertEqual(addon.shuttle.speed, 11, "playback carries on")
+
+    def test_meta_volume_counts(self):
+        meta = types.SimpleNamespace(type="META", mute=False, channel=1, volume=0.5, channels=None,
+                                     strips=[self._sound("voice", 50, 400, 50)])
+        SCENE.sequence_editor = types.SimpleNamespace(strips=[meta], channels=None)
+        addon.bpy.path = types.SimpleNamespace(abspath=lambda p: p)
+        [(_, _, volume)] = addon._sound_strips(SCENE)
+        self.assertEqual(volume, 0.25)
+
     def test_backwards_and_past_5x_are_silent(self):
         plays = self._fake_aud()
         self._clock()

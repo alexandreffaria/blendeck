@@ -643,6 +643,14 @@ def _audio_stop():
     audio.failed = False
 
 
+def _audio_restart():
+    """After an edit while the add-on drives playback: the strips heard
+    may have changed, so the sound starts again from where playback is,
+    read from the strips as they are now."""
+    if shuttle.speed:
+        _audio_stop()
+
+
 def _shuttle_stop():
     shuttle.speed = 0
     shuttle.last = None
@@ -747,7 +755,7 @@ def _sound_strips(scene):
             if s.mute or _channel_muted(channels, s.channel):
                 continue
             if s.type == "META":
-                walk(s.strips, getattr(s, "channels", None), volume)
+                walk(s.strips, getattr(s, "channels", None), volume * getattr(s, "volume", 1.0))
                 continue
             sound = getattr(s, "sound", None) if s.type == "SOUND" else None
             if sound is None or sound.packed_file is not None:
@@ -852,6 +860,7 @@ def _apply(messages, prefs):
             # Only the strips cut change selection (see _cut): a full
             # re-follow here would replace a hand-picked selection
             _cut(scene, follow=prefs.follow_selection)
+            _audio_restart()
             continue
         if kind == "undo":
             # Blender's undo stops its own playback; stop the add-on's too
@@ -865,6 +874,7 @@ def _apply(messages, prefs):
         if kind == "ripple_delete":
             if _ripple_delete(scene) and prefs.follow_selection:
                 _follow(scene)  # the playhead may not have moved
+            _audio_restart()
             continue
         if kind == "play_pause":
             _play_pause(scene)
