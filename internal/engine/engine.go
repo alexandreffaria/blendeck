@@ -15,7 +15,7 @@ import (
 // N steps (positive is in), {"type":"cut"} cuts the strips under the
 // playhead, {"type":"undo"} runs Blender's undo once,
 // {"type":"ripple_delete"} deletes the strips under the playhead and closes
-// the gap they leave.
+// the gap they leave, {"type":"play_pause"} starts or pauses playback.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -279,6 +279,11 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		// Once per press, like cut: never on the release
 		if pressed(m) {
 			hit.Command = &Command{Type: "ripple_delete"}
+		}
+	case config.ActionPlayPause:
+		// Once per press, like cut: a release must not toggle it back
+		if pressed(m) {
+			hit.Command = &Command{Type: "play_pause"}
 		}
 	}
 	return hit, nil

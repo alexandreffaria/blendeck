@@ -48,6 +48,9 @@ const (
 	// the gap they leave, once per button press. It has no step and no
 	// encoder.
 	ActionRippleDelete = "timeline.ripple_delete"
+	// ActionPlayPause starts or pauses playback in the video editor, like
+	// Space, once per button press. It has no step and no encoder.
+	ActionPlayPause = "playback.toggle"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -109,6 +112,7 @@ func Default() Config {
 				{ID: "cut", Name: "Cut at playhead", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionCut},
 				{ID: "undo", Name: "Undo", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionUndo},
 				{ID: "ripple-delete", Name: "Ripple delete", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionRippleDelete},
+				{ID: "play-pause", Name: "Play / pause", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionPlayPause},
 			},
 		}},
 	}
@@ -203,8 +207,8 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionCut, ActionUndo, ActionRippleDelete:
-				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete"}[b.Action]
+			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause:
+				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause"}[b.Action]
 				if b.Control.Type != "note" && b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: %s needs a button (note or cc)", b.Name, what)
 				}

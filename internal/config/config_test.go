@@ -51,6 +51,9 @@ func TestValidateRejects(t *testing.T) {
 		"ripple pitchbend":  func(c *Config) { ripple(c).Control = Control{"pitch_bend", 1, 0} },
 		"ripple with step":  func(c *Config) { ripple(c).Step = 1 },
 		"ripple encoder":    func(c *Config) { ripple(c).Encoder = EncoderTwos },
+		"play pitchbend":    func(c *Config) { play(c).Control = Control{"pitch_bend", 1, 0} },
+		"play with step":    func(c *Config) { play(c).Step = 1 },
+		"play encoder":      func(c *Config) { play(c).Encoder = EncoderTwos },
 		"too many mods":     func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
 		"too many profile":  func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
@@ -263,5 +266,62 @@ func TestGetIsACopy(t *testing.T) {
 	c.Profiles[0].Bindings[0].Step = 99
 	if s.Get().Profiles[0].Bindings[0].Step == 99 {
 		t.Fatal("Get shares memory with the store")
+	}
+}
+
+// play returns the default profile's play / pause binding.
+func play(c *Config) *Binding {
+	for i := range c.Profiles[0].Bindings {
+		if c.Profiles[0].Bindings[i].ID == "play-pause" {
+			return &c.Profiles[0].Bindings[i]
+		}
+	}
+	panic("no play / pause binding in the default config")
+}
+
+func TestPlayPauseBinding(t *testing.T) {
+	c := Default()
+	b := play(&c)
+	if b.Action != ActionPlayPause || b.Name != "Play / pause" || b.Control.Learned() || b.Control.Type != "note" || b.Modifier != "" || b.Step != 0 || b.Encoder != "" {
+		t.Fatalf("default play / pause binding = %+v", b)
+	}
+	// The owner's button (note 67), and a cc used as a button, are both fine
+	for _, ctl := range []Control{{"note", 1, 67}, {"cc", 1, 20}} {
+		b.Control = ctl
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%+v: %v", ctl, err)
+		}
+	}
+	b.Modifier = "Fn"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("with Fn: %v", err)
+	}
+	b.Modifier = ""
+	b.Control = Control{"pitch_bend", 1, 0}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "play / pause needs a button") {
+		t.Fatalf("err = %v", err)
+	}
+	b.Control = Control{"note", 1, 67}
+	b.Step = 4
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+		t.Fatalf("step err = %v", err)
+	}
+}
+
+// One play / pause binding by default, with no modifier: Fn + the button
+// plays or pauses too.
+func TestOnePlayPauseBinding(t *testing.T) {
+	c := Default()
+	n := 0
+	for _, b := range c.Profiles[0].Bindings {
+		if b.Action == ActionPlayPause {
+			n++
+			if b.Modifier != "" {
+				t.Fatalf("play / pause binding with a modifier: %+v", b)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d play / pause bindings, want 1", n)
 	}
 }

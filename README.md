@@ -18,6 +18,7 @@ and keeps profiles.
 | A button you pick | Soft-cuts (like K) the selected strips under the playhead, or all of them if none is selected, once per press; Ctrl+Z undoes it | The same |
 | Another button you pick | Undoes once per press, like Ctrl+Z, anywhere in Blender. Nothing while you drag a strip or another operator is running | The same |
 | A third button you pick | Ripple delete: deletes the strips under the playhead (the selected ones among them, if any) and closes the gap on every channel; the playhead goes to the join. Locked strips are never deleted; if a strip stays under the playhead or a locked strip would have to move, the gap stays open. Ctrl+Z undoes it | The same |
+| A fourth button you pick | Play / pause, like Space in the video editor: plays the scene the video editor shows, and pausing leaves the playhead where it stopped. The scrub knob, cut and ripple delete keep working while it plays; undo pauses it, as Ctrl+Z does | The same |
 
 More come one at a time.
 
@@ -40,8 +41,9 @@ delete only those. Turn it off in the add-on's preferences or its panel.
    while holding Fn, and **Save**. Do the same for "Zoom timeline" and
    "Zoom timeline (fine)" with the knob you want for zoom, and **Learn** on
    "Cut at playhead" and press the button you want for cutting, and on
-   "Undo" and press the button you want for undo, and on "Ripple delete"
-   and press the button you want for it.
+   "Undo" and press the button you want for undo, on "Ripple delete"
+   and press the button you want for it, and on "Play / pause" and press
+   the button you want for playback.
 
 The add-on's panel is in the video editor's sidebar (N), tab Blendeck. Its
 preferences have the bridge's address and "Stop at scene start and end".
@@ -54,7 +56,7 @@ bridge drops it and the add-on reconnects by itself a second later.
   what a control sends.
 - **Bindings**: control → action, with frames (scrub) or zoom steps (zoom) per click and the knob's
   encoding (most send 1 / 127 for one click right / left). Button actions
-  (cut, undo, ripple delete) have neither.
+  (cut, undo, ripple delete, play / pause) have neither.
 - **Modifiers**: buttons like Fn that switch bindings while held.
 - **Profiles**: named sets of bindings; the selected one is active.
 - **Blender**: connection, scene, playhead, and test buttons.

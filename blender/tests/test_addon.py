@@ -248,6 +248,79 @@ class _EdUndo:
 ED_UNDO = _EdUndo()
 
 
+class _Player:
+    """Fake bpy.ops.screen.animation_play and animation_cancel, as Blender
+    5.2 behaves (checked in a real 5.2 from a timer): playing from a video
+    editor plays the scene it shows, its window's workspace sequencer
+    scene; from any other area, or with no area, it plays the window's
+    scene. While anything plays, every screen's is_animation_playing is
+    true. cancel(restore_frame=False) leaves the playhead where it is and,
+    with nothing playing, passes through."""
+
+    def __init__(self):
+        self.calls = []
+        self.fail = False
+
+    def _screens(self):
+        return [w.screen for w in sys.modules["bpy"].context.window_manager.windows if w.screen is not None]
+
+    def _set(self, on):
+        for screen in self._screens():
+            screen.is_animation_playing = on
+
+    def playing(self):
+        return any(getattr(s, "is_animation_playing", False) for s in self._screens())
+
+    def play(self, reverse=False, sync=False):
+        kw = ZOOM.override or {}
+        if self.fail or not kw.get("window"):
+            raise RuntimeError("Operator bpy.ops.screen.animation_play.poll() failed, context is incorrect")
+        if self.playing():  # like Space: a second play stops
+            self.calls.append(("stop",))
+            self._set(False)
+            return {"FINISHED"}
+        win, area = kw["window"], kw.get("area")
+        if area is not None and area.type == "SEQUENCE_EDITOR":
+            ws = getattr(win, "workspace", None)
+            scene = getattr(ws, "sequencer_scene", None) or win.scene
+        else:
+            scene = win.scene
+        self.calls.append(("play", scene.name, sorted(kw)))
+        self._set(True)
+        return {"FINISHED"}
+
+    def cancel(self, restore_frame=True):
+        if self.fail:
+            raise RuntimeError("cancel failed")
+        self.calls.append(("cancel", restore_frame))
+        if not self.playing():
+            return {"PASS_THROUGH"}
+        self._set(False)
+        return {"FINISHED"}
+
+
+PLAYER = _Player()
+
+
+class _SeekScene(_Scene):
+    """A scene that logs how the playhead was moved: ("assign", f) for
+    frame_current = f, ("frame_set", f) for frame_set(f)."""
+
+    def __init__(self):
+        object.__setattr__(self, "log", [])
+
+    def __setattr__(self, name, value):
+        if name == "frame_current":
+            self.log.append(("assign", value))
+        object.__setattr__(self, name, value)
+
+    def frame_set(self, f):
+        self.log.append(("frame_set", f))
+        object.__setattr__(self, "frame_current", f)
+        for h in list(FRAME_HANDLERS):
+            h(self, None)
+
+
 def zooms():
     """The zoom calls made so far, without the pans that anchor them."""
     return [c for c in ZOOM.calls if c[0] != "pan"]
@@ -280,6 +353,7 @@ def _install_fake_bpy():
     bpy.ops = types.SimpleNamespace(
         view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan),
         ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}, undo=ED_UNDO),
+        screen=types.SimpleNamespace(animation_play=PLAYER.play, animation_cancel=PLAYER.cancel),
     )
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
@@ -367,6 +441,9 @@ class AddonTest(unittest.TestCase):
         ED_UNDO.left = 0
         ED_UNDO.fail = False
         ED_UNDO.restore_frame = 1
+        PLAYER.calls.clear()
+        PLAYER.fail = False
+        addon.bpy.context.sequencer_scene = None
         PREFS.follow_selection = False
         FRAME_HANDLERS.clear()
         addon.bpy.app.is_job_running = lambda job: False
@@ -978,6 +1055,207 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "ripple_delete"}] * 30, PREFS)
         self.assertEqual(len(UNDO), addon.protocol.MAX_RIPPLES_PER_TICK)
         self.assertEqual(len(ed.strips), 40 - addon.protocol.MAX_RIPPLES_PER_TICK)
+
+    def _play_window(self, editor=True, window_scene=None, sequencer_scene=None):
+        """One window: a properties area, and a video editor if editor. Its
+        scene is window_scene (another scene by default, as in Blender 5
+        where the window's scene and the edited one differ) and its
+        workspace's sequencer scene is sequencer_scene (SCENE by default)."""
+        areas = [_area("PROPERTIES", "", [_region("props")])]
+        if editor:
+            areas.append(_area("SEQUENCE_EDITOR", "SEQUENCER", [_region("header", "HEADER"), _region("strips")]))
+        if window_scene is None:
+            window_scene = _Scene()
+            window_scene.name = "Scene"
+        win = types.SimpleNamespace(
+            screen=types.SimpleNamespace(areas=areas, is_animation_playing=False),
+            scene=window_scene,
+            workspace=types.SimpleNamespace(sequencer_scene=sequencer_scene or SCENE),
+        )
+        addon.bpy.context.window_manager.windows.append(win)
+        addon.bpy.context.sequencer_scene = SCENE
+        return win
+
+    def test_play_from_video_editor_plays_edited_scene(self):
+        self._play_window()
+        self.assertEqual(addon._play_pause(SCENE), "play")
+        # From the video editor, so the edited scene plays, not the window's
+        self.assertEqual(PLAYER.calls, [("play", "Edit", ["area", "region", "screen", "window"])])
+        self.assertTrue(addon._playing())
+        self.assertIsNone(ZOOM.override, "the override ended")
+
+    def test_pause_leaves_playhead(self):
+        self._play_window()
+        addon._apply([{"type": "play_pause"}], PREFS)
+        SCENE.frame_current = 42  # where playback got to
+        addon._apply([{"type": "play_pause"}], PREFS)
+        self.assertEqual(PLAYER.calls[1], ("cancel", False))
+        self.assertFalse(addon._playing())
+        self.assertEqual(SCENE.frame_current, 42)
+        # And again: play, pause
+        addon._apply([{"type": "play_pause"}], PREFS)
+        addon._apply([{"type": "play_pause"}], PREFS)
+        self.assertEqual([c[0] for c in PLAYER.calls], ["play", "cancel", "play", "cancel"])
+
+    def test_two_presses_in_one_read_do_nothing(self):
+        self._play_window()
+        addon._apply([{"type": "play_pause"}] * 2, PREFS)
+        self.assertEqual(PLAYER.calls, [])
+        addon._apply([{"type": "play_pause"}] * 3, PREFS)
+        self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
+
+    def test_pause_whatever_plays(self):
+        # Playback started by hand in another window, on another scene:
+        # the button pauses it rather than starting a second one
+        other = _Scene()
+        other.name = "Other"
+        self._play_window(editor=False, window_scene=other, sequencer_scene=other)
+        self._play_window()
+        PLAYER._set(True)
+        self.assertEqual(addon._play_pause(SCENE), "pause")
+        self.assertEqual(PLAYER.calls, [("cancel", False)])
+        self.assertFalse(addon._playing())
+
+    def test_play_without_video_editor_uses_window_showing_scene(self):
+        self._play_window(editor=False, window_scene=SCENE)
+        self.assertEqual(addon._play_pause(SCENE), "play_window")
+        self.assertEqual(PLAYER.calls, [("play", "Edit", ["screen", "window"])])
+
+    def test_play_skipped_when_it_would_play_another_scene(self):
+        # No video editor, and the window shows another scene: playing from
+        # it would play that one
+        self._play_window(editor=False)
+        self.assertIsNone(addon._play_pause(SCENE))
+        # A video editor in a window whose workspace edits another scene
+        # is no good either
+        addon.bpy.context.window_manager.windows = []
+        other = _Scene()
+        other.name = "Other"
+        self._play_window(sequencer_scene=other)
+        self.assertIsNone(addon._play_pause(SCENE))
+        self.assertEqual(PLAYER.calls, [])
+
+    def test_play_picks_the_window_editing_the_scene(self):
+        other = _Scene()
+        other.name = "Other"
+        self._play_window(sequencer_scene=other)
+        self._play_window()
+        self.assertEqual(addon._play_pause(SCENE), "play")
+        self.assertEqual(PLAYER.calls, [("play", "Edit", ["area", "region", "screen", "window"])])
+
+    def test_play_on_blender_4_2(self):
+        # No sequencer scene: the window's scene is the edited one
+        win = self._play_window(window_scene=SCENE)
+        del win.workspace.sequencer_scene
+        addon.bpy.context.sequencer_scene = None
+        self.assertEqual(addon._play_pause(SCENE), "play")
+        self.assertEqual(PLAYER.calls, [("play", "Edit", ["area", "region", "screen", "window"])])
+
+    def test_play_pause_never_raises(self):
+        self._play_window()
+        PLAYER.fail = True
+        self.assertIsNone(addon._play_pause(SCENE))
+        PLAYER._set(True)
+        self.assertIsNone(addon._play_pause(SCENE))
+        PLAYER.fail = False
+        old = addon.bpy.ops.screen
+        addon.bpy.ops.screen = None  # no such operators at all
+        try:
+            self.assertIsNone(addon._play_pause(SCENE))
+        finally:
+            addon.bpy.ops.screen = old
+        addon.bpy.context.window_manager.windows = []
+        self.assertIsNone(addon._play_pause(SCENE))
+        # A screen without is_animation_playing reads as not playing
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=types.SimpleNamespace(areas=[]), scene=None)]
+        self.assertFalse(addon._playing())
+        self.assertIsNone(addon._play_pause(SCENE))
+
+    def test_play_makes_no_undo_step(self):
+        self._play_window()
+        addon._apply([{"type": "play_pause"}], PREFS)
+        addon._apply([{"type": "play_pause"}], PREFS)
+        self.assertEqual(UNDO, [])
+
+    def _seek_scene(self):
+        scene = _SeekScene()
+        scene.sequence_editor = None
+        scene.frame_current = 100
+        scene.log.clear()
+        addon.bpy.context.scene = scene
+        return scene
+
+    def test_scrub_while_playing_moves_the_sound_too(self):
+        # With Sync to Audio, frame_set alone is undone by the next playback
+        # step: frame_current is assigned first, which moves the sound
+        scene = self._seek_scene()
+        self._play_window(sequencer_scene=scene)
+        addon.bpy.context.sequencer_scene = scene
+        PLAYER._set(True)
+        PREFS.clamp = False
+        try:
+            addon._apply([{"type": "scrub", "frames": 30}], PREFS)
+        finally:
+            PREFS.clamp = True
+        self.assertEqual(scene.log, [("assign", 130), ("frame_set", 130)])
+        self.assertTrue(addon._playing(), "scrubbing doesn't stop playback")
+
+    def test_scrub_while_paused_unchanged(self):
+        scene = self._seek_scene()
+        self._play_window(sequencer_scene=scene)
+        addon.bpy.context.sequencer_scene = scene
+        PREFS.clamp = False
+        try:
+            addon._apply([{"type": "scrub", "frames": -30}], PREFS)
+        finally:
+            PREFS.clamp = True
+        self.assertEqual(scene.log, [("frame_set", 70)])
+
+    def test_scrub_while_playing_selection_follows_before_cut(self):
+        # Play, scrub and cut in one read: the frame-change handler still
+        # runs at once, so the cut takes the strips under the new playhead
+        ed = self._editor()
+        self._play_window()
+        PREFS.follow_selection = True
+        FRAME_HANDLERS.append(addon.on_frame_change)
+        addon._apply([{"type": "play_pause"}, {"type": "scrub", "frames": 20}, {"type": "cut"}], PREFS)
+        self.assertTrue(addon._playing())
+        self.assertEqual(SCENE.frame_current, 70)
+        self.assertEqual(sorted(n for n, f, _ in ed.log), ["A", "C", "D"])
+
+    def test_ripple_delete_while_playing_moves_the_sound_too(self):
+        scene = self._seek_scene()
+        ed = _Editor()
+        ed.add("V1", 1, 1, 50)
+        ed.add("V2", 1, 50, 100)
+        ed.add("V3", 1, 100, 200)
+        scene.sequence_editor = ed
+        scene.frame_current = 70
+        scene.log.clear()
+        self._play_window(sequencer_scene=scene)
+        addon.bpy.context.sequencer_scene = scene
+        PLAYER._set(True)
+        addon._apply([{"type": "ripple_delete"}], PREFS)
+        self.assertEqual(ed.spans(), [("V1", 1, 50), ("V3", 50, 150)])
+        self.assertEqual(scene.log, [("assign", 50), ("frame_set", 50)])
+
+    def test_play_pause_over_the_link(self):
+        self._play_window()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        read_lines(conn)
+        try:
+            conn.sendall(b'{"type":"play_pause"}\n')
+            self.assertTrue(tick_until(lambda: addon._playing()))
+            conn.sendall(b'{"type":"play_pause"}\n')
+            self.assertTrue(tick_until(lambda: not addon._playing()))
+            self.assertEqual([c[0] for c in PLAYER.calls], ["play", "cancel"])
+            self.assertIsNotNone(addon.link.sock, "link kept")
+        finally:
+            conn.close()
+            bridge.close()
 
     def test_closed_port_never_blocks(self):
         PREFS.port = free_port()

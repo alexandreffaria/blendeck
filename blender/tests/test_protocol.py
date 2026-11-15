@@ -346,6 +346,40 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(protocol.follow_selection([], 50), [])
 
 
+class PlayPauseTest(unittest.TestCase):
+    P = {"type": "play_pause"}
+
+    def test_steps_keep_order(self):
+        msgs = [{"type": "scrub", "frames": 10}, self.P, {"type": "scrub", "frames": 5}, {"type": "cut"}, self.P]
+        self.assertEqual(protocol.edit_steps(msgs), [("scrub", 10), ("play_pause", None), ("scrub", 5), ("cut", None), ("play_pause", None)])
+
+    def test_presses_in_a_row_cancel_in_pairs(self):
+        self.assertEqual(protocol.edit_steps([self.P]), [("play_pause", None)])
+        self.assertEqual(protocol.edit_steps([self.P, self.P]), [])
+        self.assertEqual(protocol.edit_steps([self.P] * 3), [("play_pause", None)])
+        # Anything between keeps them apart: play, scrub, pause
+        self.assertEqual(protocol.edit_steps([self.P, {"type": "scrub", "frames": 1}, self.P]), [("play_pause", None), ("scrub", 1), ("play_pause", None)])
+
+    def test_presses_capped(self):
+        msgs = [self.P, {"type": "scrub", "frames": 1}] * 30
+        steps = protocol.edit_steps(msgs)
+        self.assertEqual(sum(1 for k, _ in steps if k == "play_pause"), protocol.MAX_TOGGLES_PER_TICK)
+        self.assertEqual(sum(f for k, f in steps if k == "scrub"), 30, "scrubs past the cap still count")
+
+    def test_malformed_ignored(self):
+        self.assertEqual(protocol.edit_steps([{"type": "play"}, {"type": "PLAY_PAUSE"}]), [])
+
+    def test_plan(self):
+        # Playing anywhere: pause, wherever it plays
+        self.assertEqual(protocol.play_pause_plan(True, False, False), "pause")
+        self.assertEqual(protocol.play_pause_plan(True, True, True), "pause")
+        # Not playing: from a video editor, else the window, else nothing
+        self.assertEqual(protocol.play_pause_plan(False, True, True), "play")
+        self.assertEqual(protocol.play_pause_plan(False, True, False), "play")
+        self.assertEqual(protocol.play_pause_plan(False, False, True), "play_window")
+        self.assertIsNone(protocol.play_pause_plan(False, False, False))
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re
