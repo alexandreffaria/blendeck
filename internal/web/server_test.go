@@ -406,3 +406,18 @@ func TestTestEndpointMove(t *testing.T) {
 		}
 	}
 }
+
+func TestTestEndpointPan(t *testing.T) {
+	h := newServer(t)
+	for _, body := range []string{`{"pan":5}`, `{"pan":-5}`, `{"pan":100}`} {
+		rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{`{"pan":0}`, `{"pan":101}`, `{"pan":-101}`, `{"pan":5,"zoom":1}`, `{"pan":"5"}`, `{"pan":5,"before":true}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}

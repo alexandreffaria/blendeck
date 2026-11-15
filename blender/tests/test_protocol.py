@@ -62,6 +62,36 @@ class ScrubTest(unittest.TestCase):
         self.assertEqual(protocol.encode({"type": "hello"}), b'{"type":"hello"}\n')
 
 
+class PanTest(unittest.TestCase):
+    def test_total(self):
+        msgs = [
+            {"type": "pan", "clicks": 5},
+            {"type": "pan", "clicks": -15},
+            {"type": "pan", "clicks": "9"},
+            {"type": "pan", "clicks": True},
+            {"type": "pan", "clicks": 1.5},
+            {"type": "pan"},
+            {"type": "zoom", "clicks": 100},
+        ]
+        self.assertEqual(protocol.total_pan(msgs), -10)
+
+    def test_capped(self):
+        self.assertEqual(protocol.total_pan([{"type": "pan", "clicks": 10**6}]), protocol.MAX_PAN_PER_TICK)
+        self.assertEqual(protocol.total_pan([{"type": "pan", "clicks": -10**6}]), -protocol.MAX_PAN_PER_TICK)
+
+    def test_others_ignore_pan(self):
+        msgs = [{"type": "pan", "clicks": 5, "frames": 5}]
+        self.assertEqual(protocol.total_zoom(msgs), 0)
+        self.assertEqual(protocol.total_scrub(msgs), 0)
+        self.assertEqual(protocol.edit_steps(msgs), [])
+
+    def test_pixels(self):
+        self.assertEqual(protocol.pan_pixels(1680, 5), 84)
+        self.assertEqual(protocol.pan_pixels(1680, -5), -84)
+        self.assertEqual(protocol.pan_pixels(800, 100), 800)
+        self.assertEqual(protocol.pan_pixels(10, 1), 0)
+
+
 class ZoomTest(unittest.TestCase):
     def test_total(self):
         msgs = [

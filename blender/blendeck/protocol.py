@@ -10,6 +10,9 @@ MAX_LINE = 64 * 1024
 # Zoom steps applied per tick at most, so a burst of commands can't keep
 # Blender's UI busy zooming. Each step is one zoom operator call per editor.
 MAX_ZOOM_PER_TICK = 40
+# Pan per tick at most, in percent of the view's width either way: four
+# views. A fast spin at 5% a click sends far less; more is a flood.
+MAX_PAN_PER_TICK = 400
 # Cuts applied per tick at most; a button can't be pressed faster than a few
 # times a tick, so more than this is a flood, not someone editing.
 MAX_CUTS_PER_TICK = 8
@@ -108,6 +111,26 @@ def total_zoom(messages):
         if isinstance(clicks, int) and not isinstance(clicks, bool):
             total += clicks
     return max(-MAX_ZOOM_PER_TICK, min(MAX_ZOOM_PER_TICK, total))
+
+
+def total_pan(messages):
+    """Adds up the percent of every pan command (positive shows later
+    frames), ignoring malformed ones, and caps the result at
+    MAX_PAN_PER_TICK either way."""
+    total = 0
+    for m in messages:
+        if m.get("type") != "pan":
+            continue
+        clicks = m.get("clicks")
+        if isinstance(clicks, int) and not isinstance(clicks, bool):
+            total += clicks
+    return max(-MAX_PAN_PER_TICK, min(MAX_PAN_PER_TICK, total))
+
+
+def pan_pixels(width, percent):
+    """How far to pan a region width pixels wide for percent of its width,
+    in pixels (positive shows later frames)."""
+    return int(round(width * percent / 100.0))
 
 
 def edit_steps(messages):

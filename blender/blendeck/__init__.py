@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.10.0"
+ADDON_VERSION = "0.11.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -249,6 +249,23 @@ def _zoom(clicks):
                 _zoom_one(region, op, times)
         except Exception as e:
             print("Blendeck: zoom skipped:", e)
+
+
+def _pan(percent):
+    """Slides every timeline percent of its own width: positive shows later
+    frames, negative earlier. Only the view moves; the playhead and the
+    strips stay. An editor that fails is skipped, never raised."""
+    if not percent:
+        return
+    for win, area, region in list(_timelines()):
+        try:
+            pixels = protocol.pan_pixels(region.width, percent)
+            if not pixels:
+                continue
+            with bpy.context.temp_override(window=win, area=area, region=region):
+                bpy.ops.view2d.pan(deltax=pixels, deltay=0)
+        except Exception as e:
+            print("Blendeck: pan skipped:", e)
 
 
 def _level(ed):
@@ -917,6 +934,7 @@ def on_frame_change(scene, depsgraph=None):
 
 def _apply(messages, prefs):
     _zoom(protocol.total_zoom(messages))
+    _pan(protocol.total_pan(messages))
     scene = _scene()
     if scene is None:
         return

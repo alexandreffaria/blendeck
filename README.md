@@ -23,6 +23,7 @@ and keeps profiles.
 | A sixth button you pick | Plays forward (normal speed, with sound); each further press plays 0.25x faster, up to 8x, with sound at its normal pitch up to 5x and silent past that. That sound leaves out strips packed into the .blend, plays retimed strips at their normal speed and ignores volume animation; strips moved with the mouse while it plays are heard where they were until the next press, scrub or edit from the Loupedeck. The opposite button eases off 0.25x a press down to normal speed, then switches direction; play / pause stops and the next play is normal speed. Faster than normal or backwards, they stop at the first or last frame (of the preview range, when it's on); normal speed forward is Blender's own playback and loops | The same |
 | A third knob you pick | Jumps the playhead to the next video edit per click right, the previous one per click left: the start and end of every strip that isn't sound, on any channel, like Blender's Up and Down arrows. Sound strips, muted strips and muted channels are skipped; past the last edit it stays put | Stops at every cut, sound strips' too |
 | A fourth knob you pick | Moves the selected strips and every strip after them, on all channels, a frame per click (right or left), like G in the video editor. They stop against the next strip instead of going over it; locked strips stay put. The playhead stays, and one turn of the knob is one Ctrl+Z | Moves the selected strips and every strip before them instead |
+| A fifth knob you pick | Slides the timeline view 5% of its width per click: right shows later frames, left earlier ones. Only the view moves: the playhead, the strips and playback stay as they are, so you can look ahead while it plays | The same |
 
 More come one at a time.
 
@@ -52,7 +53,8 @@ delete only those. Turn it off in the add-on's preferences or its panel.
    on "Jump between video edits" and turn the knob you want for it, then
    on "Jump between all cuts" and turn the same knob with Fn held,
    and on "Move selected and later strips" and "Move selected and earlier
-   strips" (with Fn) and turn the knob you want for moving strips.
+   strips" (with Fn) and turn the knob you want for moving strips,
+   and on "Pan timeline" and turn the knob you want for sliding the view.
    A `config.json` from an older version has no row for a new control:
    **Add binding**, pick its action, and learn it.
 
@@ -65,7 +67,7 @@ bridge drops it and the add-on reconnects by itself a second later.
 
 - **Monitor**: every MIDI message, live, with what it did. Use it to see
   what a control sends.
-- **Bindings**: control → action, with frames (scrub, moving strips) or zoom steps (zoom) per click and the knob's
+- **Bindings**: control → action, with frames (scrub, moving strips), zoom steps (zoom) or percent of the view (pan) per click and the knob's
   encoding (most send 1 / 127 for one click right / left). Jumping between
   edits or cuts has an encoding and is always one per click. Button actions
   (cut, undo, ripple delete, playback) have neither.
