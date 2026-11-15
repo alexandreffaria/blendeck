@@ -215,8 +215,8 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 // handleTest sends Blender a command as if a control had been used:
 // {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in),
 // {"pan":N} slides the timeline view N percent of its width (positive
-// shows later frames),
-// {"cut":true} cuts at the playhead, {"undo":true} runs Blender's undo
+// shows later frames), {"view_all":true} fits every timeline to the whole
+// edit, {"cut":true} cuts at the playhead, {"undo":true} runs Blender's undo
 // once, {"ripple_delete":true} ripple deletes at the playhead,
 // {"play_pause":true} starts or pauses playback, {"shuttle":1} plays
 // forward or faster, {"shuttle":-1} backwards or faster, {"jump":1} jumps
@@ -229,6 +229,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Frames  int  `json:"frames"`
 		Zoom    int  `json:"zoom"`
 		Pan     int  `json:"pan"`
+		ViewAll bool `json:"view_all"`
 		Cut     bool `json:"cut"`
 		Undo    bool `json:"undo"`
 		Ripple  bool `json:"ripple_delete"`
@@ -244,7 +245,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := 0
-	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0, req.Move != 0, req.Pan != 0} {
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0, req.Move != 0, req.Pan != 0, req.ViewAll} {
 		if set {
 			n++
 		}
@@ -260,10 +261,12 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var cmd engine.Command
 	switch {
 	case n > 1:
-		writeError(w, http.StatusBadRequest, "send one of frames, zoom, pan, cut, undo, ripple_delete, play_pause, shuttle, jump or move")
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom, pan, view_all, cut, undo, ripple_delete, play_pause, shuttle, jump or move")
 		return
 	case req.Undo:
 		cmd = engine.Command{Type: "undo"}
+	case req.ViewAll:
+		cmd = engine.Command{Type: "view_all"}
 	case req.Cut:
 		cmd = engine.Command{Type: "cut"}
 	case req.Ripple:

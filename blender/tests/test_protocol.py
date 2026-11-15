@@ -92,6 +92,21 @@ class PanTest(unittest.TestCase):
         self.assertEqual(protocol.pan_pixels(10, 1), 0)
 
 
+class ViewAllTest(unittest.TestCase):
+    def test_wants(self):
+        self.assertTrue(protocol.wants_view_all([{"type": "scrub", "frames": 1}, {"type": "view_all"}]))
+        self.assertTrue(protocol.wants_view_all([{"type": "view_all"}] * 3))
+        self.assertFalse(protocol.wants_view_all([{"type": "zoom", "clicks": 1}, {"type": "pan", "clicks": 5}]))
+        self.assertFalse(protocol.wants_view_all([]))
+
+    def test_others_ignore_it(self):
+        msgs = [{"type": "view_all", "clicks": 5, "frames": 5}]
+        self.assertEqual(protocol.total_zoom(msgs), 0)
+        self.assertEqual(protocol.total_pan(msgs), 0)
+        self.assertEqual(protocol.total_scrub(msgs), 0)
+        self.assertEqual(protocol.edit_steps(msgs), [])
+
+
 class ZoomTest(unittest.TestCase):
     def test_total(self):
         msgs = [

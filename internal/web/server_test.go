@@ -421,3 +421,19 @@ func TestTestEndpointPan(t *testing.T) {
 		}
 	}
 }
+
+func TestTestEndpointViewAll(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", `{"view_all":true}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"view_all":true,"zoom":1}`, `{"view_all":true,"pan":5}`, `{"view_all":true,"cut":true}`, `{"view_all":false}`, `{"view_all":1}`, `{"view_all":"yes"}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"view_all":true}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host view all: %d", rec.Code)
+	}
+}

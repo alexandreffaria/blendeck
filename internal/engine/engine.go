@@ -13,7 +13,8 @@ import (
 // Command is what the bridge sends to Blender: {"type":"scrub","frames":N}
 // moves the playhead N frames, {"type":"zoom","clicks":N} zooms the timeline
 // N steps (positive is in), {"type":"pan","clicks":N} slides the timeline
-// view N percent of its width (positive shows later frames), {"type":"cut"} cuts the strips under the
+// view N percent of its width (positive shows later frames),
+// {"type":"view_all"} fits every timeline to the whole edit, {"type":"cut"} cuts the strips under the
 // playhead, {"type":"undo"} runs Blender's undo once,
 // {"type":"ripple_delete"} deletes the strips under the playhead and closes
 // the gap they leave, {"type":"play_pause"} starts or pauses playback,
@@ -302,6 +303,11 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		// Once per press, like cut: never on the release
 		if pressed(m) {
 			hit.Command = &Command{Type: "ripple_delete"}
+		}
+	case config.ActionViewAll:
+		// Once per press, like cut: never on the release
+		if pressed(m) {
+			hit.Command = &Command{Type: "view_all"}
 		}
 	case config.ActionPlayPause:
 		// Once per press, like cut: a release must not toggle it back

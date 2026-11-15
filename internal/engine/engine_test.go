@@ -1421,3 +1421,39 @@ func TestPanNotLearnedIgnored(t *testing.T) {
 		}
 	}
 }
+
+// The owner's view-all button, note 41: once per press, never on the
+// release, and the same with Fn held.
+func TestViewAllOncePerPress(t *testing.T) {
+	e := New(config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "view-all", Name: "View whole timeline", Control: config.Control{Type: "note", Channel: 1, Number: 41}, Action: config.ActionViewAll},
+		},
+	})
+	down := midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 41, Value: 64}
+	up := midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 41, Value: 64}
+	want := Command{Type: "view_all"}
+	if hit, _ := e.Handle(down); hit.Binding != "view-all" || hit.Command == nil || *hit.Command != want {
+		t.Fatalf("press: %+v", hit)
+	}
+	if hit, _ := e.Handle(up); hit.Binding != "view-all" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(down); hit.Binding != "view-all" || hit.Command == nil || *hit.Command != want {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+	b, err := json.Marshal(want)
+	if err != nil || string(b) != `{"type":"view_all"}` {
+		t.Fatalf("%s %v", b, err)
+	}
+}
+
+func TestViewAllNotLearnedIgnored(t *testing.T) {
+	e := New(config.Default().Profiles[0])
+	if hit, _ := e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 41, Value: 64}); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned view-all matched: %+v", hit)
+	}
+}
