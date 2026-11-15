@@ -1343,3 +1343,32 @@ func TestMoveCommandJSON(t *testing.T) {
 		}
 	}
 }
+
+// Letting go of Fn brings the knob back to the strips after.
+func TestMoveFnReleased(t *testing.T) {
+	e := New(moveProfile())
+	knob := midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 36, Value: 1}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(knob); hit.Binding != "move-before" {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 110, Value: 0})
+	if hit, _ := e.Handle(knob); hit.Binding != "move-after" || hit.Command == nil || *hit.Command != (Command{Type: "move", Frames: 1}) {
+		t.Fatalf("Fn released: %+v", hit)
+	}
+}
+
+func TestMoveNotLearnedIgnored(t *testing.T) {
+	p := moveProfile()
+	p.Bindings[0].Control.Number = -1
+	p.Bindings[1].Control.Number = -1
+	e := New(p)
+	knob := midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 36, Value: 1}
+	if hit, _ := e.Handle(knob); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned knob: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(knob); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned knob with Fn: %+v", hit)
+	}
+}

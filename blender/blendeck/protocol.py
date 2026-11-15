@@ -487,12 +487,13 @@ def move_plan(spans, frames, before=False):
     if not move:
         return None
     shift = frames
-    stay = [spans[i] for i in range(n) if i not in move]
+    stay = {}  # channel: the strips that stay on it
+    for i in range(n):
+        if i not in move:
+            stay.setdefault(spans[i].channel, []).append(spans[i])
     for i in move:
         m = spans[i]
-        for o in stay:
-            if o.channel != m.channel:
-                continue
+        for o in stay.get(m.channel, ()):
             if shift > 0 and o.start >= m.end:
                 shift = min(shift, o.start - m.end)
             elif shift < 0 and o.end <= m.start:
