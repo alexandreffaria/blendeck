@@ -160,6 +160,41 @@ class CutTest(unittest.TestCase):
         self.assertTrue(protocol.cuttable(49, 51, 50, False))
 
 
+class UndoTest(unittest.TestCase):
+    def test_every_undo_kept_in_order(self):
+        msgs = [
+            {"type": "cut"},
+            {"type": "undo"},
+            {"type": "undo"},
+            {"type": "scrub", "frames": 3},
+            {"type": "undo"},
+            {"type": "cut"},
+        ]
+        self.assertEqual(
+            protocol.edit_steps(msgs),
+            [("cut", None), ("undo", None), ("undo", None), ("scrub", 3), ("undo", None), ("cut", None)],
+        )
+
+    def test_cut_after_undo_not_merged(self):
+        # cut, undo, cut: the second cut does the work again, it isn't a repeat
+        msgs = [{"type": "cut"}, {"type": "undo"}, {"type": "cut"}]
+        self.assertEqual(protocol.edit_steps(msgs), [("cut", None), ("undo", None), ("cut", None)])
+
+    def test_undos_capped(self):
+        steps = protocol.edit_steps([{"type": "undo"}, {"type": "scrub", "frames": 1}] * 20)
+        self.assertEqual(steps.count(("undo", None)), protocol.MAX_UNDOS_PER_TICK)
+        self.assertEqual(sum(n for k, n in steps if k == "scrub"), 20)
+
+    def test_malformed_ignored(self):
+        self.assertEqual(protocol.edit_steps([{"type": "Undo"}, {"type": "undo "}, {"undo": True}]), [])
+
+    def test_blocked(self):
+        self.assertIsNone(protocol.undo_blocked([], False))
+        why = protocol.undo_blocked(["TRANSFORM_OT_seq_slide", "TRANSFORM_OT_seq_slide"], False)
+        self.assertEqual(why, "an operator is running (TRANSFORM_OT_seq_slide)")
+        self.assertEqual(protocol.undo_blocked([], True), "the interface is locked")
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

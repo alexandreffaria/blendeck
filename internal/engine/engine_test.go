@@ -589,3 +589,154 @@ func TestCutCommandJSON(t *testing.T) {
 		t.Fatalf("got %s", data)
 	}
 }
+
+// The owner's undo button: note 95 on channel 1, pressed with velocity 64.
+var undoDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 95, Value: 64}
+var undoUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 95, Value: 64}
+
+// undoProfile is cutProfile with the undo button learned as note 95.
+func undoProfile() config.Profile {
+	p := cutProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].Action == config.ActionUndo {
+			p.Bindings[i].Control.Number = 95
+		}
+	}
+	return p
+}
+
+// undoes reports whether m sends an undo, and fails on any other command.
+func undoes(t *testing.T, e *Engine, m midi.Message) bool {
+	t.Helper()
+	hit, _ := e.Handle(m)
+	if hit.Command == nil {
+		return false
+	}
+	if *hit.Command != (Command{Type: "undo"}) {
+		t.Fatalf("command = %+v, want an undo", hit.Command)
+	}
+	return true
+}
+
+func TestUndoOncePerPress(t *testing.T) {
+	e := New(undoProfile())
+	hit, _ := e.Handle(undoDown)
+	if hit.Binding != "undo" || hit.Command == nil || hit.Command.Type != "undo" {
+		t.Fatalf("press: %+v", hit)
+	}
+	hit, _ = e.Handle(undoUp)
+	if hit.Binding != "undo" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	if undoes(t, e, midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 95}) {
+		t.Fatal("velocity-0 release undid")
+	}
+	// Three presses are three undos, one each
+	for i := 0; i < 3; i++ {
+		if !undoes(t, e, undoDown) {
+			t.Fatalf("press %d didn't undo", i+2)
+		}
+		if undoes(t, e, undoUp) {
+			t.Fatalf("release %d undid", i+2)
+		}
+	}
+}
+
+// With Fn held and no Fn undo binding, the plain one still undoes;
+// releasing Fn in between changes nothing.
+func TestUndoWithFnHeld(t *testing.T) {
+	e := New(undoProfile())
+	e.Handle(fnDown)
+	if !undoes(t, e, undoDown) {
+		t.Fatal("Fn + press didn't undo")
+	}
+	if undoes(t, e, undoUp) {
+		t.Fatal("Fn + release undid")
+	}
+	e.Handle(fnUp)
+	if !undoes(t, e, undoDown) {
+		t.Fatal("press after Fn release didn't undo")
+	}
+}
+
+// An Fn binding on the same button wins while Fn is held, and only then.
+func TestUndoFnBindingWins(t *testing.T) {
+	p := undoProfile()
+	p.Bindings = append(p.Bindings, config.Binding{ID: "undo-fn", Name: "Undo (Fn)", Control: config.Control{Type: "note", Channel: 1, Number: 95}, Modifier: "Fn", Action: config.ActionUndo})
+	e := New(p)
+	if hit, _ := e.Handle(undoDown); hit.Binding != "undo" {
+		t.Fatalf("plain press matched %q", hit.Binding)
+	}
+	e.Handle(fnDown)
+	if hit, _ := e.Handle(undoDown); hit.Binding != "undo-fn" || hit.Command == nil {
+		t.Fatalf("Fn press: %+v", hit)
+	}
+	e.Handle(fnUp)
+	if hit, _ := e.Handle(undoDown); hit.Binding != "undo" {
+		t.Fatalf("press after Fn release matched %q", hit.Binding)
+	}
+}
+
+func TestUndoNotLearnedIgnored(t *testing.T) {
+	e := New(cutProfile()) // undo still at -1
+	hit, _ := e.Handle(undoDown)
+	if hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned undo matched: %+v", hit)
+	}
+}
+
+// A cc used as a button undoes at 64 and up, and not on its release.
+func TestUndoOnCCButton(t *testing.T) {
+	p := undoProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].Action == config.ActionUndo {
+			p.Bindings[i].Control = config.Control{Type: "cc", Channel: 1, Number: 21}
+		}
+	}
+	e := New(p)
+	cc := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 21, Value: v}
+	}
+	if !undoes(t, e, cc(127)) || !undoes(t, e, cc(64)) {
+		t.Fatal("cc press didn't undo")
+	}
+	if undoes(t, e, cc(0)) || undoes(t, e, cc(63)) {
+		t.Fatal("cc release undid")
+	}
+}
+
+// Undo and cut are separate buttons, and the knobs still work.
+func TestUndoApartFromOthers(t *testing.T) {
+	e := New(undoProfile())
+	if !cuts(t, e, cutDown) {
+		t.Fatal("cut button didn't cut")
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("scrub = %d", got)
+	}
+	if undoes(t, e, midi.Message{Kind: midi.NoteOn, Channel: 2, Number: 95, Value: 64}) {
+		t.Fatal("note 95 on channel 2 undid")
+	}
+	if undoes(t, e, midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 94, Value: 64}) {
+		t.Fatal("note 94 undid")
+	}
+}
+
+func TestUndoDuringLearnIsCaptured(t *testing.T) {
+	e := New(undoProfile())
+	e.Learn(LearnBinding, nil)
+	hit, l := e.Handle(undoDown)
+	if hit.Command != nil || l == nil || l.Control != (config.Control{Type: "note", Channel: 1, Number: 95}) {
+		t.Fatalf("hit %+v learned %+v", hit, l)
+	}
+	if undoes(t, e, undoUp) {
+		t.Fatal("the release after learning undid")
+	}
+}
+
+func TestUndoCommandJSON(t *testing.T) {
+	data, _ := json.Marshal(Command{Type: "undo"})
+	if string(data) != `{"type":"undo"}` {
+		t.Fatalf("got %s", data)
+	}
+}

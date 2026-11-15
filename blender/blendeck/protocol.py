@@ -11,6 +11,11 @@ MAX_ZOOM_PER_TICK = 40
 # Cuts applied per tick at most; a button can't be pressed faster than a few
 # times a tick, so more than this is a flood, not someone editing.
 MAX_CUTS_PER_TICK = 8
+# Undos applied per tick at most. Each press is one undo, like Ctrl+Z, but
+# presses that piled up while Blender was busy shouldn't undo a whole
+# session at once, and one undo of a big file can take a good fraction of a
+# second. Undos past this in one read are dropped.
+MAX_UNDOS_PER_TICK = 4
 
 
 class LineBuffer:
@@ -73,14 +78,17 @@ def total_zoom(messages):
 
 
 def edit_steps(messages):
-    """The scrubs and cuts in messages, in order: ("scrub", frames) and
-    ("cut", None). Order matters, since a cut lands where the playhead is at
-    that moment. Scrubs in a row are added up, cuts in a row with no scrub
-    between become one (a second cut at the same frame does nothing), and
-    cuts past MAX_CUTS_PER_TICK are dropped; scrubs after them still count.
+    """The scrubs, cuts and undos in messages, in order: ("scrub", frames),
+    ("cut", None) and ("undo", None). Order matters, since a cut lands where
+    the playhead is at that moment and an undo takes back what came before
+    it. Scrubs in a row are added up, cuts in a row with no scrub between
+    become one (a second cut at the same frame does nothing), and cuts past
+    MAX_CUTS_PER_TICK are dropped; scrubs after them still count. Every undo
+    is kept, one per press, never merged, up to MAX_UNDOS_PER_TICK.
     Malformed commands are ignored."""
     steps = []
     cuts = 0
+    undos = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -96,7 +104,24 @@ def edit_steps(messages):
                 continue
             cuts += 1
             steps.append(("cut", None))
+        elif kind == "undo":
+            if undos >= MAX_UNDOS_PER_TICK:
+                continue
+            undos += 1
+            steps.append(("undo", None))
     return steps
+
+
+def undo_blocked(modal_operators, interface_locked):
+    """Why an undo must wait, or None. An undo frees and reloads Blender's
+    data, so it is refused while a modal operator (a strip being dragged, a
+    knife, a box select) still points into that data, and while a render has
+    locked the interface. A refused undo is dropped, not kept for later."""
+    if modal_operators:
+        return "an operator is running (%s)" % ", ".join(sorted(set(modal_operators)))
+    if interface_locked:
+        return "the interface is locked"
+    return None
 
 
 def cuttable(start, end, frame, locked):

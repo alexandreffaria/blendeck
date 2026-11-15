@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.3.0"
+ADDON_VERSION = "0.4.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -300,6 +300,54 @@ def _cut(scene):
     return done
 
 
+def _undo_context():
+    """What bpy.ops.ed.undo needs to run from a timer, which has no window:
+    the first window with a screen, and in it a video editor's strips
+    region if there is one. Returns (override dict, why not)."""
+    wm = bpy.context.window_manager
+    if not wm:
+        return None, "no window manager"
+    for win in wm.windows:
+        screen = win.screen
+        if screen is None:
+            continue
+        ctx = {"window": win, "screen": screen}
+        for w, area, region in _timelines():
+            if w == win:
+                ctx["area"], ctx["region"] = area, region
+                break
+        return ctx, None
+    return None, "no window"
+
+
+def _undo():
+    """Runs Blender's undo once, like Ctrl+Z. Refused while a modal
+    operator runs in any window or the interface is locked (see
+    protocol.undo_blocked), and a no-op with nothing left to undo. Never
+    raises. Returns True if it undid something. Every bpy object fetched
+    before this may point at freed data afterwards: fetch again."""
+    try:
+        wm = bpy.context.window_manager
+        modal = []
+        for win in (wm.windows if wm else ()):
+            modal.extend(op.bl_idname for op in getattr(win, "modal_operators", ()))
+        why = protocol.undo_blocked(modal, bool(getattr(wm, "is_interface_locked", False)))
+        if why is None:
+            ctx, why = _undo_context()
+        if why is not None:
+            print("Blendeck: undo skipped:", why)
+            return False
+        with bpy.context.temp_override(**ctx):
+            if not bpy.ops.ed.undo.poll():
+                return False  # nothing left to undo
+            done = "FINISHED" in bpy.ops.ed.undo()
+    except Exception as e:
+        print("Blendeck: undo skipped:", e)
+        return False
+    _redraw()
+    return done
+
+
 def _apply(messages, prefs):
     _zoom(protocol.total_zoom(messages))
     scene = _scene()
@@ -308,6 +356,13 @@ def _apply(messages, prefs):
     for kind, frames in protocol.edit_steps(messages):
         if kind == "cut":
             _cut(scene)
+            continue
+        if kind == "undo":
+            _undo()
+            # The undo reloaded the data the old scene pointed at
+            scene = _scene()
+            if scene is None:
+                return
             continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:

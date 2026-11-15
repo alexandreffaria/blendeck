@@ -152,19 +152,21 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 
 // handleTest sends Blender a command as if a control had been used:
 // {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in),
-// {"cut":true} cuts at the playhead. Exactly one of them.
+// {"cut":true} cuts at the playhead, {"undo":true} runs Blender's undo
+// once. Exactly one of them.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Frames int  `json:"frames"`
 		Zoom   int  `json:"zoom"`
 		Cut    bool `json:"cut"`
+		Undo   bool `json:"undo"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	n := 0
-	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut} {
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo} {
 		if set {
 			n++
 		}
@@ -172,8 +174,10 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var cmd engine.Command
 	switch {
 	case n > 1:
-		writeError(w, http.StatusBadRequest, "send one of frames, zoom or cut")
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut or undo")
 		return
+	case req.Undo:
+		cmd = engine.Command{Type: "undo"}
 	case req.Cut:
 		cmd = engine.Command{Type: "cut"}
 	case req.Zoom != 0:
