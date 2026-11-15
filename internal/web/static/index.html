@@ -208,6 +208,10 @@ tr.flash td { animation: flash 600ms ease-out; }
           <button class="btn small" data-test-zoom="-1">− Zoom out</button>
           <button class="btn small" data-test-zoom="1">Zoom in +</button>
         </div>
+        <div class="hint" style="margin:10px 0 6px">Send a test cut</div>
+        <div class="test-row">
+          <button class="btn small" data-test-cut>✂ Cut at playhead</button>
+        </div>
       </div>
     </section>
 
@@ -230,9 +234,10 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline' };
-// What a binding's step means for each action, its limit (config.MaxStep,
-// config.MaxZoomStep) and the step a new binding starts with.
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead' };
+// What a binding's step means for each knob action, its limit
+// (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
+// with. Actions not here are button actions: no step, no encoder.
 const STEPS = {
   'timeline.scrub': { unit: 'frames', label: 'Frames per click', max: 100000, start: 10, verb: 'Scrubbing' },
   'timeline.zoom': { unit: 'clicks', label: 'Zoom steps per click', max: 20, start: 4, verb: 'Zooming' },
@@ -322,8 +327,8 @@ function renderBindings() {
       <td><select class="select" data-b="${i}" data-f="modifier" aria-label="Modifier">${modOpts.join('')}</select>
         ${missingMod ? `<div class="warn">${esc(b.modifier)} isn't learned yet</div>` : ''}</td>
       <td><select class="select" data-b="${i}" data-f="action" aria-label="Action">${Object.entries(ACTIONS).map(([k, v]) => `<option value="${k}"${k === b.action ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
-      <td style="white-space:nowrap">${(() => { const st = STEPS[b.action] || STEPS['timeline.scrub']; return `<input class="input num" type="number" min="1" max="${st.max}" step="1" data-b="${i}" data-f="step" value="${b.step}" aria-label="${st.label}"><span class="unit">${st.unit}</span>`; })()}</td>
-      <td><select class="select" data-b="${i}" data-f="encoder" aria-label="Encoder type" title="What the knob sends for one click right / left">${Object.entries(ENCODERS).map(([k, v]) => `<option value="${k}"${k === b.encoder ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
+      <td style="white-space:nowrap">${(() => { const st = STEPS[b.action]; if (!st) return '<span class="hint" title="Once per press">—</span>'; return `<input class="input num" type="number" min="1" max="${st.max}" step="1" data-b="${i}" data-f="step" value="${b.step}" aria-label="${st.label}"><span class="unit">${st.unit}</span>`; })()}</td>
+      <td>${!STEPS[b.action] ? '<span class="hint">—</span>' : `<select class="select" data-b="${i}" data-f="encoder" aria-label="Encoder type" title="What the knob sends for one click right / left">${Object.entries(ENCODERS).map(([k, v]) => `<option value="${k}"${k === b.encoder ? ' selected' : ''}>${v}</option>`).join('')}</select>`}</td>
       <td><button class="btn ghost small" data-del-b="${i}" aria-label="Delete binding">✕</button></td>
     </tr>`;
   }).join('');
@@ -395,7 +400,9 @@ function describe(ev) {
     const name = b ? esc(b.name) : esc(h.binding);
     if (!h.command) return name;
     let what;
-    if (h.command.type === 'zoom') {
+    if (h.command.type === 'cut') {
+      what = 'cut';
+    } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
     } else {
@@ -483,6 +490,10 @@ function checkLearned() {
       toast(`That was a button (${ctlLabel(c)}). ${st.verb} needs a knob. Try again.`, true);
       state.learn = null; startLearn(l.kind, l.index); return;
     }
+    if (!st && c.type === 'pitch_bend') {
+      toast(`That was ${ctlLabel(c)}. ${ACTIONS[p.bindings[l.index].action] || 'This action'} needs a button. Try again.`, true);
+      state.learn = null; startLearn(l.kind, l.index); return;
+    }
     p.bindings[l.index].control = c;
     // Learned while holding a modifier: that's the binding's modifier
     const held = state.live.learned.held || [];
@@ -505,6 +516,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.delM !== undefined) { dropLearn(); profile().modifiers.splice(+t.dataset.delM, 1); renderAll(); return; }
   if (t.dataset.test) return sendTest({ frames: +t.dataset.test });
   if (t.dataset.testZoom) return sendTest({ zoom: +t.dataset.testZoom });
+  if (t.dataset.testCut !== undefined) return sendTest({ cut: true });
 });
 
 document.addEventListener('input', (e) => {
@@ -609,10 +621,19 @@ $('clear').onclick = () => { $('log').querySelectorAll('.log-row:not(.log-head)'
 // Switching a binding's action: a step that made sense for the old one
 // (10 frames) can be out of range for the new one (20 zoom steps at most),
 // so it starts over, and a name still at the old default follows along.
+// A button action (cut) has no step or encoder; a knob action gets them back.
 function setAction(b, action) {
   const was = b.action;
   b.action = action;
-  if (STEPS[action]) b.step = STEPS[action].start;
+  if (STEPS[action]) {
+    b.step = STEPS[action].start;
+    if (!b.encoder) b.encoder = 'relative_twos';
+    // A knob action needs a cc; one not learned yet can just become one
+    if (b.control.number < 0) b.control.type = 'cc';
+  } else {
+    delete b.step;
+    delete b.encoder;
+  }
   if (ACTIONS[was] && b.name === ACTIONS[was] && ACTIONS[action]) b.name = ACTIONS[action];
 }
 

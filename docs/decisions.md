@@ -25,3 +25,11 @@ in about 16 clicks. Default bindings: "Zoom timeline" step 4, "Zoom timeline
 Zooming keeps the playhead at its spot on screen, so the frame you scrubbed
 to stays in view. If the playhead is off screen, the view first centers on
 it, then zooms. (Blender's own zoom keys zoom around the view's middle.)
+
+## Scrub stops at the scene's ends (202611153dil)
+
+By default the scrub knob stops at the scene's first and last frame, so a
+fast spin at 10 frames a click can't overshoot into frames that aren't
+rendered. A playhead already outside the range is never pulled back. The
+add-on's "Stop at scene start and end" checkbox turns it off to move freely,
+like Blender's own scrubbing.

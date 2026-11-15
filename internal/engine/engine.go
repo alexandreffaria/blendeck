@@ -12,7 +12,8 @@ import (
 
 // Command is what the bridge sends to Blender: {"type":"scrub","frames":N}
 // moves the playhead N frames, {"type":"zoom","clicks":N} zooms the timeline
-// N steps (positive is in).
+// N steps (positive is in), {"type":"cut"} cuts the strips under the
+// playhead.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -261,6 +262,11 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	case config.ActionZoom:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "zoom", Clicks: d * b.Step}
+		}
+	case config.ActionCut:
+		// Once per press: a note off (or a cc below 64) is the release
+		if pressed(m) {
+			hit.Command = &Command{Type: "cut"}
 		}
 	}
 	return hit, nil

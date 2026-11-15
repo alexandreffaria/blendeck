@@ -38,6 +38,9 @@ const (
 	// ActionZoom zooms the video editor's timeline Step zoom steps per
 	// encoder click: clockwise zooms in.
 	ActionZoom = "timeline.zoom"
+	// ActionCut cuts the strips under the playhead, once per button press.
+	// It has no step and no encoder.
+	ActionCut = "timeline.cut"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -96,6 +99,7 @@ func Default() Config {
 				{ID: "scrub-fine", Name: "Scrub timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionScrub, Step: 1},
 				{ID: "zoom", Name: "Zoom timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionZoom, Step: 4},
 				{ID: "zoom-fine", Name: "Zoom timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
+				{ID: "cut", Name: "Cut at playhead", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionCut},
 			},
 		}},
 	}
@@ -189,6 +193,13 @@ func (c *Config) Validate() error {
 				}
 				if err := validEncoder(b); err != nil {
 					return err
+				}
+			case ActionCut:
+				if b.Control.Type != "note" && b.Control.Type != "cc" {
+					return fmt.Errorf("binding %q: cutting needs a button (note or cc)", b.Name)
+				}
+				if b.Step != 0 || b.Encoder != "" {
+					return fmt.Errorf("binding %q: cutting has no step or encoder", b.Name)
 				}
 			default:
 				return fmt.Errorf("binding %q: unknown action %q", b.Name, b.Action)

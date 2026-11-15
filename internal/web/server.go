@@ -150,22 +150,32 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Snapshot())
 }
 
-// handleTest sends Blender a command as if a knob had turned:
-// {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in).
+// handleTest sends Blender a command as if a control had been used:
+// {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in),
+// {"cut":true} cuts at the playhead. Exactly one of them.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Frames int `json:"frames"`
-		Zoom   int `json:"zoom"`
+		Frames int  `json:"frames"`
+		Zoom   int  `json:"zoom"`
+		Cut    bool `json:"cut"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	n := 0
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut} {
+		if set {
+			n++
+		}
+	}
 	var cmd engine.Command
 	switch {
-	case req.Frames != 0 && req.Zoom != 0:
-		writeError(w, http.StatusBadRequest, "send frames or zoom, not both")
+	case n > 1:
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom or cut")
 		return
+	case req.Cut:
+		cmd = engine.Command{Type: "cut"}
 	case req.Zoom != 0:
 		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))

@@ -114,6 +114,52 @@ class ZoomAnchorTest(unittest.TestCase):
         self.assertEqual(protocol.zoom_correction(150.6, 150), 1)
 
 
+class CutTest(unittest.TestCase):
+    def test_steps_keep_order(self):
+        msgs = [
+            {"type": "scrub", "frames": 10},
+            {"type": "scrub", "frames": 5},
+            {"type": "cut"},
+            {"type": "zoom", "clicks": 3},
+            {"type": "scrub", "frames": -2},
+            {"type": "cut"},
+        ]
+        self.assertEqual(protocol.edit_steps(msgs), [("scrub", 15), ("cut", None), ("scrub", -2), ("cut", None)])
+
+    def test_cuts_in_a_row_are_one(self):
+        self.assertEqual(protocol.edit_steps([{"type": "cut"}] * 3), [("cut", None)])
+
+    def test_cuts_capped_scrubs_kept(self):
+        msgs = []
+        for _ in range(protocol.MAX_CUTS_PER_TICK + 5):
+            msgs += [{"type": "cut"}, {"type": "scrub", "frames": 1}]
+        steps = protocol.edit_steps(msgs)
+        self.assertEqual(steps.count(("cut", None)), protocol.MAX_CUTS_PER_TICK)
+        self.assertEqual(sum(n for k, n in steps if k == "scrub"), protocol.MAX_CUTS_PER_TICK + 5)
+
+    def test_malformed_ignored(self):
+        msgs = [
+            {"type": "scrub", "frames": "3"},
+            {"type": "scrub", "frames": True},
+            {"type": "scrub"},
+            {"type": "scrub", "frames": 0},
+            {"type": "cutt"},
+        ]
+        self.assertEqual(protocol.edit_steps(msgs), [])
+
+    def test_steps_match_total_scrub(self):
+        msgs = [{"type": "scrub", "frames": 4}, {"type": "cut"}, {"type": "scrub", "frames": 6}]
+        self.assertEqual(sum(n for k, n in protocol.edit_steps(msgs) if k == "scrub"), protocol.total_scrub(msgs))
+
+    def test_cuttable(self):
+        self.assertTrue(protocol.cuttable(1, 101, 50, False))
+        self.assertFalse(protocol.cuttable(1, 101, 50, True), "locked")
+        self.assertFalse(protocol.cuttable(50, 101, 50, False), "starts at the playhead")
+        self.assertFalse(protocol.cuttable(1, 50, 50, False), "ends at the playhead")
+        self.assertFalse(protocol.cuttable(60, 160, 50, False), "after the playhead")
+        self.assertTrue(protocol.cuttable(49, 51, 50, False))
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re
