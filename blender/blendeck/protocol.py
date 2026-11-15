@@ -569,6 +569,12 @@ def zoom_anchor(x, width):
     return int(round(x - center)), center
 
 
+def center_pan(x, width):
+    """The pan, in pixels, that puts the playhead drawn at x in the middle
+    of a region width pixels wide (a positive pan moves the view right)."""
+    return int(round(x - width // 2))
+
+
 def zoom_correction(x, target):
     """The pan, in pixels, that moves the playhead from x back to target."""
     return int(round(x - target))

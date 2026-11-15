@@ -85,6 +85,7 @@ def _close(reason):
     link.last_state = None
     _shuttle_stop()  # nothing would drive it any more
     _move_undo()  # nothing more will come for that turn of the knob
+    stopped.running = False  # a stop seen after reconnecting isn't this one
     _set_status(reason)
 
 
@@ -278,6 +279,49 @@ def _view_all():
                 bpy.ops.sequencer.view_all()
         except Exception as e:
             print("Blendeck: view all skipped:", e)
+
+
+def _recenter():
+    """Centers every timeline on the playhead, keeping its zoom, so the
+    view lands where playback stopped. Only the view moves. An editor that
+    fails is skipped, never raised."""
+    scene = _scene()
+    if scene is None:
+        return
+    frame = scene.frame_current
+    for win, area, region in list(_timelines()):
+        try:
+            pixels = protocol.center_pan(_playhead_x(region, frame), region.width)
+            if not pixels:
+                continue
+            with bpy.context.temp_override(window=win, area=area, region=region):
+                bpy.ops.view2d.pan(deltax=pixels, deltay=0)
+        except Exception as e:
+            print("Blendeck: recenter skipped:", e)
+
+
+class _Stopped:
+    """Whether playback ran at the last tick: Blender's own or the
+    add-on's. When it goes from running to stopped, whatever stopped it,
+    the timelines recenter on the playhead (see _watch_stop)."""
+
+    running = False
+
+
+stopped = _Stopped()
+
+
+def _watch_stop(recenter=True):
+    """Recenters the timelines once, on the tick playback is seen to stop,
+    unless recenter is false (a view-all press in the same read: the whole
+    edit is what was asked for). Never raises."""
+    try:
+        running = bool(shuttle.speed) or _playing()
+        if stopped.running and not running and recenter:
+            _recenter()
+        stopped.running = running
+    except Exception as e:
+        print("Blendeck: recenter skipped:", e)
 
 
 def _level(ed):
@@ -1051,7 +1095,9 @@ def _tick():
         if not _finish_connect():
             return TICK if link.pending is not None else RETRY
     _flush()
-    _apply(_read(), prefs)
+    messages = _read()
+    _apply(messages, prefs)
+    _watch_stop(not protocol.wants_view_all(messages))
     _move_undo(time.monotonic())
     return TICK
 
