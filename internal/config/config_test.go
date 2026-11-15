@@ -474,3 +474,33 @@ func TestPanBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestViewAllBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "view-all")
+	// A plain button, nothing on Fn: Fn + the button views all too
+	if b.Action != ActionViewAll || b.Name != "View whole timeline" || b.Control.Learned() || b.Control.Type != "note" || b.Modifier != "" || b.Step != 0 || b.Encoder != "" {
+		t.Fatalf("default view-all binding = %+v", b)
+	}
+	// The owner's button (note 41), and a cc used as a button
+	for _, ctl := range []Control{{"note", 1, 41}, {"cc", 1, 20}} {
+		b.Control = ctl
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%+v: %v", ctl, err)
+		}
+	}
+	b.Control = Control{"pitch_bend", 1, 0}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "view whole timeline needs a button") {
+		t.Fatalf("err = %v", err)
+	}
+	b.Control = Control{"note", 1, 41}
+	b.Step = 1
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+		t.Fatalf("step err = %v", err)
+	}
+	b.Step = 0
+	b.Encoder = EncoderTwos
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+		t.Fatalf("encoder err = %v", err)
+	}
+}

@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.11.0"
+ADDON_VERSION = "0.12.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -266,6 +266,18 @@ def _pan(percent):
                 bpy.ops.view2d.pan(deltax=pixels, deltay=0)
         except Exception as e:
             print("Blendeck: pan skipped:", e)
+
+
+def _view_all():
+    """Fits every timeline to the whole edit, like Home over the strips:
+    every strip in view, on every channel. Only the view changes. An editor
+    that fails is skipped, never raised."""
+    for win, area, region in list(_timelines()):
+        try:
+            with bpy.context.temp_override(window=win, area=area, region=region):
+                bpy.ops.sequencer.view_all()
+        except Exception as e:
+            print("Blendeck: view all skipped:", e)
 
 
 def _level(ed):
@@ -949,6 +961,10 @@ def on_frame_change(scene, depsgraph=None):
 
 
 def _apply(messages, prefs):
+    # View all first: a zoom or pan in the same read then applies to the
+    # whole-edit view instead of being thrown away by it
+    if protocol.wants_view_all(messages):
+        _view_all()
     _zoom(protocol.total_zoom(messages))
     _pan(protocol.total_pan(messages))
     scene = _scene()
