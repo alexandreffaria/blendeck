@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "blendeck"
+version = "0.1.3"
+name = "Blendeck"
+tagline = "Drive the video editor from a MIDI controller like the Loupedeck+"
+maintainer = "Blendeck contributors"
+type = "add-on"
+website = "https://github.com/alexandreffaria/blendeck"
+tags = ["Sequencer", "User Interface"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:MIT"]
+
+[permissions]
+network = "Talks to the Blendeck bridge on this computer (127.0.0.1)"
