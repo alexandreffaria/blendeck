@@ -450,3 +450,142 @@ func TestZoomCommandJSON(t *testing.T) {
 		t.Fatalf("got %s", data)
 	}
 }
+
+// The owner's cut button: note 53 on channel 1, pressed with velocity 64.
+var cutDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 53, Value: 64}
+var cutUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 53, Value: 64}
+
+// cutProfile is zoomProfile with the cut button learned as note 53.
+func cutProfile() config.Profile {
+	p := zoomProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].Action == config.ActionCut {
+			p.Bindings[i].Control.Number = 53
+		}
+	}
+	return p
+}
+
+// cuts reports whether m sends a cut, and fails on any other command.
+func cuts(t *testing.T, e *Engine, m midi.Message) bool {
+	t.Helper()
+	hit, _ := e.Handle(m)
+	if hit.Command == nil {
+		return false
+	}
+	if *hit.Command != (Command{Type: "cut"}) {
+		t.Fatalf("command = %+v, want a cut", hit.Command)
+	}
+	return true
+}
+
+func TestCutOncePerPress(t *testing.T) {
+	e := New(cutProfile())
+	hit, _ := e.Handle(cutDown)
+	if hit.Binding != "cut" || hit.Command == nil || hit.Command.Type != "cut" {
+		t.Fatalf("press: %+v", hit)
+	}
+	hit, _ = e.Handle(cutUp)
+	if hit.Binding != "cut" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	// Note on with velocity 0 is a release too (running status)
+	if cuts(t, e, midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 53}) {
+		t.Fatal("velocity-0 release cut")
+	}
+	if !cuts(t, e, cutDown) {
+		t.Fatal("second press didn't cut")
+	}
+}
+
+// With Fn held and no Fn cut binding, the plain one still cuts; releasing
+// Fn in between changes nothing.
+func TestCutWithFnHeld(t *testing.T) {
+	e := New(cutProfile())
+	e.Handle(fnDown)
+	if !cuts(t, e, cutDown) {
+		t.Fatal("Fn + press didn't cut")
+	}
+	if cuts(t, e, cutUp) {
+		t.Fatal("Fn + release cut")
+	}
+	e.Handle(fnUp)
+	if !cuts(t, e, cutDown) {
+		t.Fatal("press after Fn release didn't cut")
+	}
+}
+
+// An Fn cut binding wins while Fn is held, and only then.
+func TestCutFnBindingWins(t *testing.T) {
+	p := cutProfile()
+	p.Bindings = append(p.Bindings, config.Binding{ID: "cut-fn", Name: "Cut (Fn)", Control: config.Control{Type: "note", Channel: 1, Number: 53}, Modifier: "Fn", Action: config.ActionCut})
+	e := New(p)
+	if hit, _ := e.Handle(cutDown); hit.Binding != "cut" {
+		t.Fatalf("plain press matched %q", hit.Binding)
+	}
+	e.Handle(fnDown)
+	if hit, _ := e.Handle(cutDown); hit.Binding != "cut-fn" || hit.Command == nil {
+		t.Fatalf("Fn press: %+v", hit)
+	}
+}
+
+func TestCutNotLearnedIgnored(t *testing.T) {
+	e := New(zoomProfile()) // cut still at -1
+	hit, _ := e.Handle(cutDown)
+	if hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned cut matched: %+v", hit)
+	}
+}
+
+// A cc used as a button cuts at 64 and up, and not on its release.
+func TestCutOnCCButton(t *testing.T) {
+	p := cutProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].Action == config.ActionCut {
+			p.Bindings[i].Control = config.Control{Type: "cc", Channel: 1, Number: 20}
+		}
+	}
+	e := New(p)
+	cc := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 20, Value: v}
+	}
+	if !cuts(t, e, cc(127)) || !cuts(t, e, cc(64)) {
+		t.Fatal("cc press didn't cut")
+	}
+	if cuts(t, e, cc(0)) || cuts(t, e, cc(63)) {
+		t.Fatal("cc release cut")
+	}
+}
+
+// The cut button doesn't disturb the knobs, and a knob doesn't cut.
+func TestCutApartFromKnobs(t *testing.T) {
+	e := New(cutProfile())
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("scrub = %d", got)
+	}
+	if cuts(t, e, midi.Message{Kind: midi.NoteOn, Channel: 2, Number: 53, Value: 64}) {
+		t.Fatal("note 53 on channel 2 cut")
+	}
+	if cuts(t, e, midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 52, Value: 64}) {
+		t.Fatal("note 52 cut")
+	}
+}
+
+func TestCutDuringLearnIsCaptured(t *testing.T) {
+	e := New(cutProfile())
+	e.Learn(LearnBinding, nil)
+	hit, l := e.Handle(cutDown)
+	if hit.Command != nil || l == nil || l.Control != (config.Control{Type: "note", Channel: 1, Number: 53}) {
+		t.Fatalf("hit %+v learned %+v", hit, l)
+	}
+	if cuts(t, e, cutUp) {
+		t.Fatal("the release after learning cut")
+	}
+}
+
+func TestCutCommandJSON(t *testing.T) {
+	data, _ := json.Marshal(Command{Type: "cut"})
+	if string(data) != `{"type":"cut"}` {
+		t.Fatalf("got %s", data)
+	}
+}

@@ -15,6 +15,7 @@ and keeps profiles.
 | --- | --- | --- |
 | Any knob you pick | Moves the playhead 10 frames per click | 1 frame per click |
 | Another knob you pick | Zooms the timeline 4 steps per click (about 27%), around the playhead | 1 step per click (7.5%) |
+| A button you pick | Cuts every strip under the playhead (soft cut, like K), once per press; Ctrl+Z undoes it | The same |
 
 More come one at a time.
 
@@ -30,7 +31,8 @@ More come one at a time.
    on "Scrub timeline" and turn the knob. Under **Modifiers**, click
    **Learn** on Fn and press Fn. Then **Learn** on "Scrub timeline (fine)"
    while holding Fn, and **Save**. Do the same for "Zoom timeline" and
-   "Zoom timeline (fine)" with the knob you want for zoom.
+   "Zoom timeline (fine)" with the knob you want for zoom, and **Learn** on
+   "Cut at playhead" and press the button you want for cutting.
 
 The add-on's panel is in the video editor's sidebar (N), tab Blendeck. Its
 preferences have the bridge's address and "Stop at scene start and end".
@@ -42,7 +44,8 @@ bridge drops it and the add-on reconnects by itself a second later.
 - **Monitor**: every MIDI message, live, with what it did. Use it to see
   what a control sends.
 - **Bindings**: control → action, with frames (scrub) or zoom steps (zoom) per click and the knob's
-  encoding (most send 1 / 127 for one click right / left).
+  encoding (most send 1 / 127 for one click right / left). Button actions
+  (cut) have neither.
 - **Modifiers**: buttons like Fn that switch bindings while held.
 - **Profiles**: named sets of bindings; the selected one is active.
 - **Blender**: connection, scene, playhead, and test buttons.

@@ -8,6 +8,9 @@ MAX_LINE = 64 * 1024
 # Zoom steps applied per tick at most, so a burst of commands can't keep
 # Blender's UI busy zooming. Each step is one zoom operator call per editor.
 MAX_ZOOM_PER_TICK = 40
+# Cuts applied per tick at most; a button can't be pressed faster than a few
+# times a tick, so more than this is a flood, not someone editing.
+MAX_CUTS_PER_TICK = 8
 
 
 class LineBuffer:
@@ -67,6 +70,40 @@ def total_zoom(messages):
         if isinstance(clicks, int) and not isinstance(clicks, bool):
             total += clicks
     return max(-MAX_ZOOM_PER_TICK, min(MAX_ZOOM_PER_TICK, total))
+
+
+def edit_steps(messages):
+    """The scrubs and cuts in messages, in order: ("scrub", frames) and
+    ("cut", None). Order matters, since a cut lands where the playhead is at
+    that moment. Scrubs in a row are added up, cuts in a row with no scrub
+    between become one (a second cut at the same frame does nothing), and
+    cuts past MAX_CUTS_PER_TICK are dropped; scrubs after them still count.
+    Malformed commands are ignored."""
+    steps = []
+    cuts = 0
+    for m in messages:
+        kind = m.get("type")
+        if kind == "scrub":
+            frames = m.get("frames")
+            if not isinstance(frames, int) or isinstance(frames, bool) or frames == 0:
+                continue
+            if steps and steps[-1][0] == "scrub":
+                steps[-1] = ("scrub", steps[-1][1] + frames)
+            else:
+                steps.append(("scrub", frames))
+        elif kind == "cut":
+            if cuts >= MAX_CUTS_PER_TICK or (steps and steps[-1][0] == "cut"):
+                continue
+            cuts += 1
+            steps.append(("cut", None))
+    return steps
+
+
+def cuttable(start, end, frame, locked):
+    """Whether a strip covering start..end (end exclusive) is cut at frame:
+    the playhead must be strictly inside it, so a strip that starts or ends
+    right there is left alone, and a locked one is never cut."""
+    return not locked and start < frame < end
 
 
 def zoom_plan(clicks):

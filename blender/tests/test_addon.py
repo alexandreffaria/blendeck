@@ -31,6 +31,7 @@ class _Scene:
     frame_start = 1
     frame_end = 100
     render = _Render()
+    sequence_editor = None
 
     def frame_set(self, f):
         self.frame_current = f
@@ -99,6 +100,58 @@ class _View2D:
 ZOOM = _Zoom()
 
 
+class _Strip:
+    """A strip as Blender 5.2's data API has it: split(frame, method) keeps
+    the left part and adds the right part to the same level, copying lock
+    and selection like the real Strip.split. Every split goes into log."""
+
+    def __init__(self, name, channel, start, end, log, level, lock=False, select=False, fail=False):
+        self.name, self.channel = name, channel
+        self.frame_final_start, self.frame_final_end = start, end
+        self.lock, self.select, self.fail = lock, select, fail
+        self.log, self.level = log, level
+
+    def split(self, frame, method):
+        if self.fail:
+            raise RuntimeError("Strip can't be split")
+        self.log.append((self.name, frame, method))
+        right = _Strip(self.name + ".001", self.channel, frame, self.frame_final_end, self.log, self.level, self.lock, self.select)
+        self.frame_final_end = frame
+        self.level.append(right)
+        return right
+
+
+class _Channel:
+    def __init__(self, lock=False):
+        self.lock = lock
+
+
+class _Owner:
+    """The editor or a meta strip: its strips and its channels (0..128)."""
+
+    def __init__(self, log):
+        self.log = log
+        self.strips = []
+        self.channels = [_Channel() for _ in range(129)]
+
+    def add(self, name, channel, start, end, **kw):
+        s = _Strip(name, channel, start, end, self.log, self.strips, **kw)
+        self.strips.append(s)
+        return s
+
+    def spans(self):
+        return sorted((s.name, s.frame_final_start, s.frame_final_end) for s in self.strips)
+
+
+class _Editor(_Owner):
+    def __init__(self):
+        super().__init__([])
+        self.meta_stack = []
+
+
+UNDO = []  # messages of the undo steps pushed
+
+
 def zooms():
     """The zoom calls made so far, without the pans that anchor them."""
     return [c for c in ZOOM.calls if c[0] != "pan"]
@@ -128,7 +181,10 @@ def _install_fake_bpy():
         window_manager=types.SimpleNamespace(windows=[]),
         temp_override=ZOOM.temp_override,
     )
-    bpy.ops = types.SimpleNamespace(view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan))
+    bpy.ops = types.SimpleNamespace(
+        view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan),
+        ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}),
+    )
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
     bpy.props = types.SimpleNamespace(BoolProperty=lambda **k: None, StringProperty=lambda **k: None, IntProperty=lambda **k: None)
@@ -207,6 +263,8 @@ class AddonTest(unittest.TestCase):
         addon._close("reset")
         ZOOM.calls.clear()
         ZOOM.fail_in.clear()
+        SCENE.sequence_editor = None
+        UNDO.clear()
 
     def _screen(self):
         """One window with: a strips timeline, a strips+preview editor, a
@@ -298,6 +356,91 @@ class AddonTest(unittest.TestCase):
         addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
         addon._zoom(1)
         self.assertEqual(ZOOM.calls, [])
+
+    def _editor(self):
+        """Strips around frame 50: A and C cross it, B is locked, D starts
+        after it, E ends at it, F sits on a locked channel."""
+        ed = _Editor()
+        ed.add("A", 1, 1, 101, select=True)
+        ed.add("B", 2, 1, 101, lock=True)
+        ed.add("C", 3, 1, 101)
+        ed.add("D", 4, 60, 160)
+        ed.add("E", 5, 1, 50)
+        ed.add("F", 6, 1, 101)
+        ed.channels[6].lock = True
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 50
+        return ed
+
+    def test_cut_everything_under_playhead(self):
+        ed = self._editor()
+        self.assertEqual(addon._cut(SCENE), 2)
+        self.assertEqual(ed.log, [("A", 50, "SOFT"), ("C", 50, "SOFT")])
+        self.assertEqual(
+            ed.spans(),
+            [("A", 1, 50), ("A.001", 50, 101), ("B", 1, 101), ("C", 1, 50), ("C.001", 50, 101), ("D", 60, 160), ("E", 1, 50), ("F", 1, 101)],
+        )
+        # One undo step for the whole cut, and selection left as it was
+        self.assertEqual(UNDO, ["Cut at playhead"])
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A", "A.001"})
+        # Again at the same frame: nothing left to cut, and no empty undo step
+        self.assertEqual(addon._cut(SCENE), 0)
+        self.assertEqual(UNDO, ["Cut at playhead"])
+
+    def test_cut_inside_meta(self):
+        ed = self._editor()
+        meta = _Owner(ed.log)
+        meta.add("M1", 1, 1, 101)
+        ed.meta_stack = [meta]
+        self.assertEqual(addon._cut(SCENE), 1)
+        self.assertEqual(ed.log, [("M1", 50, "SOFT")])
+        self.assertEqual(meta.spans(), [("M1", 1, 50), ("M1.001", 50, 101)])
+
+    def test_cut_failure_skips_that_strip(self):
+        ed = self._editor()
+        ed.strips[0].fail = True
+        self.assertEqual(addon._cut(SCENE), 1)
+        self.assertEqual(ed.log, [("C", 50, "SOFT")])
+        self.assertEqual(UNDO, ["Cut at playhead"])
+
+    def test_cut_undo_failure_doesnt_raise(self):
+        self._editor()
+        orig = addon.bpy.ops.ed.undo_push
+        addon.bpy.ops.ed.undo_push = lambda message="": 1 / 0
+        try:
+            self.assertEqual(addon._cut(SCENE), 2)
+        finally:
+            addon.bpy.ops.ed.undo_push = orig
+
+    def test_cut_without_strips(self):
+        self.assertEqual(addon._cut(SCENE), 0)  # no sequence editor at all
+        SCENE.sequence_editor = _Editor()
+        self.assertEqual(addon._cut(SCENE), 0)
+        self.assertEqual(UNDO, [])
+
+    def test_cut_after_scrub_in_the_same_read(self):
+        ed = self._editor()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        SCENE.frame_current = 40
+        # Scrub to 50, cut, scrub on to 70, cut: one read, cuts in order
+        conn.sendall(b'{"type":"scrub","frames":10}\n{"type":"cut"}\n{"type":"scrub","frames":20}\n{"type":"cut"}\n')
+        self.assertTrue(tick_until(lambda: len(UNDO) == 2))
+        self.assertEqual(SCENE.frame_current, 70)
+        cuts = [(name, frame) for name, frame, _ in ed.log]
+        self.assertEqual(cuts[:2], [("A", 50), ("C", 50)])
+        self.assertEqual(sorted(cuts[2:]), [("A.001", 70), ("C.001", 70), ("D", 70)])
+        conn.close()
+        bridge.close()
+
+    def test_cut_flood_capped(self):
+        ed = self._editor()
+        addon._apply([{"type": "cut"}, {"type": "scrub", "frames": 1}] * 30, PREFS)
+        self.assertEqual(len(UNDO), addon.protocol.MAX_CUTS_PER_TICK)
+        self.assertEqual(SCENE.frame_current, 80)
+        self.assertTrue(ed.log)
 
     def test_closed_port_never_blocks(self):
         PREFS.port = free_port()

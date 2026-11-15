@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.2.0"
+ADDON_VERSION = "0.3.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -245,14 +245,62 @@ def _zoom(clicks):
             print("Blendeck: zoom skipped:", e)
 
 
+def _level(ed):
+    """The strips and channels the video editor is showing: those of the
+    meta strip being edited (Tab into a meta), or the top level."""
+    stack = list(ed.meta_stack)
+    owner = stack[-1] if stack else ed
+    return owner.strips, owner.channels
+
+
+def _channel_locked(channels, number):
+    try:
+        return bool(channels[number].lock)
+    except (IndexError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def _cut(scene):
+    """Cuts every strip under the playhead in the level the editor shows,
+    like Blender's soft split (K) with nothing selected needed: locked
+    strips and strips on locked channels are skipped, both halves keep the
+    strip's selection, and one undo step covers the whole cut. A strip that
+    fails is skipped, never raised. Returns how many strips were cut."""
+    ed = scene.sequence_editor
+    if ed is None:
+        return 0
+    frame = scene.frame_current
+    strips, channels = _level(ed)
+    done = 0
+    for strip in list(strips):
+        try:
+            # Checked strip by strip: cutting one can already have cut
+            # another (connected strips, effects on it)
+            locked = strip.lock or _channel_locked(channels, strip.channel)
+            if protocol.cuttable(strip.frame_final_start, strip.frame_final_end, frame, locked):
+                strip.split(frame, "SOFT")
+                done += 1
+        except Exception as e:
+            print("Blendeck: cut skipped a strip:", e)
+    if done:
+        try:
+            bpy.ops.ed.undo_push(message="Cut at playhead")
+        except Exception as e:
+            print("Blendeck: no undo step for the cut:", e)
+        _redraw()
+    return done
+
+
 def _apply(messages, prefs):
     _zoom(protocol.total_zoom(messages))
     scene = _scene()
     if scene is None:
         return
-    delta = protocol.total_scrub(messages)
-    if delta:
-        target = protocol.scrub_target(scene.frame_current, delta, scene.frame_start, scene.frame_end, prefs.clamp)
+    for kind, frames in protocol.edit_steps(messages):
+        if kind == "cut":
+            _cut(scene)
+            continue
+        target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
             scene.frame_set(target)
     if link.sock is None:

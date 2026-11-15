@@ -42,6 +42,9 @@ func TestValidateRejects(t *testing.T) {
 		"zoom on button":   func(c *Config) { zoom(c).Control.Type = "note" },
 		"zoom pitchbend":   func(c *Config) { zoom(c).Control = Control{"pitch_bend", 1, 0} },
 		"zoom no encoder":  func(c *Config) { zoom(c).Encoder = "" },
+		"cut pitchbend":    func(c *Config) { cut(c).Control = Control{"pitch_bend", 1, 0} },
+		"cut with step":    func(c *Config) { cut(c).Step = 1 },
+		"cut with encoder": func(c *Config) { cut(c).Encoder = EncoderTwos },
 		"too many mods":    func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
 		"too many profile": func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
@@ -62,6 +65,35 @@ func zoom(c *Config) *Binding {
 		}
 	}
 	panic("no zoom binding in the default config")
+}
+
+// cut returns the default profile's cut binding.
+func cut(c *Config) *Binding {
+	for i := range c.Profiles[0].Bindings {
+		if c.Profiles[0].Bindings[i].ID == "cut" {
+			return &c.Profiles[0].Bindings[i]
+		}
+	}
+	panic("no cut binding in the default config")
+}
+
+func TestCutBinding(t *testing.T) {
+	c := Default()
+	k := cut(&c)
+	if k.Action != ActionCut || k.Control.Learned() || k.Control.Type != "note" || k.Modifier != "" || k.Step != 0 || k.Encoder != "" {
+		t.Fatalf("default cut binding = %+v", k)
+	}
+	// The owner's button, and a cc used as a button, are both fine
+	for _, ctl := range []Control{{"note", 1, 53}, {"cc", 1, 20}} {
+		k.Control = ctl
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%+v: %v", ctl, err)
+		}
+	}
+	k.Control = Control{"pitch_bend", 1, 0}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "needs a button") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestZoomBindings(t *testing.T) {
