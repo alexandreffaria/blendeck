@@ -3,13 +3,48 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Selection follows the playhead (20261115pnow)
+
+Asked what should be selected after a cut, the owner chose Premiere's
+"selection follows playhead": whenever the playhead moves (a knob, the
+mouse, playback), the strips under it are selected and every other strip is
+deselected, so the cut and ripple delete buttons act on what's under it.
+Locked strips and strips on locked channels aren't selected. Right after a
+cut, the right halves are selected, since they now start at the playhead.
+It's the add-on preference "Selection follows playhead", on by default, and
+it does nothing while Blender renders.
+
+## The cut button cuts the selected strips under the playhead, else all (202611159rr6)
+
+Of the strips the playhead is inside, the selected ones are cut; with none
+of them selected, all of them are. Locked strips and strips on locked
+channels never are. With selection following the playhead, that is normally
+everything under it; selecting some of those strips by hand afterwards cuts
+just those.
+
+## The cut button makes a soft cut (20261115o21w)
+
+A soft cut, like Blender's K: both halves keep the hidden media past the
+cut, so either side can be dragged back out later.
+
+## The undo button works anywhere in Blender (20261115msk0)
+
+Undo runs whatever area is in use, like Ctrl+Z, not only while a video
+editor is showing.
+
+## Fn + the undo button also undoes (20261115fla1)
+
+No redo on Fn: the undo button undoes with or without Fn held. (It was
+"redo" briefly; the owner reopened the card and chose this before it was
+built.)
+
 ## Ripple delete deletes the selected strips under the playhead, else all (20261115e3it)
 
 Of the strips under the playhead, the selected ones are deleted; with none
 of them selected, all of them are. Locked strips and strips on locked
 channels never are. That is the cut button's rule (202611159rr6). The owner
 wants the playhead to select everything under it, so normally everything
-under it goes; selection following the playhead comes in a later change.
+under it goes (see "Selection follows the playhead").
 
 ## Ripple delete closes the gap on all channels (202611153gow)
 

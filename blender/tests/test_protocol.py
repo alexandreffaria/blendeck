@@ -311,6 +311,41 @@ class RippleDeleteTest(unittest.TestCase):
         self.assertEqual(self.plan([S(1, 100, inputs=(5, 0, -1))], 10).delete, [0])
 
 
+class SelectionTest(unittest.TestCase):
+    def spans(self):
+        S = protocol.Span
+        return [
+            S(1, 101),  # 0: under the playhead
+            S(1, 101, locked=True),  # 1: under, locked
+            S(1, 101, selected=True),  # 2: under, selected
+            S(60, 160),  # 3: after
+            S(1, 50),  # 4: ends at the playhead
+            S(50, 90),  # 5: starts at the playhead
+        ]
+
+    def test_cut_targets_selected_only(self):
+        self.assertEqual(protocol.cut_targets(self.spans(), 50), [2])
+
+    def test_cut_targets_all_when_none_selected(self):
+        spans = [s._replace(selected=False) for s in self.spans()]
+        # Strictly inside: 5 starts at 50 and isn't cut
+        self.assertEqual(protocol.cut_targets(spans, 50), [0, 2])
+
+    def test_cut_targets_selection_outside_playhead_ignored(self):
+        spans = [s._replace(selected=False) for s in self.spans()]
+        spans[3] = spans[3]._replace(selected=True)
+        self.assertEqual(protocol.cut_targets(spans, 50), [0, 2])
+
+    def test_cut_targets_nothing(self):
+        self.assertEqual(protocol.cut_targets([], 50), [])
+        self.assertEqual(protocol.cut_targets([protocol.Span(1, 101, locked=True)], 50), [])
+
+    def test_follow_selection(self):
+        self.assertEqual(protocol.follow_selection(self.spans(), 50), [True, False, True, False, False, True])
+        self.assertEqual(protocol.follow_selection(self.spans(), 200), [False] * 6)
+        self.assertEqual(protocol.follow_selection([], 50), [])
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

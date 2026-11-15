@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.5.0"
+ADDON_VERSION = "0.6.1"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -264,31 +264,54 @@ def _channel_locked(channels, number):
         return False
 
 
-def _cut(scene):
-    """Cuts every strip under the playhead in the level the editor shows,
-    like Blender's soft split (K) with nothing selected needed: locked
-    strips and strips on locked channels are skipped, both halves keep the
-    strip's selection, and one undo step covers the whole cut. A strip that
-    fails is skipped, never raised. Returns how many strips were cut."""
+def _spans(strips, channels):
+    """The strips of a level as protocol.Span, in the same order, without
+    effect inputs (see _ripple_delete for those)."""
+    out = []
+    for s in strips:
+        start, end = _span(s)
+        locked = bool(s.lock) or _channel_locked(channels, s.channel)
+        out.append(protocol.Span(start, end, locked, bool(s.select)))
+    return out
+
+
+def _cut(scene, follow=False):
+    """Soft-cuts (like K) at the playhead in the level the editor shows: the
+    selected strips under it, or every strip under it when none of those is
+    selected (see protocol.cut_targets). Locked strips and strips on locked
+    channels are skipped, and one undo step covers the whole cut. Both halves
+    keep the strip's selection, unless follow (selection follows the
+    playhead): then the right half, which starts at the playhead, is selected
+    and the left half deselected. Strips that weren't cut keep their
+    selection, so a hand-picked selection survives for the next edit. A
+    strip that fails is skipped, never raised. Returns how many strips were
+    cut."""
     try:
         ed = scene.sequence_editor
         if ed is None:
             return 0
         frame = scene.frame_current
         strips, channels = _level(ed)
+        items = list(strips)
+        targets = [items[i] for i in protocol.cut_targets(_spans(items, channels), frame)]
     except Exception as e:
         # An editor this add-on doesn't understand: no cut, link kept
         print("Blendeck: cut skipped:", e)
         return 0
     done = 0
-    for strip in list(strips):
+    for strip in targets:
         try:
-            # Checked strip by strip: cutting one can already have cut
+            # Checked again strip by strip: cutting one can already have cut
             # another (connected strips, effects on it)
+            start, end = _span(strip)
             locked = strip.lock or _channel_locked(channels, strip.channel)
-            if protocol.cuttable(strip.frame_final_start, strip.frame_final_end, frame, locked):
-                strip.split(frame, "SOFT")
+            if protocol.cuttable(start, end, frame, locked):
+                right = strip.split(frame, "SOFT")
                 done += 1
+                if follow:
+                    strip.select = False
+                    if right is not None:
+                        right.select = True
         except Exception as e:
             print("Blendeck: cut skipped a strip:", e)
     if done:
@@ -429,6 +452,57 @@ def _ripple_delete(scene):
     return removed
 
 
+def _follow(scene):
+    """Selection follows the playhead: selects the unlocked strips under it
+    in the level the editor shows and deselects the rest, like Premiere's
+    option of that name. Never raises. Returns whether anything changed."""
+    try:
+        ed = scene.sequence_editor
+        if ed is None:
+            return False
+        strips, channels = _level(ed)
+        items = list(strips)
+        want = protocol.follow_selection(_spans(items, channels), scene.frame_current)
+        changed = False
+        for strip, on in zip(items, want):
+            if bool(strip.select) != on:
+                strip.select = on
+                changed = True
+    except Exception as e:
+        print("Blendeck: selection didn't follow the playhead:", e)
+        return False
+    if changed:
+        _redraw()
+    return changed
+
+
+def _rendering():
+    try:
+        return bool(bpy.app.is_job_running("RENDER"))
+    except Exception:
+        return False
+
+
+def _persistent(f):
+    """bpy.app.handlers.persistent, so the handler survives opening a file;
+    a no-op where bpy has no handlers (the tests' fake bpy)."""
+    handlers = getattr(bpy.app, "handlers", None)
+    return getattr(handlers, "persistent", lambda g: g)(f)
+
+
+@_persistent
+def on_frame_change(scene, depsgraph=None):
+    """Runs after every playhead move, whatever moved it (a knob, the mouse,
+    playback). Must never raise: Blender would print it every frame."""
+    try:
+        prefs = _prefs()
+        if prefs is None or not prefs.follow_selection or _rendering():
+            return
+        _follow(scene)
+    except Exception as e:
+        print("Blendeck:", e)
+
+
 def _apply(messages, prefs):
     _zoom(protocol.total_zoom(messages))
     scene = _scene()
@@ -436,7 +510,9 @@ def _apply(messages, prefs):
         return
     for kind, frames in protocol.edit_steps(messages):
         if kind == "cut":
-            _cut(scene)
+            # Only the strips cut change selection (see _cut): a full
+            # re-follow here would replace a hand-picked selection
+            _cut(scene, follow=prefs.follow_selection)
             continue
         if kind == "undo":
             _undo()
@@ -446,7 +522,8 @@ def _apply(messages, prefs):
                 return
             continue
         if kind == "ripple_delete":
-            _ripple_delete(scene)
+            if _ripple_delete(scene) and prefs.follow_selection:
+                _follow(scene)  # the playhead may not have moved
             continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
@@ -506,11 +583,17 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
         description="Scrubbing stops at the scene's first and last frame",
         default=True,
     )
+    follow_selection: bpy.props.BoolProperty(
+        name="Selection follows playhead",
+        description="Whenever the playhead moves, the strips under it are selected and the rest deselected, so cut and ripple delete act on them. Works with or without the bridge connected",
+        default=True,
+    )
 
     def draw(self, context):
         col = self.layout.column()
         col.prop(self, "enabled")
         col.prop(self, "clamp")
+        col.prop(self, "follow_selection")
         row = col.row()
         row.prop(self, "host")
         row.prop(self, "port")
@@ -531,6 +614,7 @@ class SEQUENCER_PT_blendeck(bpy.types.Panel):
         if prefs:
             col.prop(prefs, "enabled")
             col.prop(prefs, "clamp")
+            col.prop(prefs, "follow_selection")
 
 
 classes = (BlendeckPreferences, SEQUENCER_PT_blendeck)
@@ -541,9 +625,21 @@ def register():
         bpy.utils.register_class(c)
     if not bpy.app.timers.is_registered(tick):
         bpy.app.timers.register(tick, first_interval=0.5, persistent=True)
+    _remove_handler()
+    bpy.app.handlers.frame_change_post.append(on_frame_change)
+
+
+def _remove_handler():
+    """Takes on_frame_change out of the frame-change handlers, also a copy
+    from an earlier load of this add-on (a reload makes a new function)."""
+    hs = bpy.app.handlers.frame_change_post
+    for h in list(hs):
+        if h is on_frame_change or (getattr(h, "__name__", "") == "on_frame_change" and getattr(h, "__module__", "") == __name__):
+            hs.remove(h)
 
 
 def unregister():
+    _remove_handler()
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
     _close("Not connected")

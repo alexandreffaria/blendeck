@@ -18,6 +18,11 @@ class _Prefs:
     host = "127.0.0.1"
     port = 0
     clamp = True
+    follow_selection = False  # tests that want it turn it on
+
+
+# Blender's frame_change_post: called with the scene after every frame_set
+FRAME_HANDLERS = []
 
 
 class _Render:
@@ -35,6 +40,8 @@ class _Scene:
 
     def frame_set(self, f):
         self.frame_current = f
+        for h in list(FRAME_HANDLERS):
+            h(self, None)
 
 
 class _Zoom:
@@ -360,6 +367,9 @@ class AddonTest(unittest.TestCase):
         ED_UNDO.left = 0
         ED_UNDO.fail = False
         ED_UNDO.restore_frame = 1
+        PREFS.follow_selection = False
+        FRAME_HANDLERS.clear()
+        addon.bpy.app.is_job_running = lambda job: False
 
     def _screen(self):
         """One window with: a strips timeline, a strips+preview editor, a
@@ -467,20 +477,36 @@ class AddonTest(unittest.TestCase):
         SCENE.frame_current = 50
         return ed
 
-    def test_cut_everything_under_playhead(self):
+    def test_cut_everything_under_playhead_when_none_selected(self):
         ed = self._editor()
+        ed.strips[0].select = False
         self.assertEqual(addon._cut(SCENE), 2)
         self.assertEqual(ed.log, [("A", 50, "SOFT"), ("C", 50, "SOFT")])
         self.assertEqual(
             ed.spans(),
             [("A", 1, 50), ("A.001", 50, 101), ("B", 1, 101), ("C", 1, 50), ("C.001", 50, 101), ("D", 60, 160), ("E", 1, 50), ("F", 1, 101)],
         )
-        # One undo step for the whole cut, and selection left as it was
+        # One undo step for the whole cut
         self.assertEqual(UNDO, ["Cut at playhead"])
-        self.assertEqual({s.name for s in ed.strips if s.select}, {"A", "A.001"})
         # Again at the same frame: nothing left to cut, and no empty undo step
         self.assertEqual(addon._cut(SCENE), 0)
         self.assertEqual(UNDO, ["Cut at playhead"])
+
+    def test_cut_selected_only(self):
+        # Decision 202611159rr6: the selected strips under the playhead if
+        # any, else all of them. A is selected, C isn't.
+        ed = self._editor()
+        self.assertEqual(addon._cut(SCENE), 1)
+        self.assertEqual(ed.log, [("A", 50, "SOFT")])
+        # Both halves keep the selection, as Blender's split does
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A", "A.001"})
+
+    def test_cut_selection_elsewhere_cuts_everything(self):
+        ed = self._editor()
+        ed.strips[0].select = False
+        ed.strips[3].select = True  # D, not under the playhead
+        self.assertEqual(addon._cut(SCENE), 2)
+        self.assertEqual([n for n, _, _ in ed.log], ["A", "C"])
 
     def test_cut_inside_meta(self):
         ed = self._editor()
@@ -493,13 +519,15 @@ class AddonTest(unittest.TestCase):
 
     def test_cut_failure_skips_that_strip(self):
         ed = self._editor()
+        ed.strips[0].select = False  # nothing selected: the cut takes everything under the playhead
         ed.strips[0].fail = True
         self.assertEqual(addon._cut(SCENE), 1)
         self.assertEqual(ed.log, [("C", 50, "SOFT")])
         self.assertEqual(UNDO, ["Cut at playhead"])
 
     def test_cut_undo_failure_doesnt_raise(self):
-        self._editor()
+        ed = self._editor()
+        ed.strips[0].select = False  # nothing selected: the cut takes everything under the playhead
         orig = addon.bpy.ops.ed.undo_push
         addon.bpy.ops.ed.undo_push = lambda message="": 1 / 0
         try:
@@ -510,6 +538,7 @@ class AddonTest(unittest.TestCase):
     def test_cut_on_blender_4_2(self):
         # Before 4.4 the strips are "sequences"
         ed = self._editor()
+        ed.strips[0].select = False  # nothing selected: the cut takes everything under the playhead
         ed.sequences = ed.strips
         del ed.strips
         self.assertEqual(addon._cut(SCENE), 2)
@@ -539,11 +568,141 @@ class AddonTest(unittest.TestCase):
         conn.sendall(b'{"type":"scrub","frames":10}\n{"type":"cut"}\n{"type":"scrub","frames":20}\n{"type":"cut"}\n')
         self.assertTrue(tick_until(lambda: len(UNDO) == 2))
         self.assertEqual(SCENE.frame_current, 70)
+        # Without selection following the playhead, A stays the only
+        # selected strip, so only A (then its right half) is cut
         cuts = [(name, frame) for name, frame, _ in ed.log]
-        self.assertEqual(cuts[:2], [("A", 50), ("C", 50)])
-        self.assertEqual(sorted(cuts[2:]), [("A.001", 70), ("C.001", 70), ("D", 70)])
+        self.assertEqual(cuts, [("A", 50), ("A.001", 70)])
         conn.close()
         bridge.close()
+
+    def test_scrub_then_cut_with_selection_following(self):
+        # The owner's flow: the playhead selects what's under it, so a cut
+        # after a scrub cuts everything there, whatever was selected before
+        ed = self._editor()
+        PREFS.follow_selection = True
+        FRAME_HANDLERS.append(addon.on_frame_change)
+        SCENE.frame_current = 40
+        addon._apply([{"type": "scrub", "frames": 10}, {"type": "cut"}], PREFS)
+        self.assertEqual([(n, f) for n, f, _ in ed.log], [("A", 50), ("C", 50)])
+        # After the cut, the right halves (under the playhead) are selected
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A.001", "C.001"})
+        addon._apply([{"type": "scrub", "frames": 20}, {"type": "cut"}], PREFS)
+        self.assertEqual(sorted((n, f) for n, f, _ in ed.log[2:]), [("A.001", 70), ("C.001", 70), ("D", 70)])
+
+    def test_hand_picked_selection_survives_cut(self):
+        # Review of #7: playhead on 50, only C picked by hand. The cut splits
+        # C alone, and the next ripple delete must take only C's right half,
+        # never A, which was under the playhead but not picked.
+        ed = self._editor()
+        ed.strips[0].select = False  # A
+        ed.strips[2].select = True  # C
+        PREFS.follow_selection = True
+        FRAME_HANDLERS.append(addon.on_frame_change)
+        addon._apply([{"type": "cut"}], PREFS)
+        self.assertEqual([n for n, _, _ in ed.log], ["C"])
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"C.001"})
+        addon._apply([{"type": "ripple_delete"}], PREFS)
+        names = {s.name for s in ed.strips}
+        self.assertNotIn("C.001", names)
+        self.assertIn("A", names)
+
+    def test_cut_selection_set_before_undo_step(self):
+        # The undo step records the right halves selected, so redo matches
+        ed = self._editor()
+        seen = []
+        orig = addon.bpy.ops.ed.undo_push
+        addon.bpy.ops.ed.undo_push = lambda message="": seen.append(sorted(s.name for s in ed.strips if s.select)) or {"FINISHED"}
+        try:
+            addon._cut(SCENE, follow=True)
+        finally:
+            addon.bpy.ops.ed.undo_push = orig
+        self.assertEqual(seen, [["A.001"]])
+
+    def test_selection_follows_playhead(self):
+        ed = self._editor()
+        PREFS.follow_selection = True
+        addon.on_frame_change(SCENE)
+        # A and C are under 50; B is locked, F is on a locked channel, D
+        # starts later, E ends at 50
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A", "C"})
+        SCENE.frame_current = 120
+        addon.on_frame_change(SCENE)
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"D"})
+        SCENE.frame_current = 500
+        addon.on_frame_change(SCENE)
+        self.assertEqual({s.name for s in ed.strips if s.select}, set())
+
+    def test_selection_follows_inside_meta(self):
+        ed = self._editor()
+        meta = _Owner(ed.log)
+        meta.add("M1", 1, 1, 101)
+        meta.add("M2", 2, 60, 90, select=True)
+        ed.meta_stack = [meta]
+        PREFS.follow_selection = True
+        addon.on_frame_change(SCENE)
+        self.assertEqual({s.name for s in meta.strips if s.select}, {"M1"})
+        # The top level isn't touched while editing inside a meta
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A"})
+
+    def test_selection_doesnt_follow_when_off(self):
+        ed = self._editor()
+        addon.on_frame_change(SCENE)
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A"})
+
+    def test_selection_doesnt_follow_while_rendering(self):
+        ed = self._editor()
+        PREFS.follow_selection = True
+        addon.bpy.app.is_job_running = lambda job: job == "RENDER"
+        addon.on_frame_change(SCENE)
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"A"})
+
+    def test_selection_follow_never_raises(self):
+        PREFS.follow_selection = True
+
+        class Broken:
+            frame_current = 50
+
+            @property
+            def sequence_editor(self):
+                raise RuntimeError("gone")
+
+        addon.on_frame_change(Broken())  # must not raise
+        SCENE.sequence_editor = None
+        addon.on_frame_change(SCENE)
+
+    def test_ripple_delete_then_selection_follows(self):
+        ed = self._editor()
+        PREFS.follow_selection = True
+        FRAME_HANDLERS.append(addon.on_frame_change)
+        addon._apply([{"type": "ripple_delete"}], PREFS)
+        # Whatever ends up under the playhead is selected, nothing else
+        under = {s.name for s in ed.strips if not s.lock and not ed.channels[s.channel].lock and s.frame_final_start <= SCENE.frame_current < s.frame_final_end}
+        self.assertEqual({s.name for s in ed.strips if s.select}, under)
+
+    def test_frame_change_handler_registered_once(self):
+        handlers = types.SimpleNamespace(frame_change_post=[], persistent=lambda f: f)
+        timers = types.SimpleNamespace(is_registered=lambda f: True, register=lambda *a, **k: None, unregister=lambda f: None)
+        old_app, old_utils = addon.bpy.app, getattr(addon.bpy, "utils", None)
+        addon.bpy.app = types.SimpleNamespace(version_string="5.2.2", handlers=handlers, timers=timers, is_job_running=lambda j: False)
+        addon.bpy.utils = types.SimpleNamespace(register_class=lambda c: None, unregister_class=lambda c: None)
+        try:
+            # A stale copy from an earlier load of the add-on
+            def on_frame_change(scene, depsgraph=None):
+                pass
+
+            on_frame_change.__module__ = addon.__name__
+            handlers.frame_change_post.append(on_frame_change)
+            addon.register()
+            addon.register()
+            self.assertEqual(handlers.frame_change_post, [addon.on_frame_change])
+            addon.unregister()
+            self.assertEqual(handlers.frame_change_post, [])
+        finally:
+            addon.bpy.app = old_app
+            if old_utils is None:
+                del addon.bpy.utils
+            else:
+                addon.bpy.utils = old_utils
 
     def test_cut_flood_capped(self):
         ed = self._editor()
@@ -623,6 +782,7 @@ class AddonTest(unittest.TestCase):
         # the second cut use the scene the undo reloaded, never the freed one
         scene = self._undo_scene()
         ed = self._editor()  # built on SCENE: move it to the undo scene
+        ed.strips[0].select = False  # nothing selected: the cut takes everything under the playhead
         SCENE.sequence_editor = None
         scene.sequence_editor = ed
         scene.frame_current = 50
