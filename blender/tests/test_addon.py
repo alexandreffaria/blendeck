@@ -589,6 +589,35 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "scrub", "frames": 20}, {"type": "cut"}], PREFS)
         self.assertEqual(sorted((n, f) for n, f, _ in ed.log[2:]), [("A.001", 70), ("C.001", 70), ("D", 70)])
 
+    def test_hand_picked_selection_survives_cut(self):
+        # Review of #7: playhead on 50, only C picked by hand. The cut splits
+        # C alone, and the next ripple delete must take only C's right half,
+        # never A, which was under the playhead but not picked.
+        ed = self._editor()
+        ed.strips[0].select = False  # A
+        ed.strips[2].select = True  # C
+        PREFS.follow_selection = True
+        FRAME_HANDLERS.append(addon.on_frame_change)
+        addon._apply([{"type": "cut"}], PREFS)
+        self.assertEqual([n for n, _, _ in ed.log], ["C"])
+        self.assertEqual({s.name for s in ed.strips if s.select}, {"C.001"})
+        addon._apply([{"type": "ripple_delete"}], PREFS)
+        names = {s.name for s in ed.strips}
+        self.assertNotIn("C.001", names)
+        self.assertIn("A", names)
+
+    def test_cut_selection_set_before_undo_step(self):
+        # The undo step records the right halves selected, so redo matches
+        ed = self._editor()
+        seen = []
+        orig = addon.bpy.ops.ed.undo_push
+        addon.bpy.ops.ed.undo_push = lambda message="": seen.append(sorted(s.name for s in ed.strips if s.select)) or {"FINISHED"}
+        try:
+            addon._cut(SCENE, follow=True)
+        finally:
+            addon.bpy.ops.ed.undo_push = orig
+        self.assertEqual(seen, [["A.001"]])
+
     def test_selection_follows_playhead(self):
         ed = self._editor()
         PREFS.follow_selection = True

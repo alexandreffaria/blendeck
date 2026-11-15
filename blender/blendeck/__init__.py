@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.6.0"
+ADDON_VERSION = "0.6.1"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -275,13 +275,17 @@ def _spans(strips, channels):
     return out
 
 
-def _cut(scene):
+def _cut(scene, follow=False):
     """Soft-cuts (like K) at the playhead in the level the editor shows: the
     selected strips under it, or every strip under it when none of those is
     selected (see protocol.cut_targets). Locked strips and strips on locked
-    channels are skipped, both halves keep the strip's selection, and one
-    undo step covers the whole cut. A strip that fails is skipped, never
-    raised. Returns how many strips were cut."""
+    channels are skipped, and one undo step covers the whole cut. Both halves
+    keep the strip's selection, unless follow (selection follows the
+    playhead): then the right half, which starts at the playhead, is selected
+    and the left half deselected. Strips that weren't cut keep their
+    selection, so a hand-picked selection survives for the next edit. A
+    strip that fails is skipped, never raised. Returns how many strips were
+    cut."""
     try:
         ed = scene.sequence_editor
         if ed is None:
@@ -302,8 +306,12 @@ def _cut(scene):
             start, end = _span(strip)
             locked = strip.lock or _channel_locked(channels, strip.channel)
             if protocol.cuttable(start, end, frame, locked):
-                strip.split(frame, "SOFT")
+                right = strip.split(frame, "SOFT")
                 done += 1
+                if follow:
+                    strip.select = False
+                    if right is not None:
+                        right.select = True
         except Exception as e:
             print("Blendeck: cut skipped a strip:", e)
     if done:
@@ -502,10 +510,9 @@ def _apply(messages, prefs):
         return
     for kind, frames in protocol.edit_steps(messages):
         if kind == "cut":
-            if _cut(scene) and prefs.follow_selection:
-                # The playhead didn't move, so the handler won't run: the
-                # right halves, now under the playhead, get selected here
-                _follow(scene)
+            # Only the strips cut change selection (see _cut): a full
+            # re-follow here would replace a hand-picked selection
+            _cut(scene, follow=prefs.follow_selection)
             continue
         if kind == "undo":
             _undo()
@@ -578,7 +585,7 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
     )
     follow_selection: bpy.props.BoolProperty(
         name="Selection follows playhead",
-        description="Whenever the playhead moves, the strips under it are selected and the rest deselected, so cut and ripple delete act on them",
+        description="Whenever the playhead moves, the strips under it are selected and the rest deselected, so cut and ripple delete act on them. Works with or without the bridge connected",
         default=True,
     )
 
