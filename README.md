@@ -32,6 +32,8 @@ More come one at a time.
 
 The add-on's panel is in the video editor's sidebar (N), tab Blendeck. Its
 preferences have the bridge's address and "Stop at scene start and end".
+If Blender is busy for more than 15 seconds (a long save or render), the
+bridge drops it and the add-on reconnects by itself a second later.
 
 ## The page
 

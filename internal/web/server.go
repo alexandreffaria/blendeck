@@ -129,7 +129,8 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Target engine.Target `json:"target"`
+		Target    engine.Target     `json:"target"`
+		Modifiers []config.Modifier `json:"modifiers"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -141,7 +142,11 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `target must be "", "binding" or "modifier"`)
 		return
 	}
-	s.app.Learn(req.Target)
+	if len(req.Modifiers) > config.MaxModifiers {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d modifiers", config.MaxModifiers))
+		return
+	}
+	s.app.Learn(req.Target, req.Modifiers)
 	writeJSON(w, http.StatusOK, s.app.Snapshot())
 }
 

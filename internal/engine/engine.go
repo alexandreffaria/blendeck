@@ -28,10 +28,15 @@ type Hit struct {
 type Engine struct {
 	mu      sync.Mutex
 	profile config.Profile
-	held    map[string]bool
-	learn   Target
-	until   time.Time
-	now     func() time.Time
+	// down is which modifier buttons are physically held, by control, so
+	// renaming a modifier or learning with unsaved modifiers can't confuse it
+	down map[config.Control]bool
+	// learnMods are the modifiers a binding learn passes through: the page's
+	// unsaved ones, or the profile's when the page sent none
+	learnMods []config.Modifier
+	learn     Target
+	until     time.Time
+	now       func() time.Time
 }
 
 // Target says what learn mode is capturing for.
@@ -60,23 +65,23 @@ type Learned struct {
 
 // New makes an Engine running profile p.
 func New(p config.Profile) *Engine {
-	e := &Engine{held: map[string]bool{}, now: time.Now}
+	e := &Engine{down: map[config.Control]bool{}, now: time.Now}
 	e.SetProfile(p)
 	return e
 }
 
-// SetProfile switches to p. Modifiers still held in both stay held.
+// SetProfile switches to p. Modifier buttons held in both stay held.
 func (e *Engine) SetProfile(p config.Profile) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.profile = p
-	held := map[string]bool{}
+	down := map[config.Control]bool{}
 	for _, m := range p.Modifiers {
-		if e.held[m.Name] {
-			held[m.Name] = true
+		if e.down[m.Control] {
+			down[m.Control] = true
 		}
 	}
-	e.held = held
+	e.down = down
 }
 
 // Held lists the modifiers currently held down.
@@ -86,22 +91,54 @@ func (e *Engine) Held() []string {
 	return e.heldLocked()
 }
 
-func (e *Engine) heldLocked() []string {
+func (e *Engine) heldLocked() []string { return e.heldOf(e.profile.Modifiers) }
+
+func (e *Engine) heldOf(mods []config.Modifier) []string {
 	out := []string{}
-	for _, m := range e.profile.Modifiers {
-		if e.held[m.Name] {
+	for _, m := range mods {
+		if m.Control.Learned() && e.down[m.Control] {
 			out = append(out, m.Name)
 		}
 	}
 	return out
 }
 
+func (e *Engine) isHeld(name string) bool {
+	for _, m := range e.profile.Modifiers {
+		if m.Name == name && m.Control.Learned() && e.down[m.Control] {
+			return true
+		}
+	}
+	return false
+}
+
+// modifierFor returns the name of the modifier on ctl, looking at the
+// profile and, during a binding learn, the learn modifiers.
+func (e *Engine) modifierFor(ctl config.Control, target Target) (string, bool) {
+	if target == LearnBinding && e.learnMods != nil {
+		for _, m := range e.learnMods {
+			if m.Control.Learned() && m.Control == ctl {
+				return m.Name, true
+			}
+		}
+	}
+	for _, m := range e.profile.Modifiers {
+		if m.Control.Learned() && m.Control == ctl {
+			return m.Name, true
+		}
+	}
+	return "", false
+}
+
 // Learn arms learn mode for t (or turns it off with LearnOff): the next
 // message, other than a release, is returned by Handle as learned instead of
-// being acted on. It turns itself off after LearnTimeout.
-func (e *Engine) Learn(t Target) {
+// being acted on. It turns itself off after LearnTimeout. For a binding
+// learn, mods are the modifiers to pass through and report as held (the
+// page's unsaved ones); nil means the profile's.
+func (e *Engine) Learn(t Target, mods []config.Modifier) {
 	e.mu.Lock()
 	e.learn = t
+	e.learnMods = mods
 	e.until = e.now().Add(LearnTimeout)
 	e.mu.Unlock()
 }
@@ -174,20 +211,29 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	defer e.mu.Unlock()
 
 	target := e.learningLocked()
-	if target == LearnModifier {
-		return e.capture(m, ctl)
-	}
+	name, isMod := e.modifierFor(ctl, target)
 
-	for _, mod := range e.profile.Modifiers {
-		if mod.Control.Learned() && mod.Control == ctl {
-			down := pressed(m)
-			e.held[mod.Name] = down
-			return Hit{Modifier: mod.Name, Held: down}, nil
+	// A modifier's release always counts, even mid-learn: losing it would
+	// leave Fn held for good
+	if (isMod || e.down[ctl]) && !pressed(m) {
+		delete(e.down, ctl)
+		if isMod {
+			return Hit{Modifier: name, Held: false}, nil
 		}
 	}
-
+	if target == LearnModifier {
+		return e.capture(m, ctl, e.profile.Modifiers)
+	}
+	if isMod {
+		e.down[ctl] = true
+		return Hit{Modifier: name, Held: true}, nil
+	}
 	if target == LearnBinding {
-		return e.capture(m, ctl)
+		mods := e.learnMods
+		if mods == nil {
+			mods = e.profile.Modifiers
+		}
+		return e.capture(m, ctl, mods)
 	}
 
 	b := e.match(ctl)
@@ -204,25 +250,20 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	return hit, nil
 }
 
-func (e *Engine) capture(m midi.Message, ctl config.Control) (Hit, *Learned) {
+func (e *Engine) capture(m midi.Message, ctl config.Control, mods []config.Modifier) (Hit, *Learned) {
 	// A button release isn't a choice
 	if m.Kind == midi.NoteOff {
 		return Hit{}, nil
 	}
 	e.learn = LearnOff
-	return Hit{}, &Learned{Control: ctl, Held: e.heldLocked()}
+	e.learnMods = nil
+	return Hit{}, &Learned{Control: ctl, Held: e.heldOf(mods)}
 }
 
 // match picks the binding for ctl: one whose modifier is held wins over one
 // with no modifier. Bindings on a modifier the profile doesn't define, or
 // on a control not learned yet, never match.
 func (e *Engine) match(ctl config.Control) *config.Binding {
-	defined := map[string]bool{}
-	for _, mod := range e.profile.Modifiers {
-		if mod.Control.Learned() {
-			defined[mod.Name] = true
-		}
-	}
 	var plain *config.Binding
 	for i := range e.profile.Bindings {
 		b := &e.profile.Bindings[i]
@@ -235,7 +276,7 @@ func (e *Engine) match(ctl config.Control) *config.Binding {
 			}
 			continue
 		}
-		if defined[b.Modifier] && e.held[b.Modifier] {
+		if e.isHeld(b.Modifier) {
 			return b
 		}
 	}

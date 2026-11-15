@@ -96,7 +96,7 @@ func TestZeroDeltaSendsNothing(t *testing.T) {
 
 func TestLearn(t *testing.T) {
 	e := New(scrubProfile())
-	e.Learn(LearnBinding)
+	e.Learn(LearnBinding, nil)
 	if _, l := e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 3, Number: 1}); l != nil {
 		t.Fatal("a release was learned")
 	}
@@ -108,7 +108,7 @@ func TestLearn(t *testing.T) {
 		t.Fatal("still learning")
 	}
 	// Learn mode doesn't act on the captured message
-	e.Learn(LearnBinding)
+	e.Learn(LearnBinding, nil)
 	hit, _ := e.Handle(knob(1))
 	if hit.Command != nil {
 		t.Fatal("learn mode sent a command")
@@ -119,7 +119,7 @@ func TestLearn(t *testing.T) {
 // thing learned, and the result says Fn was held.
 func TestLearnBindingWithFnHeld(t *testing.T) {
 	e := New(scrubProfile())
-	e.Learn(LearnBinding)
+	e.Learn(LearnBinding, nil)
 	if hit, l := e.Handle(fnDown); l != nil || hit.Modifier != "Fn" {
 		t.Fatalf("Fn press during binding learn: hit %+v learned %+v", hit, l)
 	}
@@ -131,7 +131,7 @@ func TestLearnBindingWithFnHeld(t *testing.T) {
 
 func TestLearnModifierCapturesKnownModifier(t *testing.T) {
 	e := New(scrubProfile())
-	e.Learn(LearnModifier)
+	e.Learn(LearnModifier, nil)
 	_, l := e.Handle(fnDown)
 	if l == nil || l.Control.Type != "note" || l.Control.Number != 40 {
 		t.Fatalf("learned %+v", l)
@@ -145,7 +145,7 @@ func TestLearnTimesOut(t *testing.T) {
 	e := New(scrubProfile())
 	now := time.Now()
 	e.now = func() time.Time { return now }
-	e.Learn(LearnBinding)
+	e.Learn(LearnBinding, nil)
 	now = now.Add(LearnTimeout + time.Second)
 	if e.Learning() != LearnOff {
 		t.Fatal("learn mode outlived its timeout")
@@ -198,5 +198,62 @@ func TestDelta(t *testing.T) {
 		if got := Delta(c.v, c.enc); got != c.want {
 			t.Errorf("Delta(%d, %s) = %d, want %d", c.v, c.enc, got, c.want)
 		}
+	}
+}
+
+// Fn held when a modifier learn starts: its release must still count, or Fn
+// stays held and the knob scrubs 1 frame for good.
+func TestModifierReleaseDuringLearn(t *testing.T) {
+	e := New(scrubProfile())
+	e.Handle(fnDown)
+	e.Learn(LearnModifier, nil)
+	if _, l := e.Handle(fnUp); l != nil {
+		t.Fatal("release was learned")
+	}
+	e.Learn(LearnOff, nil)
+	if h := e.Held(); len(h) != 0 {
+		t.Fatalf("held = %v after Fn released", h)
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("knob = %d, want 10", got)
+	}
+}
+
+// The page learned Fn but hasn't saved: it sends its modifiers with the
+// binding learn, so holding Fn passes through and is reported.
+func TestBindingLearnWithUnsavedModifier(t *testing.T) {
+	p := scrubProfile()
+	p.Modifiers = nil // saved profile has no Fn yet
+	e := New(p)
+	draft := []config.Modifier{{Name: "Shift", Control: config.Control{Type: "note", Channel: 1, Number: 40}}}
+	e.Learn(LearnBinding, draft)
+	if hit, l := e.Handle(fnDown); l != nil || hit.Modifier != "Shift" {
+		t.Fatalf("hit %+v learned %+v", hit, l)
+	}
+	_, l := e.Handle(knob(1))
+	if l == nil || l.Control.Number != 5 || len(l.Held) != 1 || l.Held[0] != "Shift" {
+		t.Fatalf("learned %+v", l)
+	}
+	if len(e.Held()) != 0 {
+		t.Fatal("unsaved modifier counted as held in the profile")
+	}
+	// Released after the learn ended, then saved: must not come back held
+	e.Handle(fnUp)
+	p.Modifiers = draft
+	e.SetProfile(p)
+	if len(e.Held()) != 0 {
+		t.Fatalf("held = %v after release and save", e.Held())
+	}
+}
+
+func TestRenamedModifierStaysHeld(t *testing.T) {
+	e := New(scrubProfile())
+	e.Handle(fnDown)
+	p := scrubProfile()
+	p.Modifiers[0].Name = "Shift"
+	p.Bindings[1].Modifier = "Shift"
+	e.SetProfile(p)
+	if got := frames(t, e, knob(1)); got != 1 {
+		t.Fatalf("knob = %d, want 1 with renamed modifier held", got)
 	}
 }

@@ -428,8 +428,14 @@ function flash(key) {
 async function startLearn(kind, index) {
   if (state.learn && state.learn.kind === kind && state.learn.index === index) return cancelLearn();
   try {
-    const snap = await api('POST', '/api/learn', { target: kind });
-    state.learn = { kind, index, baseSeq: snap.learned.seq };
+    // A binding learn passes the page's modifiers, saved or not, so holding
+    // a just-learned Fn works before Save
+    const body = { target: kind };
+    if (kind === 'binding') body.modifiers = profile().modifiers.filter((m) => m.control.number >= 0);
+    const snap = await api('POST', '/api/learn', body);
+    // confirmed: the stream has shown this learn armed; until then a stale
+    // message saying "not learning" must not cancel it
+    state.learn = { kind, index, baseSeq: snap.learned.seq, confirmed: false };
   } catch (e) { toast(e.message, true); }
   renderBindings(); renderModifiers();
 }
@@ -551,6 +557,8 @@ $('deviceSelect').onchange = (e) => { state.draft.device = state.devices.include
 $('refreshDevices').onclick = loadDevices;
 
 async function save() {
+  // Commit a field still being typed in (a modifier rename applies on change)
+  if (document.activeElement && document.activeElement.matches('input')) document.activeElement.blur();
   if (!isDirty()) return;
   try {
     state.saved = await api('PUT', '/api/config', state.draft);
@@ -598,7 +606,11 @@ function connectEvents() {
     renderLive();
     appendEvents(data.events);
     checkLearned();
-    if (state.learn && !data.live.learning && data.live.learned.seq <= state.learn.baseSeq) { state.learn = null; renderBindings(); renderModifiers(); }
+    if (state.learn && data.live.learning === state.learn.kind) state.learn.confirmed = true;
+    if (state.learn && state.learn.confirmed && !data.live.learning && data.live.learned.seq <= state.learn.baseSeq) {
+      // The bridge gave up (timeout) without capturing anything
+      state.learn = null; renderBindings(); renderModifiers();
+    }
     if (data.events.some((ev) => ev.hit.modifier)) renderModifiers();
   };
   es.onerror = () => {

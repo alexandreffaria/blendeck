@@ -62,5 +62,20 @@ class ScrubTest(unittest.TestCase):
         self.assertEqual(protocol.encode({"type": "hello"}), b'{"type":"hello"}\n')
 
 
+class ManifestTest(unittest.TestCase):
+    def test_manifest_matches_addon(self):
+        import re
+        import tomllib
+
+        here = os.path.join(os.path.dirname(__file__), "..", "blendeck")
+        with open(os.path.join(here, "blender_manifest.toml"), "rb") as f:
+            manifest = tomllib.load(f)
+        for key in ("schema_version", "id", "version", "name", "tagline", "maintainer", "type", "blender_version_min", "license"):
+            self.assertIn(key, manifest)
+        with open(os.path.join(here, "__init__.py")) as f:
+            m = re.search(r'ADDON_VERSION = "([^"]+)"', f.read())
+        self.assertEqual(m.group(1), manifest["version"], "ADDON_VERSION and the manifest disagree")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -162,8 +162,10 @@ func (a *App) Snapshot() Snapshot {
 	}
 }
 
-// Learn arms learn mode for t, or cancels it with engine.LearnOff.
-func (a *App) Learn(t engine.Target) { a.engine.Learn(t) }
+// Learn arms learn mode for t, or cancels it with engine.LearnOff. mods are
+// the page's current (maybe unsaved) modifiers for a binding learn; nil
+// means the saved profile's.
+func (a *App) Learn(t engine.Target, mods []config.Modifier) { a.engine.Learn(t, mods) }
 
 // Config returns the saved config.
 func (a *App) Config() config.Config { return a.store.Get() }

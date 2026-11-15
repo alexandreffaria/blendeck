@@ -4,6 +4,8 @@ The bridge (blendeck.exe) reads the controller and listens on localhost; this
 add-on connects to it, applies the commands it sends, and reports the playhead
 back so the bridge's page can show it."""
 
+import errno
+import select
 import socket
 import time
 
@@ -11,21 +13,26 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.1.1"
+ADDON_VERSION = "0.1.2"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
 
 
 class _Link:
-    sock = None
-    buf = None
+    sock = None  # connected socket
+    pending = None  # socket still connecting
+    pending_since = 0.0
+    buf = None  # incoming lines
+    out = b""  # bytes not yet written
     status = "Not connected"
     last_state = None
     last_sent = 0.0
 
 
 link = _Link()
+CONNECT_TIMEOUT = 1.0
+MAX_OUT = 64 * 1024
 
 
 def _prefs():
@@ -61,45 +68,87 @@ def _redraw():
 
 
 def _close(reason):
-    if link.sock is not None:
-        try:
-            link.sock.close()
-        except OSError:
-            pass
+    for sock in (link.sock, link.pending):
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
     link.sock = None
+    link.pending = None
     link.buf = None
+    link.out = b""
     link.last_state = None
     _set_status(reason)
 
 
 def _connect(prefs):
+    """Starts a connection without blocking: on Windows a refused loopback
+    connect takes ~100 ms, which would freeze Blender's UI every retry."""
     host = protocol.bridge_host(prefs.host)
     if host is None:
         _set_status("Host must be an IP address, like 127.0.0.1")
         return
-    try:
-        s = socket.create_connection((host, prefs.port), timeout=0.05)
-    except OSError:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.setblocking(False)
+    err = s.connect_ex((host, prefs.port))
+    if err not in (0, errno.EINPROGRESS, errno.EWOULDBLOCK, getattr(errno, "WSAEWOULDBLOCK", 10035)):
+        s.close()
         _set_status("Bridge not running")
         return
-    s.setblocking(False)
+    link.pending = s
+    link.pending_since = time.monotonic()
+
+
+def _finish_connect():
+    """Checks a pending connection; returns True once it is up."""
+    s = link.pending
+    try:
+        _, writable, failed = select.select([], [s], [s], 0)
+    except (OSError, ValueError):
+        writable, failed = [], [s]
+    err = s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) if (writable or failed) else 0
+    if failed or err:
+        _close("Bridge not running")
+        return False
+    if not writable:
+        if time.monotonic() - link.pending_since > CONNECT_TIMEOUT:
+            _close("Bridge not running")
+        return False
+    link.pending = None
     s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     link.sock = s
     link.buf = protocol.LineBuffer()
+    link.out = b""
     _set_status("Connected")
     _send({"type": "hello", "blender": bpy.app.version_string, "addon": ADDON_VERSION})
+    return True
 
 
 def _send(msg):
     if link.sock is None:
         return
-    try:
-        link.sock.sendall(protocol.encode(msg))
-        link.last_sent = time.monotonic()
-    except BlockingIOError:
-        pass  # the bridge is slow to read; a later state message catches up
-    except OSError:
-        _close("Bridge went away")
+    link.out += protocol.encode(msg)
+    if len(link.out) > MAX_OUT:
+        _close("Bridge stopped reading")
+        return
+    link.last_sent = time.monotonic()
+    _flush()
+
+
+def _flush():
+    """Writes what the socket takes now and keeps the rest, so a line is never
+    cut in half by a full send buffer."""
+    while link.sock is not None and link.out:
+        try:
+            n = link.sock.send(link.out)
+        except BlockingIOError:
+            return
+        except OSError:
+            _close("Bridge went away")
+            return
+        link.out = link.out[n:]
 
 
 def _read():
@@ -163,9 +212,13 @@ def _tick():
         _set_status("Turned off")
         return RETRY
     if link.sock is None:
-        _connect(prefs)
-        if link.sock is None:
-            return RETRY
+        if link.pending is None:
+            _connect(prefs)
+            if link.pending is None:
+                return RETRY
+        if not _finish_connect():
+            return TICK if link.pending is not None else RETRY
+    _flush()
     _apply(_read(), prefs)
     return TICK
 

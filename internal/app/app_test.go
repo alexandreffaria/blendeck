@@ -24,7 +24,7 @@ func newTestApp(t *testing.T) *App {
 
 func TestLearnThenBind(t *testing.T) {
 	a := newTestApp(t)
-	a.Learn(engine.LearnBinding)
+	a.Learn(engine.LearnBinding, nil)
 	a.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 4, Value: 1})
 	s := a.Snapshot()
 	if s.Learning != "" || s.Learned.Seq != 1 || s.Learned.Control.Number != 4 {
