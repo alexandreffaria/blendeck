@@ -72,6 +72,16 @@ class _Zoom:
 
         return call
 
+    def view_all(self):
+        """Fake sequencer.view_all: the whole edit (frames 0..1000 here) in
+        view, logged as ("view_all", region name)."""
+        region = self.override["region"]
+        if region.name in self.fail_in:
+            raise RuntimeError("Operator bpy.ops.sequencer.view_all.poll() failed, context is incorrect")
+        self.calls.append(("view_all", region.name))
+        region.view2d.xmin, region.view2d.xmax = 0.0, 1000.0
+        return {"FINISHED"}
+
     def pan(self, deltax=0, deltay=0):
         region = self.override["region"]
         self.calls.append(("pan", region.name))
@@ -355,6 +365,7 @@ def _install_fake_bpy():
         view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan),
         ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}, undo=ED_UNDO),
         screen=types.SimpleNamespace(animation_play=PLAYER.play, animation_cancel=PLAYER.cancel),
+        sequencer=types.SimpleNamespace(view_all=ZOOM.view_all),
     )
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
@@ -554,6 +565,40 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(SCENE.frame_current, 10)
         conn.close()
         bridge.close()
+
+    def test_view_all_every_timeline(self):
+        self._screen()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        # Two presses in one read are one fit; the playhead stays
+        conn.sendall(b'{"type":"view_all"}\n{"type":"view_all"}\n')
+        self.assertTrue(tick_until(lambda: ("view_all", "both") in ZOOM.calls))
+        self.assertEqual(ZOOM.calls, [("view_all", "strips"), ("view_all", "both")])
+        self.assertEqual(SCENE.frame_current, 10)
+        conn.close()
+        bridge.close()
+
+    def test_view_all_then_zoom_in_one_read(self):
+        region = self._strips()
+        SCENE.frame_current = 500
+        addon._apply([{"type": "zoom", "clicks": 1}, {"type": "view_all"}], PREFS)
+        # The fit comes first, so the zoom lands on the whole edit
+        self.assertEqual(ZOOM.calls[0], ("view_all", "strips"))
+        self.assertIn(("in", "strips"), ZOOM.calls)
+        self.assertLess(region.view2d.xmax - region.view2d.xmin, 1000)
+
+    def test_view_all_failure_skips_that_editor(self):
+        self._screen()
+        ZOOM.fail_in.add("strips")
+        addon._view_all()  # must not raise
+        self.assertEqual(ZOOM.calls, [("view_all", "both")])
+
+    def test_view_all_without_windows(self):
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
+        addon._view_all()
+        self.assertEqual(ZOOM.calls, [])
 
     def test_pan_a_whole_view(self):
         region = self._strips()

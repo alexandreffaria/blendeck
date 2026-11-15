@@ -127,6 +127,12 @@ def total_pan(messages):
     return max(-MAX_PAN_PER_TICK, min(MAX_PAN_PER_TICK, total))
 
 
+def wants_view_all(messages):
+    """Whether messages hold a view-all press. Presses in one read are one:
+    fitting the view twice changes nothing."""
+    return any(m.get("type") == "view_all" for m in messages)
+
+
 def pan_pixels(width, percent):
     """How far to pan a region width pixels wide for percent of its width,
     in pixels (positive shows later frames)."""
