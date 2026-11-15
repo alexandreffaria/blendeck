@@ -689,6 +689,15 @@ class AddonTest(unittest.TestCase):
         self.assertIn("Permission denied", addon.link.note)
         self.assertIsNone(ZOOM.override, "the override ended")
 
+    def test_save_note_redraw_failure_doesnt_raise(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        # An area whose redraw fails: the save still counts, nothing raises
+        area = addon.bpy.context.window_manager.windows[0].screen.areas[0]
+        area.tag_redraw = lambda: 1 / 0
+        self.assertTrue(addon._save())
+        self.assertTrue(addon.link.note.startswith("Saved at "))
+
     def test_view_all_without_windows(self):
         addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
         addon._view_all()

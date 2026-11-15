@@ -467,9 +467,14 @@ def _undo():
 
 
 def _note(text):
+    """Sets the panel's save note. Never raises: a panel that can't redraw
+    must not drop the bridge."""
     if link.note != text:
         link.note = text
-        _redraw()
+        try:
+            _redraw()
+        except Exception as e:
+            print("Blendeck: panel not redrawn:", e)
 
 
 UNSAVED = "Not saved yet: use File > Save As once"
