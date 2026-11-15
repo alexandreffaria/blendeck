@@ -36,6 +36,13 @@ MAX_SHUTTLES_PER_TICK = 8
 # Cuts the jump knob moves over per tick at most, either way. A fast spin
 # sends a few clicks a tick; more than this is a flood.
 MAX_JUMPS_PER_TICK = 32
+# Playback the add-on drives has sound going forward up to MAX_AUDIO_SPEED
+# (5x), at its normal pitch; faster, and backwards, it is silent. Sound is
+# started AUDIO_AHEAD seconds before it is heard, and at most
+# MAX_AUDIO_SOUNDS sounds play or wait at once.
+MAX_AUDIO_SPEED = 50
+AUDIO_AHEAD = 2.0
+MAX_AUDIO_SOUNDS = 32
 
 
 class LineBuffer:
@@ -232,6 +239,45 @@ def shuttle_frame(origin, elapsed, fps, speed, start, end):
     if speed > 0 and pos >= hi:
         return hi, True
     return max(lo, min(hi, int(math.floor(pos)))), False
+
+
+def shuttle_has_audio(speed):
+    """Whether playback the add-on drives at speed (in tenths) has sound:
+    forward, up to MAX_AUDIO_SPEED."""
+    return 0 < speed <= MAX_AUDIO_SPEED
+
+
+def audio_plan(strips, origin, elapsed, fps, speed, started, playing, ahead=AUDIO_AHEAD):
+    """The sounds to start now for playback the add-on drives, which left
+    frame origin elapsed seconds ago at speed (in tenths). strips are
+    (key, start, end, content_start, sound_offset): the strip's frames
+    [start, end) on the timeline, the frame its sound's first sample lands
+    on, and the seconds of sound skipped before that. Every strip that is
+    heard within ahead seconds and whose key isn't in started (every strip
+    started since playback last picked up) gives (key, from_s, to_s,
+    delay): play its sound from from_s to to_s seconds, after delay
+    seconds. With the playing sounds already playing or waiting, at most
+    MAX_AUDIO_SOUNDS."""
+    if not shuttle_has_audio(speed) or fps <= 0:
+        return []
+    rate = fps * speed / NORMAL_SPEED  # timeline frames per second
+    now = origin + elapsed * rate
+    horizon = now + ahead * rate
+    room = MAX_AUDIO_SOUNDS - playing
+    plan = []
+    for key, start, end, content_start, sound_offset in sorted(strips, key=lambda s: s[1]):
+        if room <= 0:
+            break
+        if key in started or end <= now or start >= horizon:
+            continue
+        frm = max(start, now)
+        from_s = max(0.0, (frm - content_start) / fps + sound_offset)
+        to_s = (end - content_start) / fps + sound_offset
+        if to_s <= from_s:
+            continue
+        plan.append((key, from_s, to_s, (frm - now) / rate))
+        room -= 1
+    return plan
 
 
 def play_pause_plan(playing, editor, window):

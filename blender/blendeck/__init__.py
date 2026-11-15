@@ -615,15 +615,45 @@ class _Shuttle:
 shuttle = _Shuttle()
 
 
+class _Audio:
+    """The sound of playback the add-on drives (see _audio_tick). sounds
+    maps a strip's key to the handle playing it; started holds every strip
+    started since playback last picked up; strips is the scene's sound
+    strips then, None until read."""
+
+    sounds = {}
+    started = set()
+    strips = None
+    failed = False
+
+
+audio = _Audio()
+
+
+def _audio_stop():
+    """Stops every sound the add-on started. Never raises."""
+    for handle in audio.sounds.values():
+        try:
+            handle.stop()
+        except Exception:
+            pass
+    audio.sounds = {}
+    audio.started = set()
+    audio.strips = None
+    audio.failed = False
+
+
 def _shuttle_stop():
     shuttle.speed = 0
     shuttle.last = None
+    _audio_stop()
 
 
 def _shuttle_anchor(scene):
     shuttle.origin = scene.frame_current
     shuttle.since = time.monotonic()
     shuttle.last = scene.frame_current
+    _audio_stop()  # the sound starts again from here, at this speed
 
 
 def _cancel_native():
@@ -640,8 +670,8 @@ def _shuttle(scene, direction):
     that way at normal speed, 10% faster if it already plays that way, or
     10% slower if it plays the other way faster than 1x (see
     protocol.shuttle_speed). 1x forward is Blender's own playback, so
-    it has sound; every other speed is driven by the add-on, silent. Never
-    raises. Returns the new speed, in tenths, or 0 if it stopped."""
+    it has Blender's own sound; every other speed is driven by the add-on,
+    with sound forward up to 5x (see _audio_tick). Never raises. Returns the new speed, in tenths, or 0 if it stopped."""
     try:
         current = shuttle.speed or (protocol.NORMAL_SPEED if _playing() else 0)
         speed = protocol.shuttle_speed(current, direction)
@@ -695,9 +725,93 @@ def _shuttle_tick(scene):
         shuttle.last = scene.frame_current
         if at_end:
             _shuttle_stop()
+            return
+        _audio_tick(scene, elapsed, fps)
     except Exception as e:
         print("Blendeck: playback stopped:", e)
         _shuttle_stop()
+
+
+def _sound_strips(scene):
+    """The sound strips heard in scene, as protocol.audio_plan takes them,
+    with their sound's file and volume: [((key, start, end, content_start,
+    sound_offset), path, volume)]. Muted strips and channels, strips in
+    muted meta strips, and sounds packed into the .blend are left out."""
+    ed = scene.sequence_editor
+    if ed is None or not getattr(scene, "use_audio", True):
+        return []
+    found = []
+
+    def walk(strips, channels, volume):
+        for s in strips:
+            if s.mute or _channel_muted(channels, s.channel):
+                continue
+            if s.type == "META":
+                walk(s.strips, getattr(s, "channels", None), volume)
+                continue
+            sound = getattr(s, "sound", None) if s.type == "SOUND" else None
+            if sound is None or sound.packed_file is not None:
+                continue
+            key = (s.as_pointer(), s.name)
+            span = (key, s.frame_final_start, s.frame_final_end, s.frame_start, s.sound_offset)
+            found.append((span, bpy.path.abspath(sound.filepath), s.volume * volume))
+
+    walk(ed.strips, getattr(ed, "channels", None), getattr(scene, "audio_volume", 1.0))
+    return found
+
+
+def _channel_muted(channels, number):
+    try:
+        return bool(channels[number].mute)
+    except Exception:
+        return False
+
+
+def _audio_tick(scene, elapsed, fps):
+    """Plays the sound of playback the add-on drives, forward up to
+    protocol.MAX_AUDIO_SPEED: each sound strip's file, from where the
+    playhead is in it, sped up with its pitch kept, started a little before
+    it is heard (see protocol.audio_plan). Called once per timer tick. If
+    sound can't play (no audio device, a file it can't read), playback
+    carries on silent until it next picks up. Never raises."""
+    if audio.failed:
+        return
+    if not protocol.shuttle_has_audio(shuttle.speed):
+        if audio.sounds:
+            _audio_stop()
+        return
+    try:
+        import aud
+
+        if audio.strips is None:
+            audio.strips = {span[0]: (span, path, volume) for span, path, volume in _sound_strips(scene)}
+        # Finished sounds make room. status is a STATUS_* number, or in
+        # Blender 5.2 a bool: False once the sound is done
+        audio.sounds = {k: h for k, h in audio.sounds.items() if h.status and h.status != aud.STATUS_STOPPED}
+        plan = protocol.audio_plan(
+            [span for span, _, _ in audio.strips.values()],
+            shuttle.origin,
+            elapsed,
+            fps,
+            shuttle.speed,
+            audio.started,
+            len(audio.sounds),
+        )
+        if not plan:
+            return
+        device = aud.Device()
+        stretch = protocol.NORMAL_SPEED / shuttle.speed
+        for key, from_s, to_s, delay in plan:
+            audio.started.add(key)
+            _, path, volume = audio.strips[key]
+            sound = aud.Sound(path).limit(from_s, to_s).timeStretchPitchScale(stretch, 1.0).volume(volume)
+            if delay > 0:
+                sound = sound.delay(delay)
+            audio.sounds[key] = device.play(sound)
+    except Exception as e:
+        print("Blendeck: playing on silent:", e)
+        _audio_stop()
+        audio.failed = True
 
 
 def _rendering():

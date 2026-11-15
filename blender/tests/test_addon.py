@@ -1506,6 +1506,134 @@ class AddonTest(unittest.TestCase):
         addon._shuttle_tick(addon.bpy.context.scene)
         self.assertEqual(addon.shuttle.speed, 0)
 
+    def _fake_aud(self):
+        """A fake aud module: each play is recorded as (path, [ops], handle)."""
+        plays = []
+
+        class Sound:
+            def __init__(self, path, ops=()):
+                self.path, self.ops = path, list(ops)
+
+            def _then(self, *op):
+                return Sound(self.path, self.ops + [op])
+
+            def limit(self, a, b):
+                return self._then("limit", a, b)
+
+            def timeStretchPitchScale(self, stretch, pitch):
+                return self._then("stretch", stretch, pitch)
+
+            def volume(self, v):
+                return self._then("volume", v)
+
+            def delay(self, d):
+                return self._then("delay", d)
+
+        class Handle:
+            status = 1
+
+            def stop(self):
+                self.status = 0
+
+        def play(sound):
+            h = Handle()
+            plays.append((sound.path, sound.ops, h))
+            return h
+
+        aud = types.ModuleType("aud")
+        aud.Sound = Sound
+        aud.Device = lambda: types.SimpleNamespace(play=play)
+        aud.STATUS_PLAYING, aud.STATUS_PAUSED, aud.STATUS_STOPPED = 1, 2, 3
+        self.addCleanup(sys.modules.pop, "aud", None)
+        sys.modules["aud"] = aud
+        addon.bpy.path = types.SimpleNamespace(abspath=lambda p: p.replace("//", "C:/edit/"))
+        return plays
+
+    def _sound(self, name, start, end, content_start, offset=0.0, mute=False, channel=1, packed=False):
+        return types.SimpleNamespace(
+            type="SOUND", name=name, mute=mute, channel=channel, volume=0.5,
+            frame_final_start=start, frame_final_end=end, frame_start=content_start, sound_offset=offset,
+            sound=types.SimpleNamespace(filepath="//%s.wav" % name, packed_file=object() if packed else None),
+            as_pointer=lambda: id(name),
+        )
+
+    def test_faster_forward_has_sound_at_its_pitch(self):
+        plays = self._fake_aud()
+        advance = self._clock()
+        scene = self._shuttle_scene()  # 24 fps, playhead on 100
+        muted = types.SimpleNamespace(mute=True)
+        scene.sequence_editor = types.SimpleNamespace(
+            strips=[
+                self._sound("voice", 50, 400, 20, offset=1.0),
+                self._sound("music", 130, 400, 130),  # heard 0.625 s in at 2x
+                self._sound("later", 300, 400, 300),  # too far ahead for now
+                self._sound("off", 50, 400, 50, mute=True),
+                self._sound("muted-channel", 50, 400, 50, channel=2),
+                self._sound("packed", 50, 400, 50, packed=True),
+            ],
+            channels={1: types.SimpleNamespace(mute=False), 2: muted},
+        )
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 6, PREFS)  # 1x (Blender's), then up to 1.5x
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 5, PREFS)  # 2x
+        self.assertEqual(addon.shuttle.speed, 20)
+        self.assertTrue(all(h.status == 0 for _, _, h in plays), "the 1.5x sounds stopped")
+        del plays[:]
+        addon._apply([], PREFS)
+        self.assertEqual([p[0] for p in plays], ["C:/edit/voice.wav", "C:/edit/music.wav"])
+        self.assertEqual(plays[0][1], [("limit", 80 / 24 + 1.0, 380 / 24 + 1.0), ("stretch", 0.5, 1.0), ("volume", 0.5)])
+        self.assertEqual(plays[1][1][-1], ("delay", 30 / 48))
+        # Later strips start once they are near (frame 220 is 2 s from 316
+        # at 2x); nothing plays twice
+        advance(2.5)
+        addon._apply([], PREFS)
+        self.assertEqual([p[0] for p in plays][2:], ["C:/edit/later.wav"])
+        # Pausing stops every sound
+        addon._apply([{"type": "play_pause"}], PREFS)
+        self.assertTrue(all(h.status == 0 for _, _, h in plays))
+
+    def test_speed_change_restarts_the_sound(self):
+        plays = self._fake_aud()
+        self._clock()
+        scene = self._shuttle_scene()
+        scene.sequence_editor = types.SimpleNamespace(strips=[self._sound("voice", 50, 400, 50)], channels=None)
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 1.1x
+        addon._apply([], PREFS)
+        addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)  # 1.2x
+        addon._apply([], PREFS)
+        self.assertEqual(len(plays), 2)
+        self.assertEqual(plays[0][2].status, 0, "the 1.1x sound stopped")
+        self.assertEqual(plays[1][1][1], ("stretch", 10 / 12, 1.0))
+
+    def test_backwards_and_past_5x_are_silent(self):
+        plays = self._fake_aud()
+        self._clock()
+        scene = self._shuttle_scene()
+        scene.sequence_editor = types.SimpleNamespace(strips=[self._sound("voice", 1, 1000, 1)], channels=None)
+        addon._apply([{"type": "shuttle", "clicks": -1}] * 3, PREFS)
+        addon._apply([], PREFS)
+        self.assertEqual(plays, [])
+        addon._shuttle_stop()
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)
+        addon._apply([], PREFS)
+        self.assertEqual(len(plays), 1)
+        addon.shuttle.speed = 51
+        addon._apply([], PREFS)
+        self.assertEqual(plays[0][2].status, 0, "past 5x the sound stops")
+
+    def test_sound_that_fails_plays_on_silent(self):
+        plays = self._fake_aud()
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        scene.sequence_editor = types.SimpleNamespace(strips=[self._sound("voice", 50, 400, 50)], channels=None)
+        sys.modules["aud"].Device = lambda: (_ for _ in ()).throw(RuntimeError("no audio device"))
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)
+        advance(1.0)
+        addon._apply([], PREFS)
+        addon._apply([], PREFS)
+        self.assertEqual(addon.shuttle.speed, 11, "playback carries on")
+        self.assertEqual(scene.frame_current, 100 + 26)
+        self.assertEqual(plays, [])
+
     def test_shuttle_makes_no_undo_step(self):
         advance = self._clock()
         self._shuttle_scene()

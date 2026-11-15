@@ -446,6 +446,48 @@ class ShuttleTest(unittest.TestCase):
         self.assertEqual(protocol.edit_steps(bad), [])
 
 
+class AudioPlanTest(unittest.TestCase):
+    # 24 fps; strips are (key, start, end, content_start, sound_offset)
+    def test_which_speeds_have_sound(self):
+        self.assertTrue(protocol.shuttle_has_audio(10))  # the add-on's own 1x
+        self.assertTrue(protocol.shuttle_has_audio(11))
+        self.assertTrue(protocol.shuttle_has_audio(50))
+        self.assertFalse(protocol.shuttle_has_audio(51))
+        self.assertFalse(protocol.shuttle_has_audio(0))
+        self.assertFalse(protocol.shuttle_has_audio(-10))
+
+    def test_from_inside_a_strip(self):
+        # Strip on frames 100-340, its sound starting at frame 40, 1 s cut
+        # off the front of the file: the playhead on 160 is 5 + 1 s in
+        strips = [("a", 100, 340, 40, 1.0)]
+        plan = protocol.audio_plan(strips, 160, 0.0, 24, 20, set(), 0)
+        self.assertEqual(plan, [("a", 6.0, 13.5, 0.0)])
+
+    def test_waits_for_a_strip_ahead(self):
+        # At 2x, 48 frames a second: frame 172 is heard in 0.25 s
+        strips = [("a", 172, 200, 172, 0.0)]
+        self.assertEqual(protocol.audio_plan(strips, 160, 0.0, 24, 20, set(), 0), [("a", 0.0, 28 / 24, 0.25)])
+
+    def test_only_what_is_heard_soon(self):
+        # 2 s ahead at 2x is 96 frames: up to 256 from 160
+        strips = [("past", 0, 160, 0, 0.0), ("soon", 250, 300, 250, 0.0), ("later", 256, 300, 256, 0.0)]
+        plan = protocol.audio_plan(strips, 100, 1.25, 24, 20, set(), 0)  # 60 frames on: 160
+        self.assertEqual([p[0] for p in plan], ["soon"])
+
+    def test_skips_started_and_caps(self):
+        strips = [(i, 100 + i, 400, 100, 0.0) for i in range(40)]
+        plan = protocol.audio_plan(strips, 100, 0.0, 24, 10, {0, 1}, 0)
+        self.assertEqual(len(plan), protocol.MAX_AUDIO_SOUNDS)
+        self.assertEqual(plan[0][0], 2)
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 24, 10, set(), protocol.MAX_AUDIO_SOUNDS), [])
+
+    def test_silent_speeds_plan_nothing(self):
+        strips = [("a", 0, 1000, 0, 0.0)]
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 24, 51, set(), 0), [])
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 24, -20, set(), 0), [])
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 0, 20, set(), 0), [])
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re
