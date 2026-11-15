@@ -1294,3 +1294,130 @@ func TestJumpCommandJSON(t *testing.T) {
 		t.Fatalf("%s %v", b, err)
 	}
 }
+
+func moveProfile() config.Profile {
+	return config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "move-after", Name: "Move after", Control: config.Control{Type: "cc", Channel: 1, Number: 36}, Encoder: config.EncoderTwos, Action: config.ActionMoveAfter, Step: 1},
+			{ID: "move-before", Name: "Move before", Control: config.Control{Type: "cc", Channel: 1, Number: 36}, Modifier: "Fn", Encoder: config.EncoderTwos, Action: config.ActionMoveBefore, Step: 2},
+		},
+	}
+}
+
+// The owner's knob, cc 36, sends 1 clockwise and 127 counter-clockwise:
+// the strips after move right or left by the step; with Fn, the strips
+// before do.
+func TestMoveClicks(t *testing.T) {
+	e := New(moveProfile())
+	knob := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 36, Value: v}
+	}
+	for v, want := range map[int]int{1: 1, 127: -1, 3: 3, 125: -3} {
+		hit, _ := e.Handle(knob(v))
+		if hit.Binding != "move-after" || hit.Command == nil || *hit.Command != (Command{Type: "move", Frames: want}) {
+			t.Fatalf("value %d: %+v", v, hit)
+		}
+	}
+	if hit, _ := e.Handle(knob(0)); hit.Command != nil {
+		t.Fatalf("value 0 sent %+v", hit.Command)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	for v, want := range map[int]int{1: 2, 127: -2} {
+		hit, _ := e.Handle(knob(v))
+		if hit.Binding != "move-before" || hit.Command == nil || *hit.Command != (Command{Type: "move", Frames: want, Before: true}) {
+			t.Fatalf("Fn, value %d: %+v", v, hit)
+		}
+	}
+}
+
+func TestMoveCommandJSON(t *testing.T) {
+	for cmd, want := range map[Command]string{
+		{Type: "move", Frames: -2}:              `{"type":"move","frames":-2}`,
+		{Type: "move", Frames: 3, Before: true}: `{"type":"move","frames":3,"before":true}`,
+	} {
+		b, err := json.Marshal(cmd)
+		if err != nil || string(b) != want {
+			t.Fatalf("%s %v", b, err)
+		}
+	}
+}
+
+// Letting go of Fn brings the knob back to the strips after.
+func TestMoveFnReleased(t *testing.T) {
+	e := New(moveProfile())
+	knob := midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 36, Value: 1}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(knob); hit.Binding != "move-before" {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 110, Value: 0})
+	if hit, _ := e.Handle(knob); hit.Binding != "move-after" || hit.Command == nil || *hit.Command != (Command{Type: "move", Frames: 1}) {
+		t.Fatalf("Fn released: %+v", hit)
+	}
+}
+
+func TestMoveNotLearnedIgnored(t *testing.T) {
+	p := moveProfile()
+	p.Bindings[0].Control.Number = -1
+	p.Bindings[1].Control.Number = -1
+	e := New(p)
+	knob := midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 36, Value: 1}
+	if hit, _ := e.Handle(knob); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned knob: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(knob); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned knob with Fn: %+v", hit)
+	}
+}
+
+// The owner's pan knob, cc 35, sends 1 clockwise and 127 counter-clockwise:
+// the view slides the step (percent of its width) per click either way,
+// and Fn changes nothing.
+func TestPanClicks(t *testing.T) {
+	e := New(config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "pan", Name: "Pan", Control: config.Control{Type: "cc", Channel: 1, Number: 35}, Encoder: config.EncoderTwos, Action: config.ActionPan, Step: 5},
+		},
+	})
+	knob := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 35, Value: v}
+	}
+	for v, want := range map[int]int{1: 5, 127: -5, 3: 15, 125: -15} {
+		hit, _ := e.Handle(knob(v))
+		if hit.Binding != "pan" || hit.Command == nil || *hit.Command != (Command{Type: "pan", Clicks: want}) {
+			t.Fatalf("value %d: %+v", v, hit)
+		}
+	}
+	if hit, _ := e.Handle(knob(0)); hit.Command != nil {
+		t.Fatalf("value 0 sent %+v", hit.Command)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(knob(1)); hit.Binding != "pan" || hit.Command == nil || *hit.Command != (Command{Type: "pan", Clicks: 5}) {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 110})
+	if hit, _ := e.Handle(knob(127)); hit.Binding != "pan" || hit.Command == nil || *hit.Command != (Command{Type: "pan", Clicks: -5}) {
+		t.Fatalf("Fn released: %+v", hit)
+	}
+	b, err := json.Marshal(Command{Type: "pan", Clicks: -5})
+	if err != nil || string(b) != `{"type":"pan","clicks":-5}` {
+		t.Fatalf("%s %v", b, err)
+	}
+}
+
+// The default pan binding is not learned yet: no knob may reach it.
+func TestPanNotLearnedIgnored(t *testing.T) {
+	c := config.Default()
+	e := New(c.Profiles[0])
+	for _, n := range []int{-1, 0, 35} {
+		hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: n & 0x7F, Value: 1})
+		if hit.Binding != "" || hit.Command != nil {
+			t.Fatalf("cc %d reached an unlearned binding: %+v", n, hit)
+		}
+	}
+}

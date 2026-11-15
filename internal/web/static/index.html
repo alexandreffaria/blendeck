@@ -172,6 +172,8 @@ tr.flash td { animation: flash 600ms ease-out; }
 .log .empty { font-family: var(--font); padding: 48px 24px; }
 .device { padding: 0 18px 16px; }
 .device p { margin-top: 8px; }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--amber); cursor: pointer; }
 
 /* ---------- save bar ---------- */
 .savebar { position: fixed; left: 50%; bottom: 18px; z-index: 8; display: flex; align-items: center; gap: 10px;
@@ -256,6 +258,10 @@ tr.flash td { animation: flash 600ms ease-out; }
         <button class="btn" data-test-zoom="-1" title="Zoom out" aria-label="Zoom out">−</button>
         <button class="btn" data-test-zoom="1" title="Zoom in" aria-label="Zoom in">+</button>
       </div></div>
+      <div class="group"><span>Pan</span><div class="seg">
+        <button class="btn" data-test-pan="-5" title="Show earlier frames (5% of the view)" aria-label="Pan timeline left">◀</button>
+        <button class="btn" data-test-pan="5" title="Show later frames (5% of the view)" aria-label="Pan timeline right">▶</button>
+      </div></div>
       <div class="group"><span>Edits</span><div class="seg">
         <button class="btn" data-test-jump="-1" title="Previous video edit" aria-label="Previous video edit">⇤</button>
         <button class="btn" data-test-jump="1" title="Next video edit" aria-label="Next video edit">⇥</button>
@@ -263,6 +269,14 @@ tr.flash td { animation: flash 600ms ease-out; }
       <div class="group"><span>All cuts</span><div class="seg">
         <button class="btn" data-test-jump="-1" data-sound title="Previous cut, sound included" aria-label="Previous cut, sound included">⇤</button>
         <button class="btn" data-test-jump="1" data-sound title="Next cut, sound included" aria-label="Next cut, sound included">⇥</button>
+      </div></div>
+      <div class="group"><span>Move later</span><div class="seg">
+        <button class="btn" data-test-move="-1" title="Move selected and later strips 1 frame left" aria-label="Move selected and later strips 1 frame left">◀ 1</button>
+        <button class="btn" data-test-move="1" title="Move selected and later strips 1 frame right" aria-label="Move selected and later strips 1 frame right">1 ▶</button>
+      </div></div>
+      <div class="group"><span>Move earlier</span><div class="seg">
+        <button class="btn" data-test-move="-1" data-before title="Move selected and earlier strips 1 frame left" aria-label="Move selected and earlier strips 1 frame left">◀ 1</button>
+        <button class="btn" data-test-move="1" data-before title="Move selected and earlier strips 1 frame right" aria-label="Move selected and earlier strips 1 frame right">1 ▶</button>
       </div></div>
       <div class="group"><span>Edit</span><div class="seg">
         <button class="btn" data-test-cut title="Cut at playhead">✂ Cut</button>
@@ -339,6 +353,14 @@ tr.flash td { animation: flash 600ms ease-out; }
           <p class="hint" id="midiDetail"></p>
         </div>
       </section>
+
+      <section class="sheet" id="autostartSheet" hidden>
+        <div class="sheet-head"><h3>Startup</h3></div>
+        <div class="device">
+          <label class="check"><input type="checkbox" id="autostart"> Start with Windows</label>
+          <p class="hint">Blendeck waits in the notification area. Click its icon for this page, right-click it to quit.</p>
+        </div>
+      </section>
     </aside>
   </div>
 </div>
@@ -353,13 +375,16 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
 // What a binding's step means for each knob action, its limit
-// (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
+// (config.MaxStep, config.MaxZoomStep, config.MaxPanStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
 const STEPS = {
   'timeline.scrub': { unit: 'frames', label: 'Frames per click', max: 100000, start: 10, verb: 'Scrubbing' },
   'timeline.zoom': { unit: 'clicks', label: 'Zoom steps per click', max: 20, start: 4, verb: 'Zooming' },
+  'timeline.pan': { unit: '% of view', label: 'Percent of the view per click', max: 100, start: 5, verb: 'Panning' },
+  'timeline.move_after': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
+  'timeline.move_before': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
 };
 // Knob actions with no step: an encoder, and one of something per click.
 const FIXED_KNOBS = {
@@ -546,6 +571,12 @@ function describe(ev) {
     } else if (h.command.type === 'jump') {
       const n = h.command.clicks, what1 = h.command.sound ? 'cut' : 'edit';
       what = `${Math.abs(n)} ${what1}${Math.abs(n) === 1 ? '' : 's'} ${n > 0 ? 'right' : 'left'}`;
+    } else if (h.command.type === 'move') {
+      const f = h.command.frames;
+      what = `move ${h.command.before ? 'earlier' : 'later'} strips ${f > 0 ? '+' : ''}${f} frame${Math.abs(f) === 1 ? '' : 's'}`;
+    } else if (h.command.type === 'pan') {
+      const n = h.command.clicks;
+      what = `pan ${n > 0 ? 'right' : 'left'} ${Math.abs(n)}% of the view`;
     } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
@@ -676,10 +707,12 @@ document.addEventListener('click', (e) => {
   if (t.dataset.delM !== undefined) { dropLearn(); profile().modifiers.splice(+t.dataset.delM, 1); renderAll(); return; }
   if (t.dataset.test) return sendTest({ frames: +t.dataset.test });
   if (t.dataset.testZoom) return sendTest({ zoom: +t.dataset.testZoom });
+  if (t.dataset.testPan) return sendTest({ pan: +t.dataset.testPan });
   if (t.dataset.testCut !== undefined) return sendTest({ cut: true });
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });
   if (t.dataset.testPlay !== undefined) return sendTest({ play_pause: true });
+  if (t.dataset.testMove) return sendTest(t.dataset.before !== undefined ? { move: +t.dataset.testMove, before: true } : { move: +t.dataset.testMove });
   if (t.dataset.testJump) return sendTest(t.dataset.sound !== undefined ? { jump: +t.dataset.testJump, sound: true } : { jump: +t.dataset.testJump });
   if (t.dataset.testShuttle) return sendTest({ shuttle: +t.dataset.testShuttle });
 });
@@ -854,8 +887,28 @@ function connectEvents() {
   $('blenderOff').prepend(nap);
 }
 
+// Start with Windows lives in the registry, not the profile: it saves at once.
+function renderAutostart(a) {
+  $('autostartSheet').hidden = !a.supported;
+  $('autostart').checked = a.enabled;
+}
+$('autostart').onchange = async (e) => {
+  const want = e.target.checked;
+  e.target.disabled = true;
+  try {
+    renderAutostart(await api('PUT', '/api/autostart', { enabled: want }));
+    toast(want ? 'Blendeck starts with Windows' : 'Blendeck no longer starts with Windows');
+  } catch (err) {
+    e.target.checked = !want;
+    toast('Could not change it: ' + err.message, true);
+  } finally {
+    e.target.disabled = false;
+  }
+};
+
 async function init() {
   const st = await api('GET', '/api/state');
+  if (st.autostart) renderAutostart(st.autostart);
   $('version').textContent = st.version;
   state.saved = st.config; state.draft = clone(st.config);
   state.live = st.live; state.lastSeq = st.live.last_seq; state.run = st.live.run;

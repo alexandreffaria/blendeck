@@ -391,3 +391,33 @@ func TestTestEndpointJump(t *testing.T) {
 		t.Fatalf("foreign host jump: %d", rec.Code)
 	}
 }
+
+func TestTestEndpointMove(t *testing.T) {
+	h := newServer(t)
+	for _, body := range []string{`{"move":1}`, `{"move":-1}`, `{"move":5,"before":true}`} {
+		rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{`{"move":0}`, `{"before":true}`, `{"jump":1,"before":true}`, `{"move":1,"jump":1}`, `{"move":100001}`, `{"move":"1"}`, `{"move":1,"before":1}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestTestEndpointPan(t *testing.T) {
+	h := newServer(t)
+	for _, body := range []string{`{"pan":5}`, `{"pan":-5}`, `{"pan":100}`} {
+		rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{`{"pan":0}`, `{"pan":101}`, `{"pan":-101}`, `{"pan":5,"zoom":1}`, `{"pan":"5"}`, `{"pan":5,"before":true}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}

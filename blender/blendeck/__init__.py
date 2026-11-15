@@ -13,10 +13,13 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.9.2"
+ADDON_VERSION = "0.11.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
+# A turn of the move knob is one undo step: it is pushed once the knob has
+# been still this long, or right before any other command.
+MOVE_UNDO_DELAY = 0.5
 
 
 class _Link:
@@ -28,6 +31,7 @@ class _Link:
     status = "Not connected"
     last_state = None
     last_sent = 0.0
+    move_undo = 0.0  # when the move knob last moved strips with no undo step yet (0: none waiting)
 
 
 link = _Link()
@@ -80,6 +84,7 @@ def _close(reason):
     link.out = b""
     link.last_state = None
     _shuttle_stop()  # nothing would drive it any more
+    _move_undo()  # nothing more will come for that turn of the knob
     _set_status(reason)
 
 
@@ -246,6 +251,23 @@ def _zoom(clicks):
             print("Blendeck: zoom skipped:", e)
 
 
+def _pan(percent):
+    """Slides every timeline percent of its own width: positive shows later
+    frames, negative earlier. Only the view moves; the playhead and the
+    strips stay. An editor that fails is skipped, never raised."""
+    if not percent:
+        return
+    for win, area, region in list(_timelines()):
+        try:
+            pixels = protocol.pan_pixels(region.width, percent)
+            if not pixels:
+                continue
+            with bpy.context.temp_override(window=win, area=area, region=region):
+                bpy.ops.view2d.pan(deltax=pixels, deltay=0)
+        except Exception as e:
+            print("Blendeck: pan skipped:", e)
+
+
 def _level(ed):
     """The strips and channels the video editor is showing: those of the
     meta strip being edited (Tab into a meta), or the top level. Blender
@@ -274,6 +296,19 @@ def _spans(strips, channels):
         locked = bool(s.lock) or _channel_locked(channels, s.channel)
         out.append(protocol.Span(start, end, locked, bool(s.select)))
     return out
+
+
+def _linked_spans(items, channels):
+    """The strips of a level as protocol.Span with their effect inputs and
+    channels, in the same order."""
+    index = {s.as_pointer(): i for i, s in enumerate(items)}
+    spans = []
+    for s in items:
+        start, end = _span(s)
+        inputs = tuple(index[x.as_pointer()] for x in (getattr(s, "input_1", None), getattr(s, "input_2", None)) if x is not None and x.as_pointer() in index)
+        locked = bool(s.lock) or _channel_locked(channels, s.channel)
+        spans.append(protocol.Span(start, end, locked, bool(s.select), inputs, s.channel))
+    return spans
 
 
 def _cut(scene, follow=False):
@@ -403,13 +438,7 @@ def _ripple_delete(scene):
         frame = scene.frame_current
         strips, channels = _level(ed)
         items = list(strips)
-        index = {s.as_pointer(): i for i, s in enumerate(items)}
-        spans = []
-        for s in items:
-            start, end = _span(s)
-            inputs = tuple(index[x.as_pointer()] for x in (getattr(s, "input_1", None), getattr(s, "input_2", None)) if x is not None and x.as_pointer() in index)
-            locked = bool(s.lock) or _channel_locked(channels, s.channel)
-            spans.append(protocol.Span(start, end, locked, bool(s.select), inputs))
+        spans = _linked_spans(items, channels)
         plan = protocol.ripple_plan(spans, frame)
     except Exception as e:
         print("Blendeck: ripple delete skipped:", e)
@@ -451,6 +480,58 @@ def _ripple_delete(scene):
             print("Blendeck: no undo step for the ripple delete:", e)
         _redraw()
     return removed
+
+
+def _move(scene, frames, before=False):
+    """The move knob: moves the selected strips and every strip after them
+    (before them, with before) frames right, or left when negative, in the
+    level the editor shows, stopping against strips that stay (see
+    protocol.move_plan). The playhead and selection stay. The undo step
+    waits for the knob to stop (see _move_undo). Never raises. Returns
+    whether anything moved."""
+    try:
+        ed = scene.sequence_editor
+        if ed is None:
+            return False
+        strips, channels = _level(ed)
+        items = list(strips)
+        spans = _linked_spans(items, channels)
+        plan = protocol.move_plan(spans, frames, before)
+    except Exception as e:
+        print("Blendeck: move skipped:", e)
+        return False
+    if plan is None:
+        return False
+    moved = False
+    for i in plan.move:
+        if spans[i].inputs:
+            continue  # an effect follows its inputs by itself
+        try:
+            _move_left(items[i], -plan.shift)
+            moved = True
+        except Exception as e:
+            # Stop here: the rest would close in on a strip that didn't move
+            print("Blendeck: move couldn't move a strip:", e)
+            break
+    if moved:
+        link.move_undo = time.monotonic()
+        _redraw()
+    return moved
+
+
+def _move_undo(now=None):
+    """Pushes the undo step for the move knob's last turn, if one is
+    waiting: always when now is None, else once the knob has been still for
+    MOVE_UNDO_DELAY. Never raises."""
+    if not link.move_undo:
+        return
+    if now is not None and now - link.move_undo < MOVE_UNDO_DELAY:
+        return
+    link.move_undo = 0.0
+    try:
+        bpy.ops.ed.undo_push(message="Move strips")
+    except Exception as e:
+        print("Blendeck: no undo step for the move:", e)
 
 
 def _follow(scene):
@@ -869,11 +950,19 @@ def on_frame_change(scene, depsgraph=None):
 
 def _apply(messages, prefs):
     _zoom(protocol.total_zoom(messages))
+    _pan(protocol.total_pan(messages))
     scene = _scene()
     if scene is None:
         return
     _shuttle_tick(scene)
     for kind, frames in protocol.edit_steps(messages):
+        if kind in ("move", "move_before"):
+            _move(scene, frames, kind == "move_before")
+            _audio_restart()
+            continue
+        # Anything else ends the knob's turn: its undo step comes first, so
+        # an undo takes back the whole turn
+        _move_undo()
         if kind == "cut":
             # Only the strips cut change selection (see _cut): a full
             # re-follow here would replace a hand-picked selection
@@ -947,6 +1036,7 @@ def _tick():
             return TICK if link.pending is not None else RETRY
     _flush()
     _apply(_read(), prefs)
+    _move_undo(time.monotonic())
     return TICK
 
 

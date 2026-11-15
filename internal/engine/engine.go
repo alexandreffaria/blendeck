@@ -12,7 +12,8 @@ import (
 
 // Command is what the bridge sends to Blender: {"type":"scrub","frames":N}
 // moves the playhead N frames, {"type":"zoom","clicks":N} zooms the timeline
-// N steps (positive is in), {"type":"cut"} cuts the strips under the
+// N steps (positive is in), {"type":"pan","clicks":N} slides the timeline
+// view N percent of its width (positive shows later frames), {"type":"cut"} cuts the strips under the
 // playhead, {"type":"undo"} runs Blender's undo once,
 // {"type":"ripple_delete"} deletes the strips under the playhead and closes
 // the gap they leave, {"type":"play_pause"} starts or pauses playback,
@@ -20,12 +21,16 @@ import (
 // {"type":"shuttle","clicks":-1} backwards or faster backwards, and
 // {"type":"jump","clicks":N} moves the playhead N video edits (starts and
 // ends of strips that aren't sound) right, or left when N is negative;
-// with "sound":true it stops at sound strips' too.
+// with "sound":true it stops at sound strips' too. {"type":"move","frames":N}
+// moves the selected strips and every strip after them N frames (left when
+// negative), stopping against strips that stay; with "before":true it moves
+// the selected strips and every strip before them.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
 	Clicks int    `json:"clicks,omitempty"`
 	Sound  bool   `json:"sound,omitempty"`
+	Before bool   `json:"before,omitempty"`
 }
 
 // Hit says what a message did, for the live monitor.
@@ -270,6 +275,14 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	case config.ActionZoom:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "zoom", Clicks: d * b.Step}
+		}
+	case config.ActionPan:
+		if d := Delta(m.Value, b.Encoder); d != 0 {
+			hit.Command = &Command{Type: "pan", Clicks: d * b.Step}
+		}
+	case config.ActionMoveAfter, config.ActionMoveBefore:
+		if d := Delta(m.Value, b.Encoder); d != 0 {
+			hit.Command = &Command{Type: "move", Frames: d * b.Step, Before: b.Action == config.ActionMoveBefore}
 		}
 	case config.ActionJumpEdit, config.ActionJumpCut:
 		if d := Delta(m.Value, b.Encoder); d != 0 {

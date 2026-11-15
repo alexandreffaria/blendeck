@@ -38,6 +38,10 @@ const (
 	// ActionZoom zooms the video editor's timeline Step zoom steps per
 	// encoder click: clockwise zooms in.
 	ActionZoom = "timeline.zoom"
+	// ActionPan slides the video editor's timeline view Step percent of its
+	// width per encoder click: clockwise shows later frames. The playhead
+	// and the strips stay put.
+	ActionPan = "timeline.pan"
 	// ActionCut cuts the strips under the playhead, once per button press.
 	// It has no step and no encoder.
 	ActionCut = "timeline.cut"
@@ -65,6 +69,14 @@ const (
 	// ActionJumpCut is ActionJumpEdit stopping at every cut, sound strips
 	// included. It has an encoder and no step.
 	ActionJumpCut = "timeline.jump_cut"
+	// ActionMoveAfter moves the selected strips and every strip after them,
+	// on all channels, Step frames per encoder click (right clockwise), like
+	// G in Blender; they stop against a strip that stays instead of going
+	// over it.
+	ActionMoveAfter = "timeline.move_after"
+	// ActionMoveBefore is ActionMoveAfter for the selected strips and every
+	// strip before them.
+	ActionMoveBefore = "timeline.move_before"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -107,6 +119,8 @@ const (
 	// MaxZoomStep caps zoom steps per click: each step is one zoom in
 	// Blender, and a few already go from a second to the whole edit.
 	MaxZoomStep = 20
+	// MaxPanStep caps how far one click pans: a whole view width.
+	MaxPanStep = 100
 )
 
 // Default is the config a fresh install starts with: one profile with the
@@ -123,6 +137,7 @@ func Default() Config {
 				{ID: "scrub-fine", Name: "Scrub timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionScrub, Step: 1},
 				{ID: "zoom", Name: "Zoom timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionZoom, Step: 4},
 				{ID: "zoom-fine", Name: "Zoom timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
+				{ID: "pan", Name: "Pan timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionPan, Step: 5},
 				{ID: "cut", Name: "Cut at playhead", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionCut},
 				{ID: "undo", Name: "Undo", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionUndo},
 				{ID: "ripple-delete", Name: "Ripple delete", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionRippleDelete},
@@ -131,6 +146,8 @@ func Default() Config {
 				{ID: "forward", Name: "Play forward / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionForward},
 				{ID: "jump-edit", Name: "Jump between video edits", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionJumpEdit},
 				{ID: "jump-cut", Name: "Jump between all cuts", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionJumpCut},
+				{ID: "move-after", Name: "Move selected and later strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 1},
+				{ID: "move-before", Name: "Move selected and earlier strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionMoveBefore, Step: 1},
 			},
 		}},
 	}
@@ -215,12 +232,32 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
+			case ActionMoveAfter, ActionMoveBefore:
+				if b.Control.Type != "cc" {
+					return fmt.Errorf("binding %q: moving strips needs a knob (cc)", b.Name)
+				}
+				if b.Step < 1 || b.Step > MaxStep {
+					return fmt.Errorf("binding %q: frames per click must be 1 to %d", b.Name, MaxStep)
+				}
+				if err := validEncoder(b); err != nil {
+					return err
+				}
 			case ActionZoom:
 				if b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: zooming needs a knob (cc)", b.Name)
 				}
 				if b.Step < 1 || b.Step > MaxZoomStep {
 					return fmt.Errorf("binding %q: zoom steps per click must be 1 to %d", b.Name, MaxZoomStep)
+				}
+				if err := validEncoder(b); err != nil {
+					return err
+				}
+			case ActionPan:
+				if b.Control.Type != "cc" {
+					return fmt.Errorf("binding %q: panning needs a knob (cc)", b.Name)
+				}
+				if b.Step < 1 || b.Step > MaxPanStep {
+					return fmt.Errorf("binding %q: percent of the view per click must be 1 to %d", b.Name, MaxPanStep)
 				}
 				if err := validEncoder(b); err != nil {
 					return err

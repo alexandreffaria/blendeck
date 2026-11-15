@@ -18,8 +18,6 @@ fresh agent review it, fix, review again, until the review says ready.
 
 - **Never commit to `main` directly.** Branch from an up-to-date `main`:
   `feat/…`, `fix/…`, `chore/…` or `ci/…`.
-- **At most 2 open PRs.** Run `gh pr list --state open` first. CI's PR guard
-  fails a third.
 - **No stacked PRs.** Every PR's base is `main`.
 - **Every PR gets a second review** before merge: a fresh agent runs
   `/review-pr <number>` against `.github/REVIEW_CHECKLIST.md` and posts the

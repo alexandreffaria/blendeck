@@ -408,3 +408,69 @@ func TestJumpEditBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestMoveBindings(t *testing.T) {
+	c := Default()
+	after, before := byID(&c, "move-after"), byID(&c, "move-before")
+	if after.Action != ActionMoveAfter || after.Control.Learned() || after.Control.Type != "cc" || after.Modifier != "" || after.Step != 1 || after.Encoder != EncoderTwos {
+		t.Fatalf("default move-after binding = %+v", after)
+	}
+	if before.Action != ActionMoveBefore || before.Control.Learned() || before.Modifier != "Fn" || before.Step != 1 || before.Encoder != EncoderTwos {
+		t.Fatalf("default move-before binding = %+v", before)
+	}
+	after.Control = Control{"cc", 1, 36}
+	before.Control = Control{"cc", 1, 36}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		mod  func(*Binding)
+		want string
+	}{
+		"on a button": {func(b *Binding) { b.Control = Control{"note", 1, 36} }, "needs a knob"},
+		"no step":     {func(b *Binding) { b.Step = 0 }, "frames per click"},
+		"huge step":   {func(b *Binding) { b.Step = MaxStep + 1 }, "frames per click"},
+		"no encoder":  {func(b *Binding) { b.Encoder = "" }, "unknown encoder"},
+	} {
+		for _, id := range []string{"move-after", "move-before"} {
+			c := Default()
+			b := byID(&c, id)
+			b.Control = Control{"cc", 1, 36}
+			tc.mod(b)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%s %s: err = %v", id, name, err)
+			}
+		}
+	}
+}
+
+func TestPanBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "pan")
+	// Nothing on Fn: one plain knob, 5% of the view per click
+	if b.Action != ActionPan || b.Name != "Pan timeline" || b.Control.Learned() || b.Control.Type != "cc" || b.Modifier != "" || b.Step != 5 || b.Encoder != EncoderTwos {
+		t.Fatalf("default pan binding = %+v", b)
+	}
+	// The owner's knob: cc 35, 1 clockwise and 127 counter-clockwise
+	b.Control = Control{"cc", 1, 35}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		mod  func(*Binding)
+		want string
+	}{
+		"on a button": {func(b *Binding) { b.Control = Control{"note", 1, 35} }, "needs a knob"},
+		"no step":     {func(b *Binding) { b.Step = 0 }, "percent of the view"},
+		"over a view": {func(b *Binding) { b.Step = MaxPanStep + 1 }, "percent of the view"},
+		"no encoder":  {func(b *Binding) { b.Encoder = "" }, "unknown encoder"},
+	} {
+		c := Default()
+		b := byID(&c, "pan")
+		b.Control = Control{"cc", 1, 35}
+		tc.mod(b)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}
