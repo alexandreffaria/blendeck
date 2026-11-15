@@ -575,6 +575,11 @@ def _delete_op(scene, strips, items, delete, ctx):
             before[s.name] = s.select
             s.select = s.name in goners
         with bpy.context.temp_override(scene=scene, sequencer_scene=scene, **ctx):
+            # The operator edits the scene Blender says it is editing: if
+            # that isn't this one, it would delete whatever is selected there
+            here = getattr(bpy.context, "sequencer_scene", None) or bpy.context.scene
+            if here != scene:
+                raise RuntimeError("the video editor shows another scene")
             bpy.ops.sequencer.delete("EXEC_DEFAULT", False)
     except Exception as e:
         print("Blendeck: ripple delete couldn't remove the strips:", e)

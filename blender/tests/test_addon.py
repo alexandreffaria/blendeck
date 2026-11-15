@@ -1329,6 +1329,14 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(len(ed.strips), 7)
         self.assertEqual(UNDO, [])
 
+    def test_ripple_delete_never_deletes_in_another_scene(self):
+        ed = self._ripple_editor()
+        addon.bpy.context.sequencer_scene = _Scene()  # Blender edits another scene
+        self.assertEqual(addon._ripple_delete(SCENE), 0)
+        self.assertEqual(SEQ_DELETE.calls, [])
+        self.assertEqual(len(ed.strips), 7)
+        self.assertEqual(UNDO, [])
+
     def test_ripple_delete_without_a_window(self):
         # No window, nothing draws, no prefetch: strips go one by one, and
         # one that can't go stops the gap closing
