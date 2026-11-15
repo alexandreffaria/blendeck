@@ -393,9 +393,20 @@ class ShuttleTest(unittest.TestCase):
         self.assertEqual(sp(10, 1), 11)
         self.assertEqual(sp(-10, -1), -11)
         self.assertEqual(sp(-15, -1), -16)
-        # The other way: normal speed in the new direction
-        self.assertEqual(sp(25, -1), -10)
-        self.assertEqual(sp(-25, 1), 10)
+        # The other way, faster than 1x: ease off 10% a press, down to 1x
+        self.assertEqual(sp(25, -1), 24)
+        self.assertEqual(sp(-25, 1), -24)
+        self.assertEqual(sp(11, -1), 10)
+        self.assertEqual(sp(-11, 1), -10)
+        # The other way at 1x: normal speed in the new direction
+        self.assertEqual(sp(10, -1), -10)
+        self.assertEqual(sp(-10, 1), 10)
+        # From 2x forward: 10 presses down to 1x, the 11th reverses
+        s = 20
+        for _ in range(10):
+            s = sp(s, -1)
+        self.assertEqual(s, 10)
+        self.assertEqual(sp(s, -1), -10)
         # Capped at 4x
         s = 10
         for _ in range(100):

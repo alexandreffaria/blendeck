@@ -1314,19 +1314,32 @@ class AddonTest(unittest.TestCase):
         addon._apply([], PREFS)
         self.assertEqual(scene.frame_current, 130 + 52)  # 52.8 frames
 
-    def test_other_way_is_normal_speed(self):
+    def test_other_way_eases_off_then_switches(self):
         self._clock()
         self._shuttle_scene()
         addon._apply([{"type": "shuttle", "clicks": -1}] * 3, PREFS)
         self.assertEqual(addon.shuttle.speed, -12)
+        # The forward button eases off: 1.1x, then 1x backwards
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
-        # Forward at 1x is Blender's own playback again
+        self.assertEqual(addon.shuttle.speed, -11)
+        addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
+        self.assertEqual(addon.shuttle.speed, -10)
+        self.assertEqual(PLAYER.calls, [])
+        # At 1x it switches: forward at 1x is Blender's own playback
+        addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
         self.assertEqual(addon.shuttle.speed, 0)
         self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
         addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)
         self.assertEqual(addon.shuttle.speed, 12)
+        # Easing off forward lands on 1x, Blender's own, with sound
+        addon._apply([{"type": "shuttle", "clicks": -1}] * 2, PREFS)
+        self.assertEqual(addon.shuttle.speed, 0)
+        self.assertTrue(addon._playing())
+        self.assertEqual([c[0] for c in PLAYER.calls], ["play", "cancel", "play"])
+        # And from Blender's 1x forward, backwards switches
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
         self.assertEqual(addon.shuttle.speed, -10)
+        self.assertFalse(addon._playing())
 
     def test_play_pause_stops_and_resets(self):
         advance = self._clock()

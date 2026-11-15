@@ -160,10 +160,14 @@ def edit_steps(messages):
 def shuttle_speed(current, direction):
     """The playback speed after a press of the forward (direction 1) or
     backwards (-1) button, from current (both in tenths, see NORMAL_SPEED).
-    Already going that way: 10% faster, up to MAX_SHUTTLE_SPEED. Stopped,
-    or going the other way: normal speed in that direction."""
+    Already going that way: 10% faster, up to MAX_SHUTTLE_SPEED. Going the
+    other way faster than 1x: 10% slower, easing off down to 1x. Going the
+    other way at 1x, or stopped: normal speed in this direction (decision
+    20261115618c)."""
     if current * direction > 0:
         return direction * min(MAX_SHUTTLE_SPEED, abs(current) + SHUTTLE_STEP)
+    if abs(current) > NORMAL_SPEED:
+        return current + direction * SHUTTLE_STEP
     return direction * NORMAL_SPEED
 
 

@@ -612,8 +612,9 @@ def _cancel_native():
 
 def _shuttle(scene, direction):
     """A press of the forward (direction 1) or backwards (-1) button: play
-    that way at normal speed, or 10% faster if it already plays that way
-    (see protocol.shuttle_speed). 1x forward is Blender's own playback, so
+    that way at normal speed, 10% faster if it already plays that way, or
+    10% slower if it plays the other way faster than 1x (see
+    protocol.shuttle_speed). 1x forward is Blender's own playback, so
     it has sound; every other speed is driven by the add-on, silent. Never
     raises. Returns the new speed, in tenths, or 0 if it stopped."""
     try:
