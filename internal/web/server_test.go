@@ -166,3 +166,66 @@ func TestIndexServed(t *testing.T) {
 		t.Fatalf("%d", rec.Code)
 	}
 }
+
+func TestTestEndpointUndo(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", `{"undo":true}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"undo":true,"cut":true}`, `{"undo":true,"frames":1}`, `{"undo":true,"zoom":1}`, `{"undo":false}`, `{"undo":1}`, `{"undo":"yes"}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"undo":true}`); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain undo: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"undo":true}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host undo: %d", rec.Code)
+	}
+}
+
+// The page saves an undo binding learned on the owner's button (note 95)
+// as it sends it: no step, no encoder.
+func TestPutConfigUndoBinding(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+	var st stateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for i, b := range st.Config.Profiles[0].Bindings {
+		if b.Action == config.ActionUndo {
+			st.Config.Profiles[0].Bindings[i].Control = config.Control{Type: "note", Channel: 1, Number: 95}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no undo binding in the default config")
+	}
+	body, _ := json.Marshal(st.Config)
+	if strings.Contains(string(body), `"action":"edit.undo","step"`) {
+		t.Fatalf("undo binding carries a step: %s", body)
+	}
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	// An undo binding with a step is refused
+	bad := strings.Replace(string(body), `"action":"edit.undo"`, `"action":"edit.undo","step":3`, 1)
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", bad); rec.Code != http.StatusBadRequest {
+		t.Fatalf("put with step: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The page offers Undo in the Action list and a test undo button.
+func TestIndexHasUndo(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
+	for _, want := range []string{`'edit.undo': 'Undo'`, `data-test-undo`, `sendTest({ undo: true })`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("page lacks %s", want)
+		}
+	}
+}

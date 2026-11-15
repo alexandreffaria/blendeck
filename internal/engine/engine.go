@@ -13,7 +13,7 @@ import (
 // Command is what the bridge sends to Blender: {"type":"scrub","frames":N}
 // moves the playhead N frames, {"type":"zoom","clicks":N} zooms the timeline
 // N steps (positive is in), {"type":"cut"} cuts the strips under the
-// playhead.
+// playhead, {"type":"undo"} runs Blender's undo once.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -267,6 +267,11 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		// Once per press: a note off (or a cc below 64) is the release
 		if pressed(m) {
 			hit.Command = &Command{Type: "cut"}
+		}
+	case config.ActionUndo:
+		// Once per press, like cut: never on the release
+		if pressed(m) {
+			hit.Command = &Command{Type: "undo"}
 		}
 	}
 	return hit, nil

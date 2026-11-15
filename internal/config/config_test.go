@@ -37,16 +37,19 @@ func TestValidateRejects(t *testing.T) {
 			m := Modifier{"Fn", Control{"note", 1, 1}}
 			c.Profiles[0].Modifiers = []Modifier{m, m}
 		},
-		"zoom step zero":   func(c *Config) { zoom(c).Step = 0 },
-		"zoom step huge":   func(c *Config) { zoom(c).Step = MaxZoomStep + 1 },
-		"zoom on button":   func(c *Config) { zoom(c).Control.Type = "note" },
-		"zoom pitchbend":   func(c *Config) { zoom(c).Control = Control{"pitch_bend", 1, 0} },
-		"zoom no encoder":  func(c *Config) { zoom(c).Encoder = "" },
-		"cut pitchbend":    func(c *Config) { cut(c).Control = Control{"pitch_bend", 1, 0} },
-		"cut with step":    func(c *Config) { cut(c).Step = 1 },
-		"cut with encoder": func(c *Config) { cut(c).Encoder = EncoderTwos },
-		"too many mods":    func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
-		"too many profile": func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
+		"zoom step zero":    func(c *Config) { zoom(c).Step = 0 },
+		"zoom step huge":    func(c *Config) { zoom(c).Step = MaxZoomStep + 1 },
+		"zoom on button":    func(c *Config) { zoom(c).Control.Type = "note" },
+		"zoom pitchbend":    func(c *Config) { zoom(c).Control = Control{"pitch_bend", 1, 0} },
+		"zoom no encoder":   func(c *Config) { zoom(c).Encoder = "" },
+		"cut pitchbend":     func(c *Config) { cut(c).Control = Control{"pitch_bend", 1, 0} },
+		"cut with step":     func(c *Config) { cut(c).Step = 1 },
+		"cut with encoder":  func(c *Config) { cut(c).Encoder = EncoderTwos },
+		"undo pitchbend":    func(c *Config) { undo(c).Control = Control{"pitch_bend", 1, 0} },
+		"undo with step":    func(c *Config) { undo(c).Step = 1 },
+		"undo with encoder": func(c *Config) { undo(c).Encoder = EncoderTwos },
+		"too many mods":     func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
+		"too many profile":  func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
 	for name, mutate := range cases {
 		c := Default()
@@ -92,6 +95,40 @@ func TestCutBinding(t *testing.T) {
 	}
 	k.Control = Control{"pitch_bend", 1, 0}
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "needs a button") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// undo returns the default profile's undo binding.
+func undo(c *Config) *Binding {
+	for i := range c.Profiles[0].Bindings {
+		if c.Profiles[0].Bindings[i].ID == "undo" {
+			return &c.Profiles[0].Bindings[i]
+		}
+	}
+	panic("no undo binding in the default config")
+}
+
+func TestUndoBinding(t *testing.T) {
+	c := Default()
+	u := undo(&c)
+	if u.Action != ActionUndo || u.Name != "Undo" || u.Control.Learned() || u.Control.Type != "note" || u.Modifier != "" || u.Step != 0 || u.Encoder != "" {
+		t.Fatalf("default undo binding = %+v", u)
+	}
+	// The owner's button (note 95), and a cc used as a button, are fine
+	for _, ctl := range []Control{{"note", 1, 95}, {"cc", 1, 20}} {
+		u.Control = ctl
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%+v: %v", ctl, err)
+		}
+	}
+	u.Control = Control{"pitch_bend", 1, 0}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "undo needs a button") {
+		t.Fatalf("err = %v", err)
+	}
+	u.Control = Control{"note", 1, 95}
+	u.Step = 2
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "undo has no step") {
 		t.Fatalf("err = %v", err)
 	}
 }

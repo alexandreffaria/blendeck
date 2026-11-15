@@ -152,6 +152,50 @@ class _Editor(_Owner):
 UNDO = []  # messages of the undo steps pushed
 
 
+class _Freed:
+    """What a scene the undo reloaded looks like to old Python references:
+    any use is a bug (in Blender it can crash)."""
+
+    def __getattr__(self, name):
+        raise ReferenceError("StructRNA of type Scene has been removed (.%s)" % name)
+
+
+class _EdUndo:
+    """Fake bpy.ops.ed.undo. Like Blender 4.2's, its poll fails without a
+    window and screen in the context (a timer has none). Each undo reloads
+    the scene: the old object is freed and bpy.context.scene is a new one
+    with the playhead at restore_frame, keeping the strips editor."""
+
+    def __init__(self):
+        self.calls = []  # the temp_override keys of each undo
+        self.left = 0  # undo steps left
+        self.fail = False
+        self.restore_frame = 1
+
+    def poll(self):
+        kw = ZOOM.override or {}
+        return bool(kw.get("window") and kw.get("screen")) and self.left > 0
+
+    def __call__(self):
+        if not self.poll():
+            raise RuntimeError("Operator bpy.ops.ed.undo.poll() failed, context is incorrect")
+        if self.fail:
+            raise RuntimeError("undo failed")
+        self.calls.append(sorted(ZOOM.override))
+        self.left -= 1
+        ctx = sys.modules["bpy"].context
+        old = ctx.scene
+        new = _Scene()
+        new.frame_current = self.restore_frame
+        new.sequence_editor = old.sequence_editor
+        old.__class__ = _Freed
+        ctx.scene = new
+        return {"FINISHED"}
+
+
+ED_UNDO = _EdUndo()
+
+
 def zooms():
     """The zoom calls made so far, without the pans that anchor them."""
     return [c for c in ZOOM.calls if c[0] != "pan"]
@@ -183,7 +227,7 @@ def _install_fake_bpy():
     )
     bpy.ops = types.SimpleNamespace(
         view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan),
-        ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}),
+        ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}, undo=ED_UNDO),
     )
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
@@ -265,6 +309,12 @@ class AddonTest(unittest.TestCase):
         ZOOM.fail_in.clear()
         SCENE.sequence_editor = None
         UNDO.clear()
+        addon.bpy.context.scene = SCENE
+        addon.bpy.context.window_manager.is_interface_locked = False
+        ED_UNDO.calls.clear()
+        ED_UNDO.left = 0
+        ED_UNDO.fail = False
+        ED_UNDO.restore_frame = 1
 
     def _screen(self):
         """One window with: a strips timeline, a strips+preview editor, a
@@ -456,6 +506,123 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(len(UNDO), addon.protocol.MAX_CUTS_PER_TICK)
         self.assertEqual(SCENE.frame_current, 80)
         self.assertTrue(ed.log)
+
+    def _undo_scene(self, left=5):
+        """A screen, a throwaway scene the fake undo may free (never SCENE),
+        and left undo steps."""
+        self._screen()
+        scene = _Scene()
+        scene.frame_current = 50
+        addon.bpy.context.scene = scene
+        ED_UNDO.left = left
+        return scene
+
+    def test_undo_with_window_from_timer(self):
+        self._undo_scene()
+        self.assertTrue(addon._undo())
+        # Window, screen, and the first strips timeline
+        self.assertEqual(ED_UNDO.calls, [["area", "region", "screen", "window"]])
+        self.assertIsNone(ZOOM.override, "the override ended")
+
+    def test_undo_without_timeline_still_runs(self):
+        self._undo_scene()
+        win = addon.bpy.context.window_manager.windows[0]
+        win.screen.areas = [a for a in win.screen.areas if a.type != "SEQUENCE_EDITOR"]
+        self.assertTrue(addon._undo())
+        self.assertEqual(ED_UNDO.calls, [["screen", "window"]])
+
+    def test_undo_nothing_left(self):
+        self._undo_scene(left=0)
+        self.assertFalse(addon._undo())
+        self.assertEqual(ED_UNDO.calls, [])
+
+    def test_undo_without_window(self):
+        self._undo_scene()
+        addon.bpy.context.window_manager.windows = []
+        self.assertFalse(addon._undo())
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
+        self.assertFalse(addon._undo())
+        self.assertEqual(ED_UNDO.calls, [])
+
+    def test_undo_refused_during_modal_operator(self):
+        self._undo_scene()
+        wm = addon.bpy.context.window_manager
+        # A strip being dragged in a second window blocks it too
+        busy = types.SimpleNamespace(screen=types.SimpleNamespace(areas=[]), modal_operators=[types.SimpleNamespace(bl_idname="TRANSFORM_OT_seq_slide")])
+        wm.windows.append(busy)
+        self.assertFalse(addon._undo())
+        self.assertEqual(ED_UNDO.calls, [])
+        # Dropped, not kept: once the drag ends, the next press undoes once
+        busy.modal_operators = []
+        self.assertTrue(addon._undo())
+        self.assertEqual(len(ED_UNDO.calls), 1)
+
+    def test_undo_refused_while_interface_locked(self):
+        self._undo_scene()
+        addon.bpy.context.window_manager.is_interface_locked = True
+        self.assertFalse(addon._undo())
+        self.assertEqual(ED_UNDO.calls, [])
+
+    def test_undo_failure_doesnt_raise(self):
+        self._undo_scene()
+        ED_UNDO.fail = True
+        self.assertFalse(addon._undo())
+        addon.bpy.ops.ed.undo = None  # no undo operator at all
+        try:
+            self.assertFalse(addon._undo())
+        finally:
+            addon.bpy.ops.ed.undo = ED_UNDO
+
+    def test_undo_then_edit_uses_reloaded_scene(self):
+        # Cut at 50, undo (playhead back to 40), scrub 5, cut: the scrub and
+        # the second cut use the scene the undo reloaded, never the freed one
+        scene = self._undo_scene()
+        ed = self._editor()  # built on SCENE: move it to the undo scene
+        SCENE.sequence_editor = None
+        scene.sequence_editor = ed
+        scene.frame_current = 50
+        ED_UNDO.restore_frame = 40
+        addon._apply([{"type": "cut"}, {"type": "undo"}, {"type": "scrub", "frames": 5}, {"type": "cut"}], PREFS)
+        self.assertIsInstance(scene, _Freed)
+        now = addon.bpy.context.scene
+        self.assertEqual(now.frame_current, 45)
+        self.assertEqual([(n, f) for n, f, _ in ed.log][:2], [("A", 50), ("C", 50)])
+        # The fake undo leaves the strips as they were: E (1..50) now
+        # crosses the playhead too
+        self.assertEqual(sorted((n, f) for n, f, _ in ed.log[2:]), [("A", 45), ("C", 45), ("E", 45)])
+        self.assertEqual(len(ED_UNDO.calls), 1)
+
+    def test_undo_once_per_command_capped(self):
+        self._undo_scene(left=100)
+        addon._apply([{"type": "undo"}] * 3, PREFS)
+        self.assertEqual(len(ED_UNDO.calls), 3, "three presses, three undos")
+        ED_UNDO.calls.clear()
+        addon._apply([{"type": "undo"}] * 50, PREFS)
+        self.assertEqual(len(ED_UNDO.calls), addon.protocol.MAX_UNDOS_PER_TICK)
+
+    def test_undo_over_the_link(self):
+        self._undo_scene(left=10)
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        read_lines(conn)
+        ED_UNDO.restore_frame = 7
+        try:
+            conn.sendall(b'{"type":"undo"}\n')
+            self.assertTrue(tick_until(lambda: len(ED_UNDO.calls) == 1))
+            # The reloaded scene's playhead goes to the page
+            self.assertTrue(any(m.get("type") == "state" and m.get("frame") == 7 for m in read_lines(conn)))
+            # Nothing left to undo: pressing again is harmless
+            ED_UNDO.left = 0
+            conn.sendall(b'{"type":"undo"}\n')
+            for _ in range(20):
+                addon.tick()
+            self.assertEqual(len(ED_UNDO.calls), 1)
+            self.assertIsNotNone(addon.link.sock, "link kept")
+        finally:
+            conn.close()
+            bridge.close()
 
     def test_closed_port_never_blocks(self):
         PREFS.port = free_port()
