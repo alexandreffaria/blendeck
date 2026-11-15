@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.4.0"
+ADDON_VERSION = "0.5.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -348,6 +348,87 @@ def _undo():
     return done
 
 
+def _span(strip):
+    """Where a strip sits: (start, end), end exclusive. Blender 5 names them
+    left_handle and right_handle; before that, frame_final_start and end."""
+    if hasattr(strip, "left_handle"):
+        return strip.left_handle, strip.right_handle
+    return strip.frame_final_start, strip.frame_final_end
+
+
+def _move_left(strip, frames):
+    """Moves a strip frames to the left, handles and content together."""
+    if hasattr(strip, "content_start"):
+        strip.content_start -= frames
+    else:
+        strip.frame_start -= frames
+
+
+def _ripple_delete(scene):
+    """Deletes the strips under the playhead and closes the gap they leave
+    on every channel, in the level the editor shows (see
+    protocol.ripple_plan for which strips and when the gap closes). One
+    undo step covers it all. Nothing here raises: an editor it can't read
+    is skipped, and if a strip can't be removed, nothing moves, so later
+    strips never land on one that is still there. Returns how many strips
+    were deleted."""
+    try:
+        ed = scene.sequence_editor
+        if ed is None:
+            return 0
+        frame = scene.frame_current
+        strips, channels = _level(ed)
+        items = list(strips)
+        index = {s.as_pointer(): i for i, s in enumerate(items)}
+        spans = []
+        for s in items:
+            start, end = _span(s)
+            inputs = tuple(index[x.as_pointer()] for x in (getattr(s, "input_1", None), getattr(s, "input_2", None)) if x is not None and x.as_pointer() in index)
+            locked = bool(s.lock) or _channel_locked(channels, s.channel)
+            spans.append(protocol.Span(start, end, locked, bool(s.select), inputs))
+        plan = protocol.ripple_plan(spans, frame)
+    except Exception as e:
+        print("Blendeck: ripple delete skipped:", e)
+        return 0
+    if plan is None:
+        return 0
+    # Effects come before their inputs in plan.delete: removing an input
+    # also removes its effects, and a removed strip must not be touched
+    # again.
+    removed = 0
+    failed = False
+    for i in plan.delete:
+        try:
+            strips.remove(items[i])
+            removed += 1
+        except Exception as e:
+            failed = True
+            print("Blendeck: ripple delete couldn't remove a strip:", e)
+    if plan.shift and not failed:
+        # Leftmost first: each lands where the gap, or a strip already
+        # moved, was. Effects with inputs follow their inputs by themselves.
+        for i in plan.move:
+            strip = items[i]
+            if spans[i].inputs:
+                continue
+            try:
+                _move_left(strip, plan.shift)
+            except Exception as e:
+                print("Blendeck: ripple delete couldn't move a strip:", e)
+        if plan.playhead is not None:
+            try:
+                scene.frame_set(plan.playhead)
+            except Exception as e:
+                print("Blendeck: ripple delete left the playhead:", e)
+    if removed:
+        try:
+            bpy.ops.ed.undo_push(message="Ripple delete")
+        except Exception as e:
+            print("Blendeck: no undo step for the ripple delete:", e)
+        _redraw()
+    return removed
+
+
 def _apply(messages, prefs):
     _zoom(protocol.total_zoom(messages))
     scene = _scene()
@@ -363,6 +444,9 @@ def _apply(messages, prefs):
             scene = _scene()
             if scene is None:
                 return
+            continue
+        if kind == "ripple_delete":
+            _ripple_delete(scene)
             continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:

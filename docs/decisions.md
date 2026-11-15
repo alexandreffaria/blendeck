@@ -3,6 +3,14 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Fn + the cut button is a ripple delete (20261115d0tu)
+
+The owner cuts twice, parks the playhead on the middle clip and deletes it
+with the gap closed, so Fn + the cut button ripple deletes. The default
+config has an unlearned "Ripple delete (Fn + cut button)" binding with Fn,
+learned on the cut button while holding Fn. Ripple delete also has its own
+button.
+
 ## Scrub knob stops at the scene's ends (202611153dil)
 
 By default, scrubbing stops at the scene's first and last frame: turning past

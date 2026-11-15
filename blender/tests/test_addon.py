@@ -110,6 +110,32 @@ class _Strip:
         self.frame_final_start, self.frame_final_end = start, end
         self.lock, self.select, self.fail = lock, select, fail
         self.log, self.level = log, level
+        self.input_1 = self.input_2 = None
+        self.fixed = False  # an effect with inputs: it can't be moved itself
+
+    def as_pointer(self):
+        return id(self)
+
+    # Blender 5 names for the handles; the add-on uses these when present
+    @property
+    def left_handle(self):
+        return self.frame_final_start
+
+    @property
+    def right_handle(self):
+        return self.frame_final_end
+
+    @property
+    def content_start(self):
+        return float(self.frame_final_start)
+
+    @content_start.setter
+    def content_start(self, value):
+        if self.fixed:
+            raise AttributeError('attribute "content_start" is read-only')
+        d = int(value) - self.frame_final_start
+        self.frame_final_start += d
+        self.frame_final_end += d
 
     def split(self, frame, method):
         if self.fail:
@@ -119,6 +145,25 @@ class _Strip:
         self.frame_final_end = frame
         self.level.append(right)
         return right
+
+
+class _Level(list):
+    """A level's strips: remove() works like Blender 5.2's, removing the
+    effects that use the strip too, and raising for a strip that is gone."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail = set()  # names whose removal raises
+
+    def remove(self, strip):
+        if strip.name in self.fail:
+            raise RuntimeError("Strip can't be removed")
+        if strip not in self:
+            raise ReferenceError("StructRNA of type Strip has been removed")
+        super().remove(strip)
+        for other in list(self):
+            if strip in (getattr(other, "input_1", None), getattr(other, "input_2", None)):
+                self.remove(other)
 
 
 class _Channel:
@@ -131,7 +176,7 @@ class _Owner:
 
     def __init__(self, log):
         self.log = log
-        self.strips = []
+        self.strips = _Level()
         self.channels = [_Channel() for _ in range(129)]
 
     def add(self, name, channel, start, end, **kw):
@@ -623,6 +668,156 @@ class AddonTest(unittest.TestCase):
         finally:
             conn.close()
             bridge.close()
+
+    def _ripple_editor(self):
+        """Video (channel 1) and audio (2) cut at 50 and 100, a title (3)
+        later on; the playhead on the middle clips."""
+        ed = _Editor()
+        for name, ch in (("V", 1), ("A", 2)):
+            ed.add(name + "1", ch, 1, 50)
+            ed.add(name + "2", ch, 50, 100)
+            ed.add(name + "3", ch, 100, 200)
+        ed.add("T", 3, 150, 180)
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 70
+        return ed
+
+    def test_ripple_delete_middle_clips(self):
+        ed = self._ripple_editor()
+        self.assertEqual(addon._ripple_delete(SCENE), 2)
+        self.assertEqual(ed.spans(), [("A1", 1, 50), ("A3", 50, 150), ("T", 100, 130), ("V1", 1, 50), ("V3", 50, 150)])
+        self.assertEqual({s.name: s.channel for s in ed.strips}, {"V1": 1, "V3": 1, "A1": 2, "A3": 2, "T": 3})
+        self.assertEqual(SCENE.frame_current, 50, "playhead at the join")
+        self.assertEqual(UNDO, ["Ripple delete"])
+        # Again: the clips now under the playhead go
+        self.assertEqual(addon._ripple_delete(SCENE), 2)
+        self.assertEqual(ed.spans(), [("A1", 1, 50), ("T", 50, 80), ("V1", 1, 50)])
+        self.assertEqual(UNDO, ["Ripple delete"] * 2)
+
+    def test_ripple_delete_selected_only(self):
+        ed = self._ripple_editor()
+        ed.strips[1].select = True  # V2
+        self.assertEqual(addon._ripple_delete(SCENE), 1)
+        # A2 is still under the playhead: deleted, nothing moves
+        self.assertEqual([n for n, _, _ in ed.spans()], ["A1", "A2", "A3", "T", "V1", "V3"])
+        self.assertEqual(SCENE.frame_current, 70)
+
+    def test_ripple_delete_skips_locked(self):
+        ed = self._ripple_editor()
+        ed.channels[2].lock = True  # audio: kept under the playhead, so the gap stays
+        self.assertEqual(addon._ripple_delete(SCENE), 1)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("A2", "V3")], [("A2", 50, 100), ("V3", 100, 200)])
+        ed = self._ripple_editor()
+        ed.strips[-1].lock = True  # the title after the gap: nothing moves
+        self.assertEqual(addon._ripple_delete(SCENE), 2)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("T", "V3")], [("T", 150, 180), ("V3", 100, 200)])
+        self.assertEqual(SCENE.frame_current, 70)
+
+    def test_ripple_delete_effect_goes_with_its_input(self):
+        ed = self._ripple_editor()
+        fx = ed.add("FX", 4, 50, 100)
+        fx.input_1, fx.fixed = ed.strips[1], True  # an effect on V2
+        follow = ed.add("X", 5, 150, 180)
+        follow.input_1, follow.fixed = ed.strips[2], True  # an effect on V3
+        self.assertEqual(addon._ripple_delete(SCENE), 3)
+        self.assertNotIn("FX", {s.name for s in ed.strips})
+        # The effect on V3 isn't moved itself (Blender moves it with V3)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("X", "V3")], [("V3", 50, 150), ("X", 150, 180)])
+
+    def test_ripple_delete_remove_failure_moves_nothing(self):
+        ed = self._ripple_editor()
+        ed.strips.fail.add("A2")
+        self.assertEqual(addon._ripple_delete(SCENE), 1)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("A2", "V3")], [("A2", 50, 100), ("V3", 100, 200)])
+        self.assertEqual(SCENE.frame_current, 70)
+        self.assertEqual(UNDO, ["Ripple delete"], "what was deleted can be undone")
+
+    def test_ripple_delete_move_failure_doesnt_raise(self):
+        ed = self._ripple_editor()
+        ed.strips[2].fixed = True  # V3 refuses to move
+        self.assertEqual(addon._ripple_delete(SCENE), 2)
+        self.assertEqual(SCENE.frame_current, 50)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("A3", "V3")], [("A3", 50, 150), ("V3", 100, 200)])
+        self.assertEqual(UNDO, ["Ripple delete"])
+
+    def test_ripple_delete_inside_meta(self):
+        ed = self._ripple_editor()
+        meta = _Owner(ed.log)
+        meta.add("M1", 1, 1, 60)
+        meta.add("M2", 1, 60, 120)
+        meta.add("M3", 1, 120, 130)
+        ed.meta_stack = [meta]
+        self.assertEqual(addon._ripple_delete(SCENE), 1)
+        self.assertEqual(meta.spans(), [("M1", 1, 60), ("M3", 60, 70)])
+        self.assertEqual(len(ed.strips), 7, "the top level is untouched")
+
+    def test_ripple_delete_on_blender_4_2(self):
+        # Before 4.4: "sequences", frame_final_start/end and frame_start
+        ed = _Editor()
+        ed.sequences = ed.strips
+        del ed.strips
+
+        class Old:
+            def __init__(self, name, start, end):
+                self.name, self.channel, self.lock, self.select = name, 1, False, False
+                self.frame_final_start, self.frame_final_end, self.frame_start = start, end, start
+
+            def as_pointer(self):
+                return id(self)
+
+        for s in (Old("a", 1, 50), Old("b", 50, 100), Old("c", 100, 150)):
+            ed.sequences.append(s)
+        c = ed.sequences[2]
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 60
+        self.assertEqual(addon._ripple_delete(SCENE), 1)
+        self.assertEqual(c.frame_start, 50)
+        self.assertEqual(SCENE.frame_current, 50)
+
+    def test_ripple_delete_nothing_to_do(self):
+        self.assertEqual(addon._ripple_delete(SCENE), 0)  # no sequence editor
+        SCENE.sequence_editor = types.SimpleNamespace(meta_stack=[])  # an editor it can't read
+        self.assertEqual(addon._ripple_delete(SCENE), 0)
+        ed = self._ripple_editor()
+        SCENE.frame_current = 500  # past every strip
+        self.assertEqual(addon._ripple_delete(SCENE), 0)
+        self.assertEqual(len(ed.strips), 7)
+        self.assertEqual(UNDO, [])
+
+    def test_ripple_delete_undo_failure_doesnt_raise(self):
+        self._ripple_editor()
+        orig = addon.bpy.ops.ed.undo_push
+        addon.bpy.ops.ed.undo_push = lambda message="": 1 / 0
+        try:
+            self.assertEqual(addon._ripple_delete(SCENE), 2)
+        finally:
+            addon.bpy.ops.ed.undo_push = orig
+
+    def test_ripple_delete_over_the_link_in_order(self):
+        ed = self._ripple_editor()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        SCENE.frame_current = 40
+        # Scrub onto the middle clips, delete, scrub on and cut there
+        conn.sendall(b'{"type":"scrub","frames":30}\n{"type":"ripple_delete"}\n{"type":"scrub","frames":10}\n{"type":"cut"}\n')
+        self.assertTrue(tick_until(lambda: len(UNDO) == 2))
+        self.assertEqual(UNDO, ["Ripple delete", "Cut at playhead"])
+        self.assertEqual(SCENE.frame_current, 60)
+        self.assertEqual(sorted(n for n, _, _ in ed.log), ["A3", "V3"])
+        conn.close()
+        bridge.close()
+
+    def test_ripple_delete_flood_capped(self):
+        ed = _Editor()
+        for i in range(40):
+            ed.add("S%d" % i, 1, i * 10, i * 10 + 10)
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 0
+        addon._apply([{"type": "ripple_delete"}] * 30, PREFS)
+        self.assertEqual(len(UNDO), addon.protocol.MAX_RIPPLES_PER_TICK)
+        self.assertEqual(len(ed.strips), 40 - addon.protocol.MAX_RIPPLES_PER_TICK)
 
     def test_closed_port_never_blocks(self):
         PREFS.port = free_port()
