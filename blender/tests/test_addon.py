@@ -1920,5 +1920,100 @@ class AddonTest(unittest.TestCase):
             bridge.close()
 
 
+    def _move_editor(self):
+        """Video (1) and audio (2): clips at 1-50 and 50-100, then 120-200
+        after a gap; a title (3) at 150. The middle clips are selected."""
+        ed = _Editor()
+        for name, ch in (("V", 1), ("A", 2)):
+            ed.add(name + "1", ch, 1, 50)
+            ed.add(name + "2", ch, 50, 100, select=True)
+            ed.add(name + "3", ch, 120, 200)
+        ed.add("T", 3, 150, 180)
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 70
+        return ed
+
+    def test_move_after_right_then_back_left(self):
+        ed = self._move_editor()
+        addon._apply([{"type": "move", "frames": 1}, {"type": "move", "frames": 4}], PREFS)
+        self.assertEqual(ed.spans(), [
+            ("A1", 1, 50), ("A2", 55, 105), ("A3", 125, 205),
+            ("T", 155, 185), ("V1", 1, 50), ("V2", 55, 105), ("V3", 125, 205),
+        ])
+        self.assertEqual(SCENE.frame_current, 70, "the playhead stays")
+        # Left as far as you like: they stop against V1 and A1
+        addon._apply([{"type": "move", "frames": -100}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V2", "A2", "T")], [("A2", 50, 100), ("T", 150, 180), ("V2", 50, 100)])
+        addon._apply([{"type": "move", "frames": -1}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] == "V2"], [("V2", 50, 100)])
+
+    def test_move_before_stops_at_the_next_clip(self):
+        ed = self._move_editor()
+        addon._apply([{"type": "move", "frames": 50, "before": True}], PREFS)
+        self.assertEqual(ed.spans(), [
+            ("A1", 21, 70), ("A2", 70, 120), ("A3", 120, 200),
+            ("T", 150, 180), ("V1", 21, 70), ("V2", 70, 120), ("V3", 120, 200),
+        ])
+
+    def test_move_skips_locked_and_unselected(self):
+        ed = self._move_editor()
+        ed.channels[3].lock = True  # the title stays
+        addon._apply([{"type": "move", "frames": 10}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("T", "V3")], [("T", 150, 180), ("V3", 130, 210)])
+        for s in ed.strips:
+            s.select = False
+        before = ed.spans()
+        addon._apply([{"type": "move", "frames": 10}], PREFS)
+        self.assertEqual(ed.spans(), before, "nothing selected: nothing moves")
+
+    def test_move_effect_follows_its_input(self):
+        ed = self._move_editor()
+        fx = ed.add("FX", 4, 120, 200)
+        fx.input_1, fx.fixed = ed.strips[2], True  # an effect on V3
+        addon._apply([{"type": "move", "frames": 10}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V3", "FX")], [("FX", 120, 200), ("V3", 130, 210)])
+
+    def test_move_one_undo_step_per_turn(self):
+        ed = self._move_editor()
+        for _ in range(3):
+            addon._apply([{"type": "move", "frames": 1}], PREFS)
+            addon._move_undo(time.monotonic())
+        self.assertEqual(UNDO, [], "the knob is still turning")
+        addon._move_undo(time.monotonic() + addon.MOVE_UNDO_DELAY)
+        self.assertEqual(UNDO, ["Move strips"])
+        addon._move_undo(time.monotonic() + 10)
+        self.assertEqual(UNDO, ["Move strips"], "one step a turn")
+        # Another command ends the turn at once, before it runs
+        addon._apply([{"type": "move", "frames": 1}, {"type": "cut"}], PREFS)
+        self.assertEqual(UNDO, ["Move strips"] * 2 + ["Cut at playhead"])
+        # A move that does nothing makes no step
+        addon._apply([{"type": "move", "frames": 1, "before": True}], PREFS)
+        for s in ed.strips:
+            s.select = False
+        addon._apply([{"type": "move", "frames": 1}], PREFS)
+        addon._close("gone")
+        self.assertEqual(UNDO, ["Move strips"] * 2 + ["Cut at playhead", "Move strips"], "a dropped link pushes the waiting step")
+
+    def test_move_nothing_to_do(self):
+        addon._apply([{"type": "move", "frames": 1}], PREFS)  # no sequence editor
+        SCENE.sequence_editor = types.SimpleNamespace(meta_stack=[])  # one it can't read
+        addon._apply([{"type": "move", "frames": 1}], PREFS)
+        self.assertEqual(addon.link.move_undo, 0.0)
+
+    def test_move_over_the_link(self):
+        ed = self._move_editor()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        read_lines(conn)
+        try:
+            conn.sendall(b'{"type":"move","frames":3}\n{"type":"move","frames":2,"before":true}\n')
+            self.assertTrue(tick_until(lambda: ("V3", 123, 203) in ed.spans() and ("V1", 3, 52) in ed.spans()))
+            self.assertTrue(tick_until(lambda: UNDO == ["Move strips"], ticks=200))
+        finally:
+            conn.close()
+            bridge.close()
+
 if __name__ == "__main__":
     unittest.main()

@@ -264,6 +264,14 @@ tr.flash td { animation: flash 600ms ease-out; }
         <button class="btn" data-test-jump="-1" data-sound title="Previous cut, sound included" aria-label="Previous cut, sound included">⇤</button>
         <button class="btn" data-test-jump="1" data-sound title="Next cut, sound included" aria-label="Next cut, sound included">⇥</button>
       </div></div>
+      <div class="group"><span>Move later</span><div class="seg">
+        <button class="btn" data-test-move="-1" title="Move selected and later strips 1 frame left" aria-label="Move selected and later strips 1 frame left">◀ 1</button>
+        <button class="btn" data-test-move="1" title="Move selected and later strips 1 frame right" aria-label="Move selected and later strips 1 frame right">1 ▶</button>
+      </div></div>
+      <div class="group"><span>Move earlier</span><div class="seg">
+        <button class="btn" data-test-move="-1" data-before title="Move selected and earlier strips 1 frame left" aria-label="Move selected and earlier strips 1 frame left">◀ 1</button>
+        <button class="btn" data-test-move="1" data-before title="Move selected and earlier strips 1 frame right" aria-label="Move selected and earlier strips 1 frame right">1 ▶</button>
+      </div></div>
       <div class="group"><span>Edit</span><div class="seg">
         <button class="btn" data-test-cut title="Cut at playhead">✂ Cut</button>
         <button class="btn" data-test-ripple title="Ripple delete">⌫ Ripple</button>
@@ -353,13 +361,15 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
 const STEPS = {
   'timeline.scrub': { unit: 'frames', label: 'Frames per click', max: 100000, start: 10, verb: 'Scrubbing' },
   'timeline.zoom': { unit: 'clicks', label: 'Zoom steps per click', max: 20, start: 4, verb: 'Zooming' },
+  'timeline.move_after': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
+  'timeline.move_before': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
 };
 // Knob actions with no step: an encoder, and one of something per click.
 const FIXED_KNOBS = {
@@ -546,6 +556,9 @@ function describe(ev) {
     } else if (h.command.type === 'jump') {
       const n = h.command.clicks, what1 = h.command.sound ? 'cut' : 'edit';
       what = `${Math.abs(n)} ${what1}${Math.abs(n) === 1 ? '' : 's'} ${n > 0 ? 'right' : 'left'}`;
+    } else if (h.command.type === 'move') {
+      const f = h.command.frames;
+      what = `move ${h.command.before ? 'earlier' : 'later'} strips ${f > 0 ? '+' : ''}${f} frame${Math.abs(f) === 1 ? '' : 's'}`;
     } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
@@ -680,6 +693,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });
   if (t.dataset.testPlay !== undefined) return sendTest({ play_pause: true });
+  if (t.dataset.testMove) return sendTest(t.dataset.before !== undefined ? { move: +t.dataset.testMove, before: true } : { move: +t.dataset.testMove });
   if (t.dataset.testJump) return sendTest(t.dataset.sound !== undefined ? { jump: +t.dataset.testJump, sound: true } : { jump: +t.dataset.testJump });
   if (t.dataset.testShuttle) return sendTest({ shuttle: +t.dataset.testShuttle });
 });

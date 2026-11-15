@@ -157,8 +157,9 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 // {"play_pause":true} starts or pauses playback, {"shuttle":1} plays
 // forward or faster, {"shuttle":-1} backwards or faster, {"jump":1} jumps
 // to the next video edit and {"jump":-1} to the previous one; with
-// "sound":true a jump stops at every cut, sound included. Exactly one of
-// them.
+// "sound":true a jump stops at every cut, sound included. {"move":N}
+// moves the selected and later strips N frames, and the selected and
+// earlier ones with "before":true. Exactly one of them.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Frames  int  `json:"frames"`
@@ -170,13 +171,15 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Shuttle int  `json:"shuttle"`
 		Jump    int  `json:"jump"`
 		Sound   bool `json:"sound"`
+		Move    int  `json:"move"`
+		Before  bool `json:"before"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	n := 0
-	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0} {
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0, req.Move != 0} {
 		if set {
 			n++
 		}
@@ -185,10 +188,14 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "sound goes with jump")
 		return
 	}
+	if req.Before && req.Move == 0 {
+		writeError(w, http.StatusBadRequest, "before goes with move")
+		return
+	}
 	var cmd engine.Command
 	switch {
 	case n > 1:
-		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete, play_pause, shuttle or jump")
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete, play_pause, shuttle, jump or move")
 		return
 	case req.Undo:
 		cmd = engine.Command{Type: "undo"}
@@ -210,6 +217,12 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cmd = engine.Command{Type: "jump", Clicks: req.Jump, Sound: req.Sound}
+	case req.Move != 0:
+		if req.Move > config.MaxStep || req.Move < -config.MaxStep {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("move must be between -%d and %d, not 0", config.MaxStep, config.MaxStep))
+			return
+		}
+		cmd = engine.Command{Type: "move", Frames: req.Move, Before: req.Before}
 	case req.Zoom != 0:
 		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))
