@@ -1623,6 +1623,19 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(len(plays), 1, "and nothing replaced it")
         self.assertEqual(addon.shuttle.speed, 125, "playback carries on")
 
+    def test_blender_5_strip_names(self):
+        # Blender 5 calls the ends left_handle / right_handle and where the
+        # content starts content_start
+        strip = types.SimpleNamespace(
+            type="SOUND", name="v", mute=False, channel=1, volume=1.0, left_handle=40, right_handle=90,
+            content_start=10, sound_offset=0.5, sound=types.SimpleNamespace(filepath="v.wav", packed_file=None),
+            as_pointer=lambda: 1,
+        )
+        SCENE.sequence_editor = types.SimpleNamespace(strips=[strip], channels=None)
+        addon.bpy.path = types.SimpleNamespace(abspath=lambda p: p)
+        [(span, _, _)] = addon._sound_strips(SCENE)
+        self.assertEqual(span[1:], (40, 90, 10, 0.5))
+
     def test_meta_volume_counts(self):
         meta = types.SimpleNamespace(type="META", mute=False, channel=1, volume=0.5, channels=None,
                                      strips=[self._sound("voice", 50, 400, 50)])
@@ -1630,6 +1643,29 @@ class AddonTest(unittest.TestCase):
         addon.bpy.path = types.SimpleNamespace(abspath=lambda p: p)
         [(_, _, volume)] = addon._sound_strips(SCENE)
         self.assertEqual(volume, 0.25)
+
+    def test_jump_while_shuttling_picks_up_the_sound(self):
+        # A jump moves the playhead: playback and its sound carry on from
+        # the cut it landed on
+        plays = self._fake_aud()
+        advance = self._clock()
+        scene = self._shuttle_scene()  # 24 fps, playhead on 100
+        scene.sequence_editor = types.SimpleNamespace(
+            strips=[self._sound("A", 50, 200, 50), self._sound("B", 200, 600, 200)], channels=None, meta_stack=[]
+        )
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 5, PREFS)  # 2x
+        addon._apply([], PREFS)
+        self.assertEqual([p[0] for p in plays], ["C:/edit/A.wav"])
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)  # to the cut on 200
+        self.assertEqual(scene.frame_current, 200)
+        addon._apply([], PREFS)
+        self.assertEqual(plays[0][2].status, 0, "A's sound stopped")
+        self.assertEqual(plays[1][0], "C:/edit/B.wav")
+        self.assertEqual(plays[1][1][0], ("limit", 0.0, 400 / 24))
+        advance(1.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, 248)
+        self.assertEqual(addon.shuttle.speed, 200)
 
     def test_backwards_and_past_5x_are_silent(self):
         plays = self._fake_aud()

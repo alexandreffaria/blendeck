@@ -762,18 +762,13 @@ def _sound_strips(scene):
             if sound is None or sound.packed_file is not None:
                 continue
             key = (s.as_pointer(), s.name)
-            span = (key, s.frame_final_start, s.frame_final_end, s.frame_start, s.sound_offset)
+            start, end = _span(s)
+            content_start = s.content_start if hasattr(s, "content_start") else s.frame_start
+            span = (key, start, end, content_start, s.sound_offset)
             found.append((span, bpy.path.abspath(sound.filepath), s.volume * volume))
 
     walk(ed.strips, getattr(ed, "channels", None), getattr(scene, "audio_volume", 1.0))
     return found
-
-
-def _channel_muted(channels, number):
-    try:
-        return bool(channels[number].mute)
-    except Exception:
-        return False
 
 
 def _audio_tick(scene, elapsed, fps):
