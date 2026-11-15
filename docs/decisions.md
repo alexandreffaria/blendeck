@@ -3,6 +3,14 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## The jump knob stops at video edits; Fn stops at every cut (20261115s2rt)
+
+Turned on its own, the jump knob skips sound strips and stops only at the
+starts and ends of strips that aren't sound, where the picture changes.
+With Fn held it stops at every cut, sound included. The owner picked
+"skip sound cuts" for Fn, then asked for the opposite: skipping sound is
+the everyday jump.
+
 ## Each forward or backwards press is 0.25x (202611153pfo, replaces 20261115u2qg)
 
 The forward and backwards buttons play at 1x on the first press and 0.25x

@@ -120,9 +120,11 @@ def edit_steps(messages):
     even run leaves nothing, an odd one a single toggle. At most
     MAX_TOGGLES_PER_TICK presses count. Forward and backwards presses are
     ("shuttle", 1) and ("shuttle", -1), one each, never merged, up to
-    MAX_SHUTTLES_PER_TICK. Jumps between cuts are ("jump", clicks): jumps
-    in a row are added up, and at most MAX_JUMPS_PER_TICK clicks count
-    either way in one read. Malformed commands are ignored."""
+    MAX_SHUTTLES_PER_TICK. Jumps between video edits are ("jump", clicks)
+    and jumps between all cuts, sound included ("sound": true), are
+    ("jump_sound", clicks): jumps of one kind in a row are added up, and at
+    most MAX_JUMPS_PER_TICK clicks count either way in one read, both kinds
+    together. Malformed commands are ignored."""
     steps = []
     cuts = 0
     undos = 0
@@ -171,19 +173,21 @@ def edit_steps(messages):
             steps.append(("shuttle", clicks))
         elif kind == "jump":
             clicks = m.get("clicks")
-            if type(clicks) is not int or clicks == 0:
+            sound = m.get("sound", False)
+            if type(clicks) is not int or clicks == 0 or type(sound) is not bool:
                 continue
             room = MAX_JUMPS_PER_TICK - jumps
             clicks = max(-room, min(room, clicks))
             if clicks == 0:
                 continue
             jumps += abs(clicks)
-            if steps and steps[-1][0] == "jump":
-                steps[-1] = ("jump", steps[-1][1] + clicks)
+            step = "jump_sound" if sound else "jump"
+            if steps and steps[-1][0] == step:
+                steps[-1] = (step, steps[-1][1] + clicks)
                 if steps[-1][1] == 0:
                     steps.pop()  # right then left: back where it was
             else:
-                steps.append(("jump", clicks))
+                steps.append((step, clicks))
     return steps
 
 

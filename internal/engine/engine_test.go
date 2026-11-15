@@ -1257,6 +1257,24 @@ func TestJumpEditWithFnHeld(t *testing.T) {
 	}
 }
 
+// With an Fn binding for the all-cuts jump, Fn + the knob stops at every
+// cut, sound included; letting go of Fn goes back to video edits.
+func TestJumpCutWithFn(t *testing.T) {
+	p := jumpProfile()
+	p.Bindings = append(p.Bindings, config.Binding{ID: "jump-cut", Name: "Jump all", Control: config.Control{Type: "cc", Channel: 1, Number: 48}, Modifier: "Fn", Encoder: config.EncoderTwos, Action: config.ActionJumpCut})
+	e := New(p)
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	hit, _ := e.Handle(jumpKnob(1))
+	if hit.Binding != "jump-cut" || hit.Command == nil || *hit.Command != (Command{Type: "jump", Clicks: 1, Sound: true}) {
+		t.Fatalf("Fn + turn: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 110, Value: 0})
+	hit, _ = e.Handle(jumpKnob(127))
+	if hit.Binding != "jump-edit" || hit.Command == nil || *hit.Command != (Command{Type: "jump", Clicks: -1}) {
+		t.Fatalf("turn after Fn: %+v", hit)
+	}
+}
+
 func TestJumpEditNotLearnedIgnored(t *testing.T) {
 	p := jumpProfile()
 	p.Bindings[1].Control.Number = -1
@@ -1269,6 +1287,10 @@ func TestJumpEditNotLearnedIgnored(t *testing.T) {
 func TestJumpCommandJSON(t *testing.T) {
 	b, err := json.Marshal(Command{Type: "jump", Clicks: -2})
 	if err != nil || string(b) != `{"type":"jump","clicks":-2}` {
+		t.Fatalf("%s %v", b, err)
+	}
+	b, err = json.Marshal(Command{Type: "jump", Clicks: 1, Sound: true})
+	if err != nil || string(b) != `{"type":"jump","clicks":1,"sound":true}` {
 		t.Fatalf("%s %v", b, err)
 	}
 }

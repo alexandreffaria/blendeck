@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.9.1"
+ADDON_VERSION = "0.9.2"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -484,17 +484,23 @@ def _channel_muted(channels, number):
         return False
 
 
-def _jump(scene, clicks):
+def _jump(scene, clicks, sound=False):
     """Moves the playhead clicks cuts right (left when negative): to the
     starts and ends of the strips in the level the editor shows, like
-    Blender's Up and Down arrows. Muted strips and strips on muted channels
-    are skipped, as Blender does. Never raises."""
+    Blender's Up and Down arrows. Sound strips are skipped, so it stops
+    only where the picture changes, unless sound is true (Fn, decision
+    20261115s2rt). Muted strips and strips on muted channels are skipped,
+    as Blender does. Never raises."""
     try:
         ed = scene.sequence_editor
         if ed is None:
             return
         strips, channels = _level(ed)
-        spans = [_span(s) for s in strips if not getattr(s, "mute", False) and not _channel_muted(channels, s.channel)]
+        spans = [
+            _span(s) for s in strips
+            if not getattr(s, "mute", False) and not _channel_muted(channels, s.channel)
+            and (sound or getattr(s, "type", "") != "SOUND")
+        ]
         target = protocol.jump_target(protocol.edit_points(spans), scene.frame_current, clicks)
         if target is not None and target != scene.frame_current:
             _seek(scene, target)
@@ -878,8 +884,8 @@ def _apply(messages, prefs):
         if kind == "shuttle":
             _shuttle(scene, frames)  # for a shuttle, frames is the direction
             continue
-        if kind == "jump":
-            _jump(scene, frames)  # for a jump, frames is how many cuts
+        if kind in ("jump", "jump_sound"):
+            _jump(scene, frames, kind == "jump_sound")  # for a jump, frames is how many cuts
             continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:

@@ -156,7 +156,9 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 // once, {"ripple_delete":true} ripple deletes at the playhead,
 // {"play_pause":true} starts or pauses playback, {"shuttle":1} plays
 // forward or faster, {"shuttle":-1} backwards or faster, {"jump":1} jumps
-// to the next cut and {"jump":-1} to the previous one. Exactly one of them.
+// to the next video edit and {"jump":-1} to the previous one; with
+// "sound":true a jump stops at every cut, sound included. Exactly one of
+// them.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Frames  int  `json:"frames"`
@@ -167,6 +169,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Play    bool `json:"play_pause"`
 		Shuttle int  `json:"shuttle"`
 		Jump    int  `json:"jump"`
+		Sound   bool `json:"sound"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -177,6 +180,10 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		if set {
 			n++
 		}
+	}
+	if req.Sound && req.Jump == 0 {
+		writeError(w, http.StatusBadRequest, "sound goes with jump")
+		return
 	}
 	var cmd engine.Command
 	switch {
@@ -199,10 +206,10 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		cmd = engine.Command{Type: "shuttle", Clicks: req.Shuttle}
 	case req.Jump != 0:
 		if req.Jump != 1 && req.Jump != -1 {
-			writeError(w, http.StatusBadRequest, "jump must be 1 (next cut) or -1 (previous cut)")
+			writeError(w, http.StatusBadRequest, "jump must be 1 (next) or -1 (previous)")
 			return
 		}
-		cmd = engine.Command{Type: "jump", Clicks: req.Jump}
+		cmd = engine.Command{Type: "jump", Clicks: req.Jump, Sound: req.Sound}
 	case req.Zoom != 0:
 		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))

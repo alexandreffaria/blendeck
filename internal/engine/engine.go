@@ -18,12 +18,14 @@ import (
 // the gap they leave, {"type":"play_pause"} starts or pauses playback,
 // {"type":"shuttle","clicks":1} plays forward or faster forward and
 // {"type":"shuttle","clicks":-1} backwards or faster backwards, and
-// {"type":"jump","clicks":N} moves the playhead N edit points (strip starts
-// and ends) right, or left when N is negative.
+// {"type":"jump","clicks":N} moves the playhead N video edits (starts and
+// ends of strips that aren't sound) right, or left when N is negative;
+// with "sound":true it stops at sound strips' too.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
 	Clicks int    `json:"clicks,omitempty"`
+	Sound  bool   `json:"sound,omitempty"`
 }
 
 // Hit says what a message did, for the live monitor.
@@ -269,9 +271,9 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "zoom", Clicks: d * b.Step}
 		}
-	case config.ActionJumpEdit:
+	case config.ActionJumpEdit, config.ActionJumpCut:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
-			hit.Command = &Command{Type: "jump", Clicks: d}
+			hit.Command = &Command{Type: "jump", Clicks: d, Sound: b.Action == config.ActionJumpCut}
 		}
 	case config.ActionCut:
 		// Once per press: a note off (or a cc below 64) is the release

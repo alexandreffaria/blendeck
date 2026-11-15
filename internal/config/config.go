@@ -57,10 +57,14 @@ const (
 	// ActionReverse plays backwards, and each further press plays faster
 	// backwards, once per button press. It has no step and no encoder.
 	ActionReverse = "playback.reverse"
-	// ActionJumpEdit moves the playhead to the next edit point (a strip's
-	// start or end) per encoder click clockwise, the previous one counter-
-	// clockwise. It has an encoder and no step.
+	// ActionJumpEdit moves the playhead to the next video edit (the start or
+	// end of a strip that isn't sound) per encoder click clockwise, the
+	// previous one counter-clockwise; sound strips are skipped (decision
+	// 20261115s2rt). It has an encoder and no step.
 	ActionJumpEdit = "timeline.jump_edit"
+	// ActionJumpCut is ActionJumpEdit stopping at every cut, sound strips
+	// included. It has an encoder and no step.
+	ActionJumpCut = "timeline.jump_cut"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -125,7 +129,8 @@ func Default() Config {
 				{ID: "play-pause", Name: "Play / pause", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionPlayPause},
 				{ID: "reverse", Name: "Play backwards / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionReverse},
 				{ID: "forward", Name: "Play forward / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionForward},
-				{ID: "jump-edit", Name: "Jump to previous / next cut", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionJumpEdit},
+				{ID: "jump-edit", Name: "Jump between video edits", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionJumpEdit},
+				{ID: "jump-cut", Name: "Jump between all cuts", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionJumpCut},
 			},
 		}},
 	}
@@ -220,12 +225,12 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionJumpEdit:
+			case ActionJumpEdit, ActionJumpCut:
 				if b.Control.Type != "cc" {
-					return fmt.Errorf("binding %q: jumping between cuts needs a knob (cc)", b.Name)
+					return fmt.Errorf("binding %q: jumping needs a knob (cc)", b.Name)
 				}
 				if b.Step != 0 {
-					return fmt.Errorf("binding %q: jumping between cuts has no step: each click is one cut", b.Name)
+					return fmt.Errorf("binding %q: jumping has no step: each click is one edit or cut", b.Name)
 				}
 				if err := validEncoder(b); err != nil {
 					return err

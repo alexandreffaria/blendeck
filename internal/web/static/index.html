@@ -256,9 +256,13 @@ tr.flash td { animation: flash 600ms ease-out; }
         <button class="btn" data-test-zoom="-1" title="Zoom out" aria-label="Zoom out">−</button>
         <button class="btn" data-test-zoom="1" title="Zoom in" aria-label="Zoom in">+</button>
       </div></div>
-      <div class="group"><span>Cuts</span><div class="seg">
-        <button class="btn" data-test-jump="-1" title="Previous cut" aria-label="Previous cut">⇤</button>
-        <button class="btn" data-test-jump="1" title="Next cut" aria-label="Next cut">⇥</button>
+      <div class="group"><span>Edits</span><div class="seg">
+        <button class="btn" data-test-jump="-1" title="Previous video edit" aria-label="Previous video edit">⇤</button>
+        <button class="btn" data-test-jump="1" title="Next video edit" aria-label="Next video edit">⇥</button>
+      </div></div>
+      <div class="group"><span>All cuts</span><div class="seg">
+        <button class="btn" data-test-jump="-1" data-sound title="Previous cut, sound included" aria-label="Previous cut, sound included">⇤</button>
+        <button class="btn" data-test-jump="1" data-sound title="Next cut, sound included" aria-label="Next cut, sound included">⇥</button>
       </div></div>
       <div class="group"><span>Edit</span><div class="seg">
         <button class="btn" data-test-cut title="Cut at playhead">✂ Cut</button>
@@ -349,7 +353,7 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump to previous / next cut' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
@@ -359,7 +363,8 @@ const STEPS = {
 };
 // Knob actions with no step: an encoder, and one of something per click.
 const FIXED_KNOBS = {
-  'timeline.jump_edit': { per: '1 cut', verb: 'Jumping between cuts' },
+  'timeline.jump_edit': { per: '1 edit', verb: 'Jumping between edits' },
+  'timeline.jump_cut': { per: '1 cut', verb: 'Jumping between cuts' },
 };
 const knob = (action) => STEPS[action] || FIXED_KNOBS[action];
 const ENCODERS = {
@@ -539,8 +544,8 @@ function describe(ev) {
     } else if (h.command.type === 'shuttle') {
       what = h.command.clicks > 0 ? 'forward / faster' : 'backwards / faster';
     } else if (h.command.type === 'jump') {
-      const n = h.command.clicks;
-      what = `${Math.abs(n)} cut${Math.abs(n) === 1 ? '' : 's'} ${n > 0 ? 'right' : 'left'}`;
+      const n = h.command.clicks, what1 = h.command.sound ? 'cut' : 'edit';
+      what = `${Math.abs(n)} ${what1}${Math.abs(n) === 1 ? '' : 's'} ${n > 0 ? 'right' : 'left'}`;
     } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
@@ -675,7 +680,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });
   if (t.dataset.testPlay !== undefined) return sendTest({ play_pause: true });
-  if (t.dataset.testJump) return sendTest({ jump: +t.dataset.testJump });
+  if (t.dataset.testJump) return sendTest(t.dataset.sound !== undefined ? { jump: +t.dataset.testJump, sound: true } : { jump: +t.dataset.testJump });
   if (t.dataset.testShuttle) return sendTest({ shuttle: +t.dataset.testShuttle });
 });
 

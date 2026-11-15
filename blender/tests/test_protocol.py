@@ -540,6 +540,13 @@ class JumpTest(unittest.TestCase):
         # A cut between keeps them apart, in order
         self.assertEqual(protocol.edit_steps([J(1), {"type": "cut"}, J(2)]), [("jump", 1), ("cut", None), ("jump", 2)])
         self.assertEqual(protocol.edit_steps([{"type": "scrub", "frames": 3}, J(-1)]), [("scrub", 3), ("jump", -1)])
+        S = lambda n: {"type": "jump", "clicks": n, "sound": True}
+        self.assertEqual(protocol.edit_steps([J(1), S(1), S(1), J(-1)]), [("jump", 1), ("jump_sound", 2), ("jump", -1)])
+        self.assertEqual(protocol.edit_steps([S(1), S(-1)]), [])
+        self.assertEqual(protocol.edit_steps([{"type": "jump", "clicks": 1, "sound": False}]), [("jump", 1)])
+        for bad in ({"type": "jump", "clicks": 1, "sound": 1}, {"type": "jump", "clicks": 1, "sound": "yes"}, {"type": "jump", "clicks": 1, "sound": None}):
+            self.assertEqual(protocol.edit_steps([bad]), [], bad)
+        self.assertEqual(protocol.edit_steps([S(1)] * (protocol.MAX_JUMPS_PER_TICK + 5) + [J(1)]), [("jump_sound", protocol.MAX_JUMPS_PER_TICK)])
         for bad in (J(0), J(True), J("1"), J(1.0), J(None), {"type": "jump"}):
             self.assertEqual(protocol.edit_steps([bad]), [], bad)
         # A flood is capped, either way, per read
