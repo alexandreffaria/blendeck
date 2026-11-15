@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.7.0"
+ADDON_VERSION = "0.8.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -79,6 +79,7 @@ def _close(reason):
     link.buf = None
     link.out = b""
     link.last_state = None
+    _shuttle_stop()  # nothing would drive it any more
     _set_status(reason)
 
 
@@ -499,6 +500,8 @@ def _seek(scene, frame):
     if _playing():
         scene.frame_current = frame
     scene.frame_set(frame)
+    if shuttle.speed:
+        _shuttle_anchor(scene)  # the add-on's playback carries on from here
 
 
 def _window_scene(win):
@@ -538,9 +541,14 @@ def _play_context(scene):
 def _play_pause(scene):
     """Starts or pauses playback, like Space in the video editor: it
     plays the scene the edits go to, and a pause leaves the playhead where
-    it stopped. Playback makes no undo steps. Never raises. Returns what it
-    did ("play", "play_window", "pause") or None."""
+    it stopped. It also stops playback the forward and backwards buttons
+    started, whatever its speed, so the next play is at normal speed.
+    Playback makes no undo steps. Never raises. Returns what it did
+    ("play", "play_window", "pause") or None."""
     try:
+        if shuttle.speed:
+            _shuttle_stop()
+            return "pause"
         playing = _playing()
         ctx, editor, window = (None, False, False) if playing else _play_context(scene)
         what = protocol.play_pause_plan(playing, editor, window)
@@ -561,6 +569,99 @@ def _play_pause(scene):
         print("Blendeck: play / pause skipped:", e)
         return None
     return what
+
+
+class _Shuttle:
+    """Playback the add-on drives itself, for every speed Blender's own
+    can't play. Blender plays at 1x only, so 1.1x and faster, and
+    backwards at any speed, move the playhead from this add-on's timer, in
+    time with the clock. speed is in tenths (see protocol.NORMAL_SPEED), 0
+    when not driving. It runs from origin, the frame it started at or last
+    picked up from, since `since`; last is the frame it set, so a move by
+    anything else is noticed."""
+
+    speed = 0
+    origin = 0
+    since = 0.0
+    last = None
+    scene = ""
+
+
+shuttle = _Shuttle()
+
+
+def _shuttle_stop():
+    shuttle.speed = 0
+    shuttle.last = None
+
+
+def _shuttle_anchor(scene):
+    shuttle.origin = scene.frame_current
+    shuttle.since = time.monotonic()
+    shuttle.last = scene.frame_current
+
+
+def _cancel_native():
+    """Pauses Blender's own playback, leaving the playhead."""
+    ctx, why = _undo_context()
+    if why is not None:
+        raise RuntimeError(why)
+    with bpy.context.temp_override(**ctx):
+        bpy.ops.screen.animation_cancel(restore_frame=False)
+
+
+def _shuttle(scene, direction):
+    """A press of the forward (direction 1) or backwards (-1) button: play
+    that way at normal speed, or 10% faster if it already plays that way
+    (see protocol.shuttle_speed). 1x forward is Blender's own playback, so
+    it has sound; every other speed is driven by the add-on, silent. Never
+    raises. Returns the new speed, in tenths, or 0 if it stopped."""
+    try:
+        current = shuttle.speed or (protocol.NORMAL_SPEED if _playing() else 0)
+        speed = protocol.shuttle_speed(current, direction)
+        if speed == protocol.NORMAL_SPEED:
+            _shuttle_stop()
+            if _playing() or _play_pause(scene) is not None:
+                return speed
+            # Blender's own playback can't start here: drive it instead
+        if _playing():
+            _cancel_native()
+        shuttle.speed = speed
+        shuttle.scene = scene.name
+        _shuttle_anchor(scene)
+        return speed
+    except Exception as e:
+        print("Blendeck: forward / backwards skipped:", e)
+        _shuttle_stop()
+        return 0
+
+
+def _shuttle_tick(scene):
+    """Moves the playhead for playback the add-on drives, once per timer
+    tick. It picks up from wherever something else (the scrub knob, an
+    edit, the mouse) put the playhead, and stops at the scene's ends, when
+    the edited scene changes, or when Blender's own playback starts. Frames
+    it can't show in time are skipped, like Blender's Frame Dropping.
+    Never raises."""
+    if not shuttle.speed:
+        return
+    try:
+        if scene.name != shuttle.scene or _playing():
+            _shuttle_stop()
+            return
+        if scene.frame_current != shuttle.last:
+            _shuttle_anchor(scene)
+        fps = scene.render.fps / scene.render.fps_base
+        elapsed = time.monotonic() - shuttle.since
+        frame, at_end = protocol.shuttle_frame(shuttle.origin, elapsed, fps, shuttle.speed, scene.frame_start, scene.frame_end)
+        if frame != scene.frame_current:
+            scene.frame_set(frame)
+        shuttle.last = scene.frame_current
+        if at_end:
+            _shuttle_stop()
+    except Exception as e:
+        print("Blendeck: playback stopped:", e)
+        _shuttle_stop()
 
 
 def _rendering():
@@ -595,6 +696,7 @@ def _apply(messages, prefs):
     scene = _scene()
     if scene is None:
         return
+    _shuttle_tick(scene)
     for kind, frames in protocol.edit_steps(messages):
         if kind == "cut":
             # Only the strips cut change selection (see _cut): a full
@@ -602,6 +704,8 @@ def _apply(messages, prefs):
             _cut(scene, follow=prefs.follow_selection)
             continue
         if kind == "undo":
+            # Blender's undo stops its own playback; stop the add-on's too
+            _shuttle_stop()
             _undo()
             # The undo reloaded the data the old scene pointed at
             scene = _scene()
@@ -614,6 +718,9 @@ def _apply(messages, prefs):
             continue
         if kind == "play_pause":
             _play_pause(scene)
+            continue
+        if kind == "shuttle":
+            _shuttle(scene, frames)  # for a shuttle, frames is the direction
             continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:

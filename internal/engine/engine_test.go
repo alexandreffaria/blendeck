@@ -1039,3 +1039,175 @@ func TestPlayPauseCommandJSON(t *testing.T) {
 		t.Fatalf("got %s", data)
 	}
 }
+
+// The owner's shuttle buttons: note 66 on channel 1 plays backwards, note
+// 68 forward, pressed with velocity 64.
+var revDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 66, Value: 64}
+var revUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 66, Value: 64}
+var fwdDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 68, Value: 64}
+var fwdUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 68, Value: 64}
+
+// shuttleProfile is playProfile with the backwards button learned as note
+// 66 and the forward one as note 68.
+func shuttleProfile() config.Profile {
+	p := playProfile()
+	for i := range p.Bindings {
+		switch p.Bindings[i].ID {
+		case "reverse":
+			p.Bindings[i].Control.Number = 66
+		case "forward":
+			p.Bindings[i].Control.Number = 68
+		}
+	}
+	return p
+}
+
+// shuttles returns the direction m shuttles in (1, -1), or 0 for none,
+// and fails on any other command.
+func shuttles(t *testing.T, e *Engine, m midi.Message) int {
+	t.Helper()
+	hit, _ := e.Handle(m)
+	if hit.Command == nil {
+		return 0
+	}
+	if hit.Command.Type != "shuttle" || (hit.Command.Clicks != 1 && hit.Command.Clicks != -1) || hit.Command.Frames != 0 {
+		t.Fatalf("command = %+v, want a shuttle", hit.Command)
+	}
+	return hit.Command.Clicks
+}
+
+// One step per press, never on the release, each button its own way.
+func TestShuttleOncePerPress(t *testing.T) {
+	e := New(shuttleProfile())
+	hit, _ := e.Handle(revDown)
+	if hit.Binding != "reverse" || hit.Command == nil || *hit.Command != (Command{Type: "shuttle", Clicks: -1}) {
+		t.Fatalf("backwards press: %+v", hit)
+	}
+	hit, _ = e.Handle(fwdDown)
+	if hit.Binding != "forward" || hit.Command == nil || *hit.Command != (Command{Type: "shuttle", Clicks: 1}) {
+		t.Fatalf("forward press: %+v", hit)
+	}
+	if got := shuttles(t, e, revUp); got != 0 {
+		t.Fatal("backwards release shuttled")
+	}
+	if got := shuttles(t, e, fwdUp); got != 0 {
+		t.Fatal("forward release shuttled")
+	}
+	if got := shuttles(t, e, midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 68}); got != 0 {
+		t.Fatal("velocity-0 release shuttled")
+	}
+	// Three presses are three steps
+	for i := 0; i < 3; i++ {
+		if shuttles(t, e, fwdDown) != 1 || shuttles(t, e, fwdUp) != 0 {
+			t.Fatalf("forward press %d", i+2)
+		}
+		if shuttles(t, e, revDown) != -1 || shuttles(t, e, revUp) != 0 {
+			t.Fatalf("backwards press %d", i+2)
+		}
+	}
+}
+
+// With Fn held and no Fn bindings, the plain ones still shuttle.
+func TestShuttleWithFnHeld(t *testing.T) {
+	e := New(shuttleProfile())
+	e.Handle(fnDown)
+	if shuttles(t, e, fwdDown) != 1 || shuttles(t, e, revDown) != -1 {
+		t.Fatal("Fn + press didn't shuttle")
+	}
+	if shuttles(t, e, fwdUp) != 0 {
+		t.Fatal("Fn + release shuttled")
+	}
+	e.Handle(fnUp)
+	if shuttles(t, e, fwdDown) != 1 {
+		t.Fatal("press after Fn release didn't shuttle")
+	}
+}
+
+// An Fn binding on the same button wins while Fn is held, and only then.
+func TestShuttleFnBindingWins(t *testing.T) {
+	p := shuttleProfile()
+	p.Bindings = append(p.Bindings, config.Binding{ID: "fwd-fn", Name: "Forward (Fn)", Control: config.Control{Type: "note", Channel: 1, Number: 68}, Modifier: "Fn", Action: config.ActionReverse})
+	e := New(p)
+	if hit, _ := e.Handle(fwdDown); hit.Binding != "forward" {
+		t.Fatalf("plain press matched %q", hit.Binding)
+	}
+	e.Handle(fnDown)
+	if hit, _ := e.Handle(fwdDown); hit.Binding != "fwd-fn" || hit.Command == nil || hit.Command.Clicks != -1 {
+		t.Fatalf("Fn press: %+v", hit)
+	}
+}
+
+func TestShuttleNotLearnedIgnored(t *testing.T) {
+	e := New(playProfile()) // both still at -1
+	for _, m := range []midi.Message{fwdDown, revDown} {
+		if hit, _ := e.Handle(m); hit.Binding != "" || hit.Command != nil {
+			t.Fatalf("unlearned shuttle matched: %+v", hit)
+		}
+	}
+}
+
+// A cc used as a button shuttles at 64 and up, and not on its release.
+func TestShuttleOnCCButton(t *testing.T) {
+	p := shuttleProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "reverse" {
+			p.Bindings[i].Control = config.Control{Type: "cc", Channel: 1, Number: 21}
+		}
+	}
+	e := New(p)
+	cc := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 21, Value: v}
+	}
+	if shuttles(t, e, cc(127)) != -1 || shuttles(t, e, cc(64)) != -1 {
+		t.Fatal("cc press didn't shuttle")
+	}
+	if shuttles(t, e, cc(0)) != 0 || shuttles(t, e, cc(63)) != 0 {
+		t.Fatal("cc release shuttled")
+	}
+}
+
+// Play / pause between them still plays or pauses, and only notes 66 and
+// 68 on channel 1 shuttle.
+func TestShuttleApartFromOthers(t *testing.T) {
+	e := New(shuttleProfile())
+	if !toggles(t, e, playDown) {
+		t.Fatal("play button didn't toggle")
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("scrub = %d", got)
+	}
+	for _, m := range []midi.Message{
+		{Kind: midi.NoteOn, Channel: 2, Number: 66, Value: 64},
+		{Kind: midi.NoteOn, Channel: 2, Number: 68, Value: 64},
+		{Kind: midi.NoteOn, Channel: 1, Number: 65, Value: 64},
+		{Kind: midi.NoteOn, Channel: 1, Number: 69, Value: 64},
+	} {
+		if shuttles(t, e, m) != 0 {
+			t.Fatalf("%+v shuttled", m)
+		}
+	}
+}
+
+func TestShuttleDuringLearnIsCaptured(t *testing.T) {
+	e := New(shuttleProfile())
+	e.Learn(LearnBinding, nil)
+	hit, l := e.Handle(fwdDown)
+	if hit.Command != nil || l == nil || l.Control != (config.Control{Type: "note", Channel: 1, Number: 68}) {
+		t.Fatalf("hit %+v learned %+v", hit, l)
+	}
+	if shuttles(t, e, fwdUp) != 0 {
+		t.Fatal("the release after learning shuttled")
+	}
+}
+
+func TestShuttleCommandJSON(t *testing.T) {
+	for cmd, want := range map[Command]string{
+		{Type: "shuttle", Clicks: 1}:  `{"type":"shuttle","clicks":1}`,
+		{Type: "shuttle", Clicks: -1}: `{"type":"shuttle","clicks":-1}`,
+	} {
+		data, _ := json.Marshal(cmd)
+		if string(data) != want {
+			t.Fatalf("got %s, want %s", data, want)
+		}
+	}
+}

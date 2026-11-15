@@ -253,6 +253,56 @@ func TestPutConfigPlayPauseBinding(t *testing.T) {
 	}
 }
 
+func TestTestEndpointShuttle(t *testing.T) {
+	h := newServer(t)
+	for _, body := range []string{`{"shuttle":1}`, `{"shuttle":-1}`} {
+		rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{`{"shuttle":2}`, `{"shuttle":-5}`, `{"shuttle":0}`, `{"shuttle":1,"play_pause":true}`, `{"shuttle":-1,"frames":1}`, `{"shuttle":true}`, `{"shuttle":"1"}`, `{"shuttle":1.5}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"shuttle":1}`); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain shuttle: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"shuttle":1}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host shuttle: %d", rec.Code)
+	}
+}
+
+// The page saves the shuttle bindings learned on the owner's buttons as it
+// sends them: no step, no encoder.
+func TestPutConfigShuttleBindings(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+	var st stateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for i, b := range st.Config.Profiles[0].Bindings {
+		switch b.Action {
+		case config.ActionReverse:
+			st.Config.Profiles[0].Bindings[i].Control = config.Control{Type: "note", Channel: 1, Number: 66}
+			n++
+		case config.ActionForward:
+			st.Config.Profiles[0].Bindings[i].Control = config.Control{Type: "note", Channel: 1, Number: 68}
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d shuttle bindings in the default config, want 2", n)
+	}
+	body, _ := json.Marshal(st.Config)
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestIndexServed(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")

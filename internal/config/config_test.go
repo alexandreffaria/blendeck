@@ -54,6 +54,10 @@ func TestValidateRejects(t *testing.T) {
 		"play pitchbend":    func(c *Config) { play(c).Control = Control{"pitch_bend", 1, 0} },
 		"play with step":    func(c *Config) { play(c).Step = 1 },
 		"play encoder":      func(c *Config) { play(c).Encoder = EncoderTwos },
+		"forward pitchbend": func(c *Config) { byID(c, "forward").Control = Control{"pitch_bend", 1, 0} },
+		"forward with step": func(c *Config) { byID(c, "forward").Step = 1 },
+		"reverse encoder":   func(c *Config) { byID(c, "reverse").Encoder = EncoderTwos },
+		"reverse knob only": func(c *Config) { byID(c, "reverse").Control = Control{"pitch_bend", 1, 0} },
 		"too many mods":     func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
 		"too many profile":  func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
@@ -323,5 +327,45 @@ func TestOnePlayPauseBinding(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("%d play / pause bindings, want 1", n)
+	}
+}
+
+// byID returns the default profile's binding with that id.
+func byID(c *Config, id string) *Binding {
+	for i := range c.Profiles[0].Bindings {
+		if c.Profiles[0].Bindings[i].ID == id {
+			return &c.Profiles[0].Bindings[i]
+		}
+	}
+	panic("no binding " + id + " in the default config")
+}
+
+func TestShuttleBindings(t *testing.T) {
+	c := Default()
+	for id, want := range map[string]struct{ action, name, what string }{
+		"forward": {ActionForward, "Play forward / faster", "play forward"},
+		"reverse": {ActionReverse, "Play backwards / faster", "play backwards"},
+	} {
+		b := byID(&c, id)
+		if b.Action != want.action || b.Name != want.name || b.Control.Learned() || b.Control.Type != "note" || b.Modifier != "" || b.Step != 0 || b.Encoder != "" {
+			t.Fatalf("default %s binding = %+v", id, b)
+		}
+		// The owner's buttons (notes 66 and 68), and a cc used as a button
+		for _, ctl := range []Control{{"note", 1, 66}, {"note", 1, 68}, {"cc", 1, 20}} {
+			b.Control = ctl
+			if err := c.Validate(); err != nil {
+				t.Fatalf("%s %+v: %v", id, ctl, err)
+			}
+		}
+		b.Control = Control{"pitch_bend", 1, 0}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), want.what+" needs a button") {
+			t.Fatalf("%s err = %v", id, err)
+		}
+		b.Control = Control{"note", 1, 68}
+		b.Step = 2
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+			t.Fatalf("%s step err = %v", id, err)
+		}
+		b.Step = 0
 	}
 }
