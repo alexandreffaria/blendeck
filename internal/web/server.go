@@ -154,22 +154,25 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 // {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in),
 // {"cut":true} cuts at the playhead, {"undo":true} runs Blender's undo
 // once, {"ripple_delete":true} ripple deletes at the playhead,
-// {"play_pause":true} starts or pauses playback. Exactly one of them.
+// {"play_pause":true} starts or pauses playback, {"shuttle":1} plays
+// forward or faster, {"shuttle":-1} backwards or faster. Exactly one of
+// them.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Frames int  `json:"frames"`
-		Zoom   int  `json:"zoom"`
-		Cut    bool `json:"cut"`
-		Undo   bool `json:"undo"`
-		Ripple bool `json:"ripple_delete"`
-		Play   bool `json:"play_pause"`
+		Frames  int  `json:"frames"`
+		Zoom    int  `json:"zoom"`
+		Cut     bool `json:"cut"`
+		Undo    bool `json:"undo"`
+		Ripple  bool `json:"ripple_delete"`
+		Play    bool `json:"play_pause"`
+		Shuttle int  `json:"shuttle"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	n := 0
-	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play} {
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0} {
 		if set {
 			n++
 		}
@@ -177,7 +180,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var cmd engine.Command
 	switch {
 	case n > 1:
-		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete or play_pause")
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete, play_pause or shuttle")
 		return
 	case req.Undo:
 		cmd = engine.Command{Type: "undo"}
@@ -187,6 +190,12 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		cmd = engine.Command{Type: "ripple_delete"}
 	case req.Play:
 		cmd = engine.Command{Type: "play_pause"}
+	case req.Shuttle != 0:
+		if req.Shuttle != 1 && req.Shuttle != -1 {
+			writeError(w, http.StatusBadRequest, "shuttle must be 1 (forward) or -1 (backwards)")
+			return
+		}
+		cmd = engine.Command{Type: "shuttle", Clicks: req.Shuttle}
 	case req.Zoom != 0:
 		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))

@@ -217,9 +217,11 @@ tr.flash td { animation: flash 600ms ease-out; }
         <div class="test-row">
           <button class="btn small" data-test-undo>↶ Undo</button>
         </div>
-        <div class="hint" style="margin:10px 0 6px">Send a test play / pause</div>
+        <div class="hint" style="margin:10px 0 6px">Send a test playback</div>
         <div class="test-row">
+          <button class="btn small" data-test-shuttle="-1">⏪ Backwards / faster</button>
           <button class="btn small" data-test-play>⏯ Play / pause</button>
+          <button class="btn small" data-test-shuttle="1">Forward / faster ⏩</button>
         </div>
       </div>
     </section>
@@ -243,7 +245,7 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
@@ -417,6 +419,8 @@ function describe(ev) {
       what = 'ripple delete';
     } else if (h.command.type === 'play_pause') {
       what = 'play / pause';
+    } else if (h.command.type === 'shuttle') {
+      what = h.command.clicks > 0 ? 'forward / faster' : 'backwards / faster';
     } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
@@ -535,6 +539,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });
   if (t.dataset.testPlay !== undefined) return sendTest({ play_pause: true });
+  if (t.dataset.testShuttle) return sendTest({ shuttle: +t.dataset.testShuttle });
 });
 
 document.addEventListener('input', (e) => {
@@ -639,7 +644,7 @@ $('clear').onclick = () => { $('log').querySelectorAll('.log-row:not(.log-head)'
 // Switching a binding's action: a step that made sense for the old one
 // (10 frames) can be out of range for the new one (20 zoom steps at most),
 // so it starts over, and a name still at the old default follows along.
-// A button action (cut, undo, ripple delete, play / pause) has no step or encoder; a knob action gets them back.
+// A button action (cut, undo, ripple delete, playback) has no step or encoder; a knob action gets them back.
 function setAction(b, action) {
   const was = b.action;
   b.action = action;

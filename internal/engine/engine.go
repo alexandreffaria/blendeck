@@ -15,7 +15,9 @@ import (
 // N steps (positive is in), {"type":"cut"} cuts the strips under the
 // playhead, {"type":"undo"} runs Blender's undo once,
 // {"type":"ripple_delete"} deletes the strips under the playhead and closes
-// the gap they leave, {"type":"play_pause"} starts or pauses playback.
+// the gap they leave, {"type":"play_pause"} starts or pauses playback,
+// {"type":"shuttle","clicks":1} plays forward or faster forward and
+// {"type":"shuttle","clicks":-1} backwards or faster backwards.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -284,6 +286,15 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		// Once per press, like cut: a release must not toggle it back
 		if pressed(m) {
 			hit.Command = &Command{Type: "play_pause"}
+		}
+	case config.ActionForward, config.ActionReverse:
+		// Once per press: each press is one step faster
+		if pressed(m) {
+			dir := 1
+			if b.Action == config.ActionReverse {
+				dir = -1
+			}
+			hit.Command = &Command{Type: "shuttle", Clicks: dir}
 		}
 	}
 	return hit, nil

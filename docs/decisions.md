@@ -3,6 +3,31 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Each forward or backwards press is 0.1x, up to 4x (20261115u2qg)
+
+The forward and backwards buttons play at 1x on the first press and 0.1x
+faster on each further press that way (1.1x, 1.2x, ...), up to 4x. Only 1x
+forward is Blender's own playback, with sound; every other speed, and
+backwards, is driven by the add-on and is silent.
+
+## The opposite button eases off, then switches (20261115618c)
+
+Playing faster than 1x one way, the other button slows it 0.1x a press down
+to 1x; at 1x, its next press plays the other way at 1x. Easing off forward
+lands on Blender's own 1x playback, with sound.
+
+## Fast and backwards playback stops at the ends (20261115pb4a)
+
+Playback the add-on drives stops on the first frame going backwards and the
+last going forward (of the preview range, when it's on), rather than looping
+like Blender's own playback.
+
+## Play / pause stops fast and backwards playback (20261115usz7)
+
+During fast or backwards playback, play / pause stops it where it is (the
+playhead stays, as for a plain pause, 20261115nsi1), and the next press plays
+forward at 1x.
+
 ## Pausing leaves the playhead where it stopped (20261115nsi1)
 
 The play / pause button pauses like Space in Blender: the playhead stays on

@@ -3,6 +3,7 @@ be tested without Blender."""
 
 import ipaddress
 import json
+import math
 from collections import namedtuple
 
 MAX_LINE = 64 * 1024
@@ -24,6 +25,14 @@ MAX_RIPPLES_PER_TICK = 8
 # Play / pause presses applied per tick at most. Each press toggles, so two
 # in a row with nothing between cancel out and are dropped together.
 MAX_TOGGLES_PER_TICK = 8
+# Playback speeds, in tenths of normal speed: 10 is 1x forward, -10 is 1x
+# backwards, 0 is stopped. Each press of the forward or backwards button
+# adds SHUTTLE_STEP (10%), up to MAX_SHUTTLE_SPEED (4x) either way.
+NORMAL_SPEED = 10
+SHUTTLE_STEP = 1
+MAX_SHUTTLE_SPEED = 40
+# Forward / backwards presses applied per tick at most.
+MAX_SHUTTLES_PER_TICK = 8
 
 
 class LineBuffer:
@@ -97,12 +106,15 @@ def edit_steps(messages):
     every ripple delete, up to MAX_RIPPLES_PER_TICK. Play / pause presses in
     a row with nothing between are a toggle each, so a pair cancels out: an
     even run leaves nothing, an odd one a single toggle. At most
-    MAX_TOGGLES_PER_TICK presses count. Malformed commands are ignored."""
+    MAX_TOGGLES_PER_TICK presses count. Forward and backwards presses are
+    ("shuttle", 1) and ("shuttle", -1), one each, never merged, up to
+    MAX_SHUTTLES_PER_TICK. Malformed commands are ignored."""
     steps = []
     cuts = 0
     undos = 0
     ripples = 0
     toggles = 0
+    shuttles = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -136,7 +148,41 @@ def edit_steps(messages):
                 steps.pop()  # play then pause at once: nothing
             else:
                 steps.append(("play_pause", None))
+        elif kind == "shuttle":
+            clicks = m.get("clicks")
+            if type(clicks) is not int or clicks not in (1, -1) or shuttles >= MAX_SHUTTLES_PER_TICK:
+                continue
+            shuttles += 1
+            steps.append(("shuttle", clicks))
     return steps
+
+
+def shuttle_speed(current, direction):
+    """The playback speed after a press of the forward (direction 1) or
+    backwards (-1) button, from current (both in tenths, see NORMAL_SPEED).
+    Already going that way: 10% faster, up to MAX_SHUTTLE_SPEED. Going the
+    other way faster than 1x: 10% slower, easing off down to 1x. Going the
+    other way at 1x, or stopped: normal speed in this direction (decision
+    20261115618c)."""
+    if current * direction > 0:
+        return direction * min(MAX_SHUTTLE_SPEED, abs(current) + SHUTTLE_STEP)
+    if abs(current) > NORMAL_SPEED:
+        return current + direction * SHUTTLE_STEP
+    return direction * NORMAL_SPEED
+
+
+def shuttle_frame(origin, elapsed, fps, speed, start, end):
+    """Where playback the add-on drives is after elapsed seconds, having
+    started at frame origin: (frame, at_end). It stops at the scene's first
+    frame going backwards and its last going forward (at_end is then True);
+    a playhead already outside that range runs on to where it started."""
+    pos = origin + elapsed * fps * speed / NORMAL_SPEED
+    lo, hi = min(start, origin), max(end, origin)
+    if speed < 0 and pos <= lo:
+        return lo, True
+    if speed > 0 and pos >= hi:
+        return hi, True
+    return max(lo, min(hi, int(math.floor(pos)))), False
 
 
 def play_pause_plan(playing, editor, window):

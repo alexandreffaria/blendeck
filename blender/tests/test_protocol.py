@@ -380,6 +380,72 @@ class PlayPauseTest(unittest.TestCase):
         self.assertIsNone(protocol.play_pause_plan(False, False, False))
 
 
+class ShuttleTest(unittest.TestCase):
+    F = {"type": "shuttle", "clicks": 1}
+    B = {"type": "shuttle", "clicks": -1}
+
+    def test_speed_steps(self):
+        sp = protocol.shuttle_speed
+        # Stopped: normal speed that way
+        self.assertEqual(sp(0, 1), 10)
+        self.assertEqual(sp(0, -1), -10)
+        # Already going that way: 10% faster each press
+        self.assertEqual(sp(10, 1), 11)
+        self.assertEqual(sp(-10, -1), -11)
+        self.assertEqual(sp(-15, -1), -16)
+        # The other way, faster than 1x: ease off 10% a press, down to 1x
+        self.assertEqual(sp(25, -1), 24)
+        self.assertEqual(sp(-25, 1), -24)
+        self.assertEqual(sp(11, -1), 10)
+        self.assertEqual(sp(-11, 1), -10)
+        # The other way at 1x: normal speed in the new direction
+        self.assertEqual(sp(10, -1), -10)
+        self.assertEqual(sp(-10, 1), 10)
+        # From 2x forward: 10 presses down to 1x, the 11th reverses
+        s = 20
+        for _ in range(10):
+            s = sp(s, -1)
+        self.assertEqual(s, 10)
+        self.assertEqual(sp(s, -1), -10)
+        # Capped at 4x
+        s = 10
+        for _ in range(100):
+            s = sp(s, 1)
+        self.assertEqual(s, protocol.MAX_SHUTTLE_SPEED)
+        self.assertEqual(sp(-protocol.MAX_SHUTTLE_SPEED, -1), -protocol.MAX_SHUTTLE_SPEED)
+
+    def test_frame_follows_the_clock(self):
+        f = protocol.shuttle_frame
+        # 24 fps: 1.5x for 2 s is 72 frames, backwards 2x for 1 s is 48 back
+        self.assertEqual(f(100, 2.0, 24, 15, 1, 1000), (172, False))
+        self.assertEqual(f(100, 1.0, 24, -20, 1, 1000), (52, False))
+        self.assertEqual(f(100, 0.0, 24, 11, 1, 1000), (100, False))
+        # Fractions round down, both ways
+        self.assertEqual(f(100, 0.01, 24, 10, 1, 1000), (100, False))
+        self.assertEqual(f(100, 0.01, 24, -10, 1, 1000), (99, False))
+
+    def test_frame_stops_at_the_ends(self):
+        f = protocol.shuttle_frame
+        self.assertEqual(f(990, 10.0, 24, 30, 1, 1000), (1000, True))
+        self.assertEqual(f(10, 10.0, 24, -30, 1, 1000), (1, True))
+        # At the start going forward, or at the end going backwards, is fine
+        self.assertEqual(f(1, 0.0, 24, 10, 1, 1000), (1, False))
+        self.assertEqual(f(1000, 0.0, 24, -10, 1, 1000), (1000, False))
+        # Outside the range: runs on to where it started
+        self.assertEqual(f(1200, 1.0, 24, 10, 1, 1000), (1200, True))
+        self.assertEqual(f(1200, 1.0, 24, -10, 1, 1000), (1176, False))
+
+    def test_steps_keep_order_never_merged(self):
+        msgs = [self.F, self.F, {"type": "scrub", "frames": 3}, self.B, {"type": "play_pause"}, self.F]
+        self.assertEqual(protocol.edit_steps(msgs), [("shuttle", 1), ("shuttle", 1), ("scrub", 3), ("shuttle", -1), ("play_pause", None), ("shuttle", 1)])
+
+    def test_steps_capped_and_malformed_ignored(self):
+        steps = protocol.edit_steps([self.F] * 30)
+        self.assertEqual(len(steps), protocol.MAX_SHUTTLES_PER_TICK)
+        bad = [{"type": "shuttle"}, {"type": "shuttle", "clicks": 2}, {"type": "shuttle", "clicks": 0}, {"type": "shuttle", "clicks": True}, {"type": "shuttle", "clicks": "1"}, {"type": "shuttle", "clicks": 1.0}]
+        self.assertEqual(protocol.edit_steps(bad), [])
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

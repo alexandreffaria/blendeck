@@ -19,6 +19,8 @@ and keeps profiles.
 | Another button you pick | Undoes once per press, like Ctrl+Z, anywhere in Blender. Nothing while you drag a strip or another operator is running | The same |
 | A third button you pick | Ripple delete: deletes the strips under the playhead (the selected ones among them, if any) and closes the gap on every channel; the playhead goes to the join. Locked strips are never deleted; if a strip stays under the playhead or a locked strip would have to move, the gap stays open. Ctrl+Z undoes it | The same |
 | A fourth button you pick | Play / pause, like Space in the video editor: plays the scene the video editor shows, and pausing leaves the playhead where it stopped. The scrub knob, cut and ripple delete keep working while it plays; undo pauses it, as Ctrl+Z does | The same |
+| A fifth button you pick | Plays backwards; each further press plays 10% faster backwards, up to 4x. Silent: Blender only plays sound forward at normal speed | The same |
+| A sixth button you pick | Plays forward (normal speed, with sound); each further press plays 10% faster, up to 4x, silent. The opposite button eases off 10% a press down to normal speed, then switches direction; play / pause stops and the next play is normal speed. Faster than normal or backwards, they stop at the first or last frame (of the preview range, when it's on); normal speed forward is Blender's own playback and loops | The same |
 
 More come one at a time.
 
@@ -42,8 +44,9 @@ delete only those. Turn it off in the add-on's preferences or its panel.
    "Zoom timeline (fine)" with the knob you want for zoom, and **Learn** on
    "Cut at playhead" and press the button you want for cutting, and on
    "Undo" and press the button you want for undo, on "Ripple delete"
-   and press the button you want for it, and on "Play / pause" and press
-   the button you want for playback.
+   and press the button you want for it, on "Play / pause" and press the
+   button you want for playback, and on "Play backwards / faster" and
+   "Play forward / faster" and press the buttons you want for those.
 
 The add-on's panel is in the video editor's sidebar (N), tab Blendeck. Its
 preferences have the bridge's address and "Stop at scene start and end".
@@ -56,7 +59,7 @@ bridge drops it and the add-on reconnects by itself a second later.
   what a control sends.
 - **Bindings**: control → action, with frames (scrub) or zoom steps (zoom) per click and the knob's
   encoding (most send 1 / 127 for one click right / left). Button actions
-  (cut, undo, ripple delete, play / pause) have neither.
+  (cut, undo, ripple delete, playback) have neither.
 - **Modifiers**: buttons like Fn that switch bindings while held.
 - **Profiles**: named sets of bindings; the selected one is active.
 - **Blender**: connection, scene, playhead, and test buttons.

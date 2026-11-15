@@ -51,6 +51,12 @@ const (
 	// ActionPlayPause starts or pauses playback in the video editor, like
 	// Space, once per button press. It has no step and no encoder.
 	ActionPlayPause = "playback.toggle"
+	// ActionForward plays forward, and each further press plays faster,
+	// once per button press. It has no step and no encoder.
+	ActionForward = "playback.forward"
+	// ActionReverse plays backwards, and each further press plays faster
+	// backwards, once per button press. It has no step and no encoder.
+	ActionReverse = "playback.reverse"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -113,6 +119,8 @@ func Default() Config {
 				{ID: "undo", Name: "Undo", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionUndo},
 				{ID: "ripple-delete", Name: "Ripple delete", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionRippleDelete},
 				{ID: "play-pause", Name: "Play / pause", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionPlayPause},
+				{ID: "reverse", Name: "Play backwards / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionReverse},
+				{ID: "forward", Name: "Play forward / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionForward},
 			},
 		}},
 	}
@@ -207,8 +215,8 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause:
-				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause"}[b.Action]
+			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause, ActionForward, ActionReverse:
+				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause", ActionForward: "play forward", ActionReverse: "play backwards"}[b.Action]
 				if b.Control.Type != "note" && b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: %s needs a button (note or cc)", b.Name, what)
 				}
