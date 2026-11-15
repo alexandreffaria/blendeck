@@ -5,6 +5,9 @@ import ipaddress
 import json
 
 MAX_LINE = 64 * 1024
+# Zoom steps applied per tick at most, so a burst of commands can't keep
+# Blender's UI busy zooming. Each step is one zoom operator call per editor.
+MAX_ZOOM_PER_TICK = 40
 
 
 class LineBuffer:
@@ -51,6 +54,29 @@ def total_scrub(messages):
         if isinstance(frames, int) and not isinstance(frames, bool):
             total += frames
     return total
+
+
+def total_zoom(messages):
+    """Adds up the clicks of every zoom command (positive zooms in), ignoring
+    malformed ones, and caps the result at MAX_ZOOM_PER_TICK either way."""
+    total = 0
+    for m in messages:
+        if m.get("type") != "zoom":
+            continue
+        clicks = m.get("clicks")
+        if isinstance(clicks, int) and not isinstance(clicks, bool):
+            total += clicks
+    return max(-MAX_ZOOM_PER_TICK, min(MAX_ZOOM_PER_TICK, total))
+
+
+def zoom_plan(clicks):
+    """What to run for a zoom of clicks steps: ("in" or "out", times), or
+    None for nothing."""
+    if clicks > 0:
+        return ("in", clicks)
+    if clicks < 0:
+        return ("out", -clicks)
+    return None
 
 
 def scrub_target(frame, delta, start, end, clamp):

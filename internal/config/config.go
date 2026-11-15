@@ -35,6 +35,9 @@ const (
 const (
 	// ActionScrub moves the playhead Step frames per encoder click.
 	ActionScrub = "timeline.scrub"
+	// ActionZoom zooms the video editor's timeline Step zoom steps per
+	// encoder click: clockwise zooms in.
+	ActionZoom = "timeline.zoom"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -74,10 +77,13 @@ const (
 	MaxBindings  = 512
 	MaxModifiers = 32
 	MaxStep      = 100000
+	// MaxZoomStep caps zoom steps per click: each step is one zoom in
+	// Blender, and a few already go from a second to the whole edit.
+	MaxZoomStep = 20
 )
 
 // Default is the config a fresh install starts with: one profile with the
-// two timeline bindings and an Fn modifier, all waiting to be learned.
+// timeline bindings and an Fn modifier, all waiting to be learned.
 func Default() Config {
 	return Config{
 		Device:        "Loupedeck+",
@@ -88,6 +94,8 @@ func Default() Config {
 			Bindings: []Binding{
 				{ID: "scrub", Name: "Scrub timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionScrub, Step: 10},
 				{ID: "scrub-fine", Name: "Scrub timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionScrub, Step: 1},
+				{ID: "zoom", Name: "Zoom timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
+				{ID: "zoom-fast", Name: "Zoom timeline (fast)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 4},
 			},
 		}},
 	}
@@ -169,10 +177,18 @@ func (c *Config) Validate() error {
 				if b.Step < 1 || b.Step > MaxStep {
 					return fmt.Errorf("binding %q: frames per click must be 1 to %d", b.Name, MaxStep)
 				}
-				switch b.Encoder {
-				case EncoderTwos, EncoderOffset, EncoderSignBit:
-				default:
-					return fmt.Errorf("binding %q: unknown encoder type %q", b.Name, b.Encoder)
+				if err := validEncoder(b); err != nil {
+					return err
+				}
+			case ActionZoom:
+				if b.Control.Type != "cc" {
+					return fmt.Errorf("binding %q: zooming needs a knob (cc)", b.Name)
+				}
+				if b.Step < 1 || b.Step > MaxZoomStep {
+					return fmt.Errorf("binding %q: zoom steps per click must be 1 to %d", b.Name, MaxZoomStep)
+				}
+				if err := validEncoder(b); err != nil {
+					return err
 				}
 			default:
 				return fmt.Errorf("binding %q: unknown action %q", b.Name, b.Action)
@@ -183,6 +199,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("active profile %q does not exist", c.ActiveProfile)
 	}
 	return nil
+}
+
+func validEncoder(b Binding) error {
+	switch b.Encoder {
+	case EncoderTwos, EncoderOffset, EncoderSignBit:
+		return nil
+	}
+	return fmt.Errorf("binding %q: unknown encoder type %q", b.Name, b.Encoder)
 }
 
 func (k Control) validate() error {

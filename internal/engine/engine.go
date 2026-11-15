@@ -10,10 +10,13 @@ import (
 	"github.com/alexandreffaria/blendeck/internal/midi"
 )
 
-// Command is what the bridge sends to Blender.
+// Command is what the bridge sends to Blender: {"type":"scrub","frames":N}
+// moves the playhead N frames, {"type":"zoom","clicks":N} zooms the timeline
+// N steps (positive is in).
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
+	Clicks int    `json:"clicks,omitempty"`
 }
 
 // Hit says what a message did, for the live monitor.
@@ -254,6 +257,10 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	case config.ActionScrub:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "scrub", Frames: d * b.Step}
+		}
+	case config.ActionZoom:
+		if d := Delta(m.Value, b.Encoder); d != 0 {
+			hit.Command = &Command{Type: "zoom", Clicks: d * b.Step}
 		}
 	}
 	return hit, nil

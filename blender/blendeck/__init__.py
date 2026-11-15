@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.1.3"
+ADDON_VERSION = "0.2.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -173,7 +173,49 @@ def _read():
     return messages
 
 
+def _timelines():
+    """(window, area, region) for every video editor showing a timeline: the
+    WINDOW region, which is the strips view. A Preview-only editor's WINDOW
+    region is hidden (no size) and is skipped."""
+    wm = bpy.context.window_manager
+    if not wm:
+        return
+    for win in wm.windows:
+        screen = win.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != "SEQUENCE_EDITOR":
+                continue
+            space = area.spaces.active
+            if getattr(space, "view_type", "SEQUENCER") not in ("SEQUENCER", "SEQUENCER_PREVIEW"):
+                continue
+            for region in area.regions:
+                if region.type == "WINDOW" and region.width > 1 and region.height > 1:
+                    yield win, area, region
+                    break
+
+
+def _zoom(clicks):
+    """Zooms every timeline in (clicks > 0) or out, one view2d zoom step per
+    click. In the video editor that zooms time only, around the view's center.
+    An editor that refuses (its poll fails) is skipped, never raised."""
+    plan = protocol.zoom_plan(clicks)
+    if plan is None:
+        return
+    direction, times = plan
+    op = bpy.ops.view2d.zoom_in if direction == "in" else bpy.ops.view2d.zoom_out
+    for win, area, region in list(_timelines()):
+        try:
+            with bpy.context.temp_override(window=win, area=area, region=region):
+                for _ in range(times):
+                    op()
+        except RuntimeError as e:
+            print("Blendeck: zoom skipped:", e)
+
+
 def _apply(messages, prefs):
+    _zoom(protocol.total_zoom(messages))
     scene = _scene()
     if scene is None:
         return

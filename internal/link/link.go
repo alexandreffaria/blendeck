@@ -2,7 +2,7 @@
 // listens; the add-on connects and reconnects by itself. Both sides speak
 // newline-delimited JSON objects with a "type" field.
 //
-// Bridge to add-on:  {"type":"scrub","frames":10}
+// Bridge to add-on:  {"type":"scrub","frames":10} or {"type":"zoom","clicks":-1}
 // Add-on to bridge:  {"type":"hello","blender":"5.1.0","addon":"0.1.0"} first,
 //
 //	then {"type":"state","scene":"Scene","frame":120,"start":1,"end":250,"fps":24}

@@ -47,6 +47,7 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
   border-radius: var(--radius-sm); padding: 0 9px; }
 .input:focus, .select:focus { border-color: var(--accent); outline: none; }
 .input.num { width: 84px; text-align: right; font-family: var(--mono); }
+.unit { margin-left: 6px; color: var(--muted); font-size: 13px; }
 
 header { position: sticky; top: 0; z-index: 5; background: rgba(18,20,23,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .bar { max-width: 1280px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -150,7 +151,7 @@ tr.flash td { animation: flash 600ms ease-out; }
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Control</th><th>While held</th><th>Action</th><th>Frames / click</th><th>Encoder</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Control</th><th>While held</th><th>Action</th><th>Per click</th><th>Encoder</th><th></th></tr></thead>
           <tbody id="bindings"></tbody>
         </table>
       </div>
@@ -202,6 +203,11 @@ tr.flash td { animation: flash 600ms ease-out; }
           <button class="btn small" data-test="1">1 ▶</button>
           <button class="btn small" data-test="10">10 ▶▶</button>
         </div>
+        <div class="hint" style="margin:10px 0 6px">Send a test zoom</div>
+        <div class="test-row">
+          <button class="btn small" data-test-zoom="-1">− Zoom out</button>
+          <button class="btn small" data-test-zoom="1">Zoom in +</button>
+        </div>
       </div>
     </section>
 
@@ -224,7 +230,13 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline' };
+// What a binding's step means for each action, its limit (config.MaxStep,
+// config.MaxZoomStep) and the step a new binding starts with.
+const STEPS = {
+  'timeline.scrub': { unit: 'frames', label: 'Frames per click', max: 100000, start: 10, verb: 'Scrubbing' },
+  'timeline.zoom': { unit: 'clicks', label: 'Zoom steps per click', max: 20, start: 1, verb: 'Zooming' },
+};
 const ENCODERS = {
   relative_twos: '1 / 127',
   relative_offset: '65 / 63',
@@ -310,7 +322,7 @@ function renderBindings() {
       <td><select class="select" data-b="${i}" data-f="modifier" aria-label="Modifier">${modOpts.join('')}</select>
         ${missingMod ? `<div class="warn">${esc(b.modifier)} isn't learned yet</div>` : ''}</td>
       <td><select class="select" data-b="${i}" data-f="action" aria-label="Action">${Object.entries(ACTIONS).map(([k, v]) => `<option value="${k}"${k === b.action ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
-      <td><input class="input num" type="number" min="1" max="100000" step="1" data-b="${i}" data-f="step" value="${b.step}" aria-label="Frames per click"></td>
+      <td style="white-space:nowrap">${(() => { const st = STEPS[b.action] || STEPS['timeline.scrub']; return `<input class="input num" type="number" min="1" max="${st.max}" step="1" data-b="${i}" data-f="step" value="${b.step}" aria-label="${st.label}"><span class="unit">${st.unit}</span>`; })()}</td>
       <td><select class="select" data-b="${i}" data-f="encoder" aria-label="Encoder type" title="What the knob sends for one click right / left">${Object.entries(ENCODERS).map(([k, v]) => `<option value="${k}"${k === b.encoder ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
       <td><button class="btn ghost small" data-del-b="${i}" aria-label="Delete binding">✕</button></td>
     </tr>`;
@@ -382,8 +394,15 @@ function describe(ev) {
     const b = state.saved.profiles.find((x) => x.name === state.saved.active_profile)?.bindings.find((x) => x.id === h.binding);
     const name = b ? esc(b.name) : esc(h.binding);
     if (!h.command) return name;
-    const f = h.command.frames;
-    return `${name} → <span class="${ev.delivered ? 'sent' : 'lost'}">${f > 0 ? '+' : ''}${f} frames${ev.delivered ? '' : ' (Blender not connected)'}</span>`;
+    let what;
+    if (h.command.type === 'zoom') {
+      const n = h.command.clicks;
+      what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
+    } else {
+      const f = h.command.frames;
+      what = `${f > 0 ? '+' : ''}${f} frames`;
+    }
+    return `${name} → <span class="${ev.delivered ? 'sent' : 'lost'}">${what}${ev.delivered ? '' : ' (Blender not connected)'}</span>`;
   }
   const c = ctlOfMessage(ev.message);
   if (c && p.bindings.some((b) => sameCtl(b.control, c))) return '<span class="hint">bound in unsaved changes</span>';
@@ -459,8 +478,9 @@ function checkLearned() {
   const c = state.live.learned.control;
   const p = profile();
   if (l.kind === 'binding' && p.bindings[l.index]) {
-    if (c.type !== 'cc' && p.bindings[l.index].action === 'timeline.scrub') {
-      toast(`That was a button (${ctlLabel(c)}). Scrubbing needs a knob. Try again.`, true);
+    const st = STEPS[p.bindings[l.index].action];
+    if (c.type !== 'cc' && st) {
+      toast(`That was a button (${ctlLabel(c)}). ${st.verb} needs a knob. Try again.`, true);
       state.learn = null; startLearn(l.kind, l.index); return;
     }
     p.bindings[l.index].control = c;
@@ -483,7 +503,8 @@ document.addEventListener('click', (e) => {
   if (t.dataset.learn) return startLearn(t.dataset.learn, +t.dataset.i);
   if (t.dataset.delB !== undefined) { dropLearn(); profile().bindings.splice(+t.dataset.delB, 1); renderBindings(); renderSaveBar(); return; }
   if (t.dataset.delM !== undefined) { dropLearn(); profile().modifiers.splice(+t.dataset.delM, 1); renderAll(); return; }
-  if (t.dataset.test) return sendTest(+t.dataset.test);
+  if (t.dataset.test) return sendTest({ frames: +t.dataset.test });
+  if (t.dataset.testZoom) return sendTest({ zoom: +t.dataset.testZoom });
 });
 
 document.addEventListener('input', (e) => {
@@ -492,8 +513,10 @@ document.addEventListener('input', (e) => {
   if (t.dataset.b !== undefined) {
     const b = p.bindings[+t.dataset.b];
     if (t.dataset.f === 'step') b.step = parseInt(t.value, 10) || 0;
+    else if (t.dataset.f === 'action') setAction(b, t.value);
     else b[t.dataset.f] = t.value;
     if (t.dataset.f === 'modifier') { if (!t.value) delete b.modifier; renderBindings(); }
+    if (t.dataset.f === 'action') renderBindings();
     renderSaveBar();
   }
 });
@@ -583,9 +606,19 @@ window.addEventListener('pagehide', () => {
 $('pause').onclick = () => { state.paused = !state.paused; $('pause').textContent = state.paused ? 'Resume' : 'Pause'; };
 $('clear').onclick = () => { $('log').querySelectorAll('.log-row:not(.log-head)').forEach((r) => r.remove()); $('logEmpty').hidden = false; };
 
-async function sendTest(frames) {
+// Switching a binding's action: a step that made sense for the old one
+// (10 frames) can be out of range for the new one (20 zoom steps at most),
+// so it starts over, and a name still at the old default follows along.
+function setAction(b, action) {
+  const was = b.action;
+  b.action = action;
+  if (STEPS[action]) b.step = STEPS[action].start;
+  if (ACTIONS[was] && b.name === ACTIONS[was] && ACTIONS[action]) b.name = ACTIONS[action];
+}
+
+async function sendTest(body) {
   try {
-    const r = await api('POST', '/api/test', { frames });
+    const r = await api('POST', '/api/test', body);
     if (!r.delivered) toast('Blender is not connected.', true);
   } catch (e) { toast(e.message, true); }
 }
