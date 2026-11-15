@@ -15,11 +15,16 @@ and keeps profiles.
 | --- | --- | --- |
 | Any knob you pick | Moves the playhead 10 frames per click | 1 frame per click |
 | Another knob you pick | Zooms the timeline 4 steps per click (about 27%), around the playhead | 1 step per click (7.5%) |
-| A button you pick | Cuts every strip under the playhead (soft cut, like K), once per press; Ctrl+Z undoes it | The same |
+| A button you pick | Soft-cuts (like K) the selected strips under the playhead, or all of them if none is selected, once per press; Ctrl+Z undoes it | The same |
 | Another button you pick | Undoes once per press, like Ctrl+Z, anywhere in Blender. Nothing while you drag a strip or another operator is running | The same |
 | A third button you pick | Ripple delete: deletes the strips under the playhead (the selected ones among them, if any) and closes the gap on every channel; the playhead goes to the join. Locked strips are never deleted; if a strip stays under the playhead or a locked strip would have to move, the gap stays open. Ctrl+Z undoes it | The same |
 
 More come one at a time.
+
+**Selection follows the playhead** (like Premiere): whenever the playhead
+moves, the strips under it are selected and the rest deselected, so the cut
+and ripple delete buttons act on them. Select some of them by hand to cut or
+delete only those. Turn it off in the add-on's preferences or its panel.
 
 ## Setup (Windows)
 

@@ -144,6 +144,22 @@ def cuttable(start, end, frame, locked):
     return not locked and start < frame < end
 
 
+def cut_targets(spans, frame):
+    """Indexes of the strips the cut button cuts at frame (spans: a list of
+    Span): the unlocked strips the playhead is strictly inside, and if any of
+    those is selected, only the selected ones."""
+    under = [i for i, s in enumerate(spans) if cuttable(s.start, s.end, frame, s.locked)]
+    return [i for i in under if spans[i].selected] or under
+
+
+def follow_selection(spans, frame):
+    """For "selection follows playhead": whether each strip (a list of Span)
+    should be selected with the playhead at frame. The unlocked strips under
+    it (start <= frame < end) are, every other strip isn't. Right after a cut
+    that selects the right halves, which start at the playhead."""
+    return [not s.locked and s.start <= frame < s.end for s in spans]
+
+
 # A strip as ripple_plan sees it: start..end (end exclusive), whether it is
 # locked (itself or its channel), whether it is selected, and the indexes of
 # the strips it is an effect of (an effect is removed with its inputs).
