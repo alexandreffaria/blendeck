@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go vet ./...
+      - run: go test -race ./...
+        if: runner.os == 'Linux'
+      - run: go test ./...
+        if: runner.os == 'Windows'
+      - name: Build
+        if: runner.os == 'Windows'
+        run: go build -trimpath -o blendeck.exe ./cmd/blendeck
+
+  addon:
+    name: Blender add-on
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -I -m unittest discover -s blender/tests -v
+      - name: Compiles
+        run: python -m py_compile blender/blendeck/*.py
+      - name: Package
+        run: python -I scripts/build_addon.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blendeck-addon
+          path: dist/blendeck-addon.zip

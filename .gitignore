@@ -1,0 +1,11 @@
+/blendeck.exe
+/blendeck
+/dist/
+/config.json
+*.tmp
+__pycache__/
+*.pyc
+.claude/settings.local.json
+.claude/worktrees/
+# president's cards travel by its Sync, not in PRs
+/decisions/.*
