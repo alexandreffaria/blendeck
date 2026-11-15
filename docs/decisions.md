@@ -3,6 +3,23 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Pausing leaves the playhead where it stopped (20261115nsi1)
+
+The play / pause button pauses like Space in Blender: the playhead stays on
+the frame playback reached, so a cut or ripple delete lands right there. It
+doesn't jump back to where play started (Blender's Esc).
+
+## Fn + the play button also plays or pauses (20261115ftlg)
+
+No Fn variant: like the undo and ripple delete buttons, the play button does
+the same with or without Fn, and the default config has no Fn play binding.
+
+## Selection keeps following the playhead while it plays (202611150zcw)
+
+During playback, selection follows the playhead frame by frame, the same
+rule as when paused, so a cut or ripple delete while playing takes what is
+under the playhead. Playing replaces a hand-picked selection right away.
+
 ## Selection follows the playhead (20261115pnow)
 
 Asked what should be selected after a cut, the owner chose Premiere's
