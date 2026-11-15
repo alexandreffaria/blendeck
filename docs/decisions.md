@@ -3,17 +3,32 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
-## Each forward or backwards press is 0.1x, up to 4x (20261115u2qg)
+## Each forward or backwards press is 0.25x (202611153pfo, replaces 20261115u2qg)
 
-The forward and backwards buttons play at 1x on the first press and 0.1x
-faster on each further press that way (1.1x, 1.2x, ...), up to 4x. Only 1x
-forward is Blender's own playback, with sound; every other speed, and
-backwards, is driven by the add-on and is silent.
+The forward and backwards buttons play at 1x on the first press and 0.25x
+faster on each further press that way (1.25x, 1.5x, ...): 5x after 16
+presses. The owner first chose 0.1x a press (20261115u2qg), then found the
+speed didn't seem to go up when trying it on the Loupedeck.
+
+## Forward and backwards playback go up to 8x (2026111504tn)
+
+The top speed either way is 8x, 28 presses past 1x. It was 4x
+(20261115u2qg).
+
+## Fast forward playback has sound up to 5x, at its normal pitch (202611150o5i)
+
+Only 1x forward is Blender's own playback. Faster forward playback is the
+add-on's, which plays the sound strips time-stretched so voices keep their
+pitch, up to 5x; past 5x it is silent, as the owner asked.
+
+## Backwards playback is silent (2026111598qg)
+
+Backwards playback has no sound at any speed.
 
 ## The opposite button eases off, then switches (20261115618c)
 
-Playing faster than 1x one way, the other button slows it 0.1x a press down
-to 1x; at 1x, its next press plays the other way at 1x. Easing off forward
+Playing faster than 1x one way, the other button slows it a step (0.25x) a
+press down to 1x; at 1x, its next press plays the other way at 1x. Easing off forward
 lands on Blender's own 1x playback, with sound.
 
 ## Fast and backwards playback stops at the ends (20261115pb4a)

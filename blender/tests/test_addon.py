@@ -1285,17 +1285,17 @@ class AddonTest(unittest.TestCase):
         advance = self._clock()
         scene = self._shuttle_scene()
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, -10)
+        self.assertEqual(addon.shuttle.speed, -100)
         self.assertEqual(PLAYER.calls, [], "backwards is the add-on's own playback")
         advance(1.0)
         addon._apply([], PREFS)
         self.assertEqual(scene.frame_current, 76)  # 24 frames back in 1 s
-        # Two more presses: 1.2x backwards, from where it is now
+        # Two more presses: 1.5x backwards, from where it is now
         addon._apply([{"type": "shuttle", "clicks": -1}] * 2, PREFS)
-        self.assertEqual(addon.shuttle.speed, -12)
+        self.assertEqual(addon.shuttle.speed, -150)
         advance(1.0)
         addon._apply([], PREFS)
-        self.assertEqual(scene.frame_current, 47)  # 28.8 frames back from 76, rounded down
+        self.assertEqual(scene.frame_current, 40)  # 36 frames back from 76
 
     def test_forward_is_blenders_own_then_faster(self):
         advance = self._clock()
@@ -1307,31 +1307,31 @@ class AddonTest(unittest.TestCase):
         self.assertTrue(addon._playing())
         scene.frame_current = 130  # where Blender's playback got to
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
-        # 1.1x: Blender's paused and the add-on drives on from there
+        # 1.25x: Blender's paused and the add-on drives on from there
         self.assertEqual(PLAYER.calls[1], ("cancel", False))
         self.assertFalse(addon._playing())
-        self.assertEqual(addon.shuttle.speed, 11)
+        self.assertEqual(addon.shuttle.speed, 125)
         advance(2.0)
         addon._apply([], PREFS)
-        self.assertEqual(scene.frame_current, 130 + 52)  # 52.8 frames
+        self.assertEqual(scene.frame_current, 130 + 60)
 
     def test_other_way_eases_off_then_switches(self):
         self._clock()
         self._shuttle_scene()
         addon._apply([{"type": "shuttle", "clicks": -1}] * 3, PREFS)
-        self.assertEqual(addon.shuttle.speed, -12)
-        # The forward button eases off: 1.1x, then 1x backwards
+        self.assertEqual(addon.shuttle.speed, -150)
+        # The forward button eases off: 1.25x, then 1x backwards
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, -11)
+        self.assertEqual(addon.shuttle.speed, -125)
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, -10)
+        self.assertEqual(addon.shuttle.speed, -100)
         self.assertEqual(PLAYER.calls, [])
         # At 1x it switches: forward at 1x is Blender's own playback
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
         self.assertEqual(addon.shuttle.speed, 0)
         self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
         addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)
-        self.assertEqual(addon.shuttle.speed, 12)
+        self.assertEqual(addon.shuttle.speed, 150)
         # Easing off forward lands on 1x, Blender's own, with sound
         addon._apply([{"type": "shuttle", "clicks": -1}] * 2, PREFS)
         self.assertEqual(addon.shuttle.speed, 0)
@@ -1339,7 +1339,7 @@ class AddonTest(unittest.TestCase):
         self.assertEqual([c[0] for c in PLAYER.calls], ["play", "cancel", "play"])
         # And from Blender's 1x forward, backwards switches
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, -10)
+        self.assertEqual(addon.shuttle.speed, -100)
         self.assertFalse(addon._playing())
 
     def test_play_pause_stops_and_resets(self):
@@ -1357,9 +1357,9 @@ class AddonTest(unittest.TestCase):
         # The next play is Blender's own, at normal speed
         addon._apply([{"type": "play_pause"}], PREFS)
         self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
-        # And forward from there is 1.1x, not faster
+        # And forward from there is 1.25x, not faster
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, 11)
+        self.assertEqual(addon.shuttle.speed, 125)
 
     def test_stops_at_the_scene_ends(self):
         advance = self._clock()
@@ -1370,7 +1370,7 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.frame_current, 1)
         self.assertEqual(addon.shuttle.speed, 0)
         scene.frame_current = 990
-        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 1x (Blender's), then 1.1x
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 1x (Blender's), then 1.25x
         advance(60.0)
         addon._apply([], PREFS)
         self.assertEqual(scene.frame_current, 1000)
@@ -1410,7 +1410,7 @@ class AddonTest(unittest.TestCase):
         advance(1.0)
         addon._apply([], PREFS)
         self.assertEqual(scene.frame_current, 376)
-        self.assertEqual(addon.shuttle.speed, -10)
+        self.assertEqual(addon.shuttle.speed, -100)
 
     def test_selection_follows_while_shuttling(self):
         advance = self._clock()
@@ -1440,7 +1440,7 @@ class AddonTest(unittest.TestCase):
         win.workspace.sequencer_scene = scene
         addon.bpy.context.sequencer_scene = None
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, -10)
+        self.assertEqual(addon.shuttle.speed, -100)
         addon._apply([{"type": "undo"}], PREFS)
         self.assertEqual(addon.shuttle.speed, 0)
         now = addon.bpy.context.scene
@@ -1486,7 +1486,7 @@ class AddonTest(unittest.TestCase):
         self.addCleanup(setattr, SCENE, "frame_end", 100)
         SCENE.frame_current = 100
         addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)
-        self.assertEqual(addon.shuttle.speed, 10)
+        self.assertEqual(addon.shuttle.speed, 100)
         self.assertEqual(PLAYER.calls, [])
         advance(1.0)
         addon._apply([], PREFS)
@@ -1573,9 +1573,9 @@ class AddonTest(unittest.TestCase):
             ],
             channels={1: types.SimpleNamespace(mute=False), 2: muted},
         )
-        addon._apply([{"type": "shuttle", "clicks": 1}] * 6, PREFS)  # 1x (Blender's), then up to 1.5x
-        addon._apply([{"type": "shuttle", "clicks": 1}] * 5, PREFS)  # 2x
-        self.assertEqual(addon.shuttle.speed, 20)
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 3, PREFS)  # 1x (Blender's), then up to 1.5x
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 2x
+        self.assertEqual(addon.shuttle.speed, 200)
         self.assertTrue(all(h.status == 0 for _, _, h in plays), "the 1.5x sounds stopped")
         del plays[:]
         addon._apply([], PREFS)
@@ -1596,13 +1596,13 @@ class AddonTest(unittest.TestCase):
         self._clock()
         scene = self._shuttle_scene()
         scene.sequence_editor = types.SimpleNamespace(strips=[self._sound("voice", 50, 400, 50)], channels=None)
-        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 1.1x
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 1.25x
         addon._apply([], PREFS)
-        addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)  # 1.2x
+        addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)  # 1.5x
         addon._apply([], PREFS)
         self.assertEqual(len(plays), 2)
-        self.assertEqual(plays[0][2].status, 0, "the 1.1x sound stopped")
-        self.assertEqual(plays[1][1][1], ("stretch", 10 / 12, 1.0))
+        self.assertEqual(plays[0][2].status, 0, "the 1.25x sound stopped")
+        self.assertEqual(plays[1][1][1], ("stretch", 100 / 150, 1.0))
 
     def test_an_edit_restarts_the_sound(self):
         # A ripple delete or cut changes what is heard, even when the
@@ -1621,7 +1621,7 @@ class AddonTest(unittest.TestCase):
             addon._apply([], PREFS)
         self.assertEqual(plays[0][2].status, 0, "the deleted strip's sound stopped")
         self.assertEqual(len(plays), 1, "and nothing replaced it")
-        self.assertEqual(addon.shuttle.speed, 11, "playback carries on")
+        self.assertEqual(addon.shuttle.speed, 125, "playback carries on")
 
     def test_meta_volume_counts(self):
         meta = types.SimpleNamespace(type="META", mute=False, channel=1, volume=0.5, channels=None,
@@ -1643,7 +1643,8 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)
         addon._apply([], PREFS)
         self.assertEqual(len(plays), 1)
-        addon.shuttle.speed = 51
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 8, PREFS)
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 8, PREFS)  # 5.25x
         addon._apply([], PREFS)
         self.assertEqual(plays[0][2].status, 0, "past 5x the sound stops")
 
@@ -1657,8 +1658,8 @@ class AddonTest(unittest.TestCase):
         advance(1.0)
         addon._apply([], PREFS)
         addon._apply([], PREFS)
-        self.assertEqual(addon.shuttle.speed, 11, "playback carries on")
-        self.assertEqual(scene.frame_current, 100 + 26)
+        self.assertEqual(addon.shuttle.speed, 125, "playback carries on")
+        self.assertEqual(scene.frame_current, 100 + 30)
         self.assertEqual(plays, [])
 
     def test_shuttle_makes_no_undo_step(self):

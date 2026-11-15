@@ -598,10 +598,10 @@ def _play_pause(scene):
 
 class _Shuttle:
     """Playback the add-on drives itself, for every speed Blender's own
-    can't play. Blender plays at 1x only, so 1.1x and faster, and
+    can't play. Blender plays at 1x only, so faster than that, and
     backwards at any speed, move the playhead from this add-on's timer, in
-    time with the clock. speed is in tenths (see protocol.NORMAL_SPEED), 0
-    when not driving. It runs from origin, the frame it started at or last
+    time with the clock. speed is in hundredths (see protocol.NORMAL_SPEED),
+    0 when not driving. It runs from origin, the frame it started at or last
     picked up from, since `since`; last is the frame it set, so a move by
     anything else is noticed."""
 
@@ -675,11 +675,12 @@ def _cancel_native():
 
 def _shuttle(scene, direction):
     """A press of the forward (direction 1) or backwards (-1) button: play
-    that way at normal speed, 10% faster if it already plays that way, or
-    10% slower if it plays the other way faster than 1x (see
+    that way at normal speed, 0.25x faster if it already plays that way, or
+    0.25x slower if it plays the other way faster than 1x (see
     protocol.shuttle_speed). 1x forward is Blender's own playback, so
     it has Blender's own sound; every other speed is driven by the add-on,
-    with sound forward up to 5x (see _audio_tick). Never raises. Returns the new speed, in tenths, or 0 if it stopped."""
+    with sound forward up to 5x (see _audio_tick). Never raises. Returns
+    the new speed, in hundredths, or 0 if it stopped."""
     try:
         current = shuttle.speed or (protocol.NORMAL_SPEED if _playing() else 0)
         speed = protocol.shuttle_speed(current, direction)

@@ -25,22 +25,24 @@ MAX_RIPPLES_PER_TICK = 8
 # Play / pause presses applied per tick at most. Each press toggles, so two
 # in a row with nothing between cancel out and are dropped together.
 MAX_TOGGLES_PER_TICK = 8
-# Playback speeds, in tenths of normal speed: 10 is 1x forward, -10 is 1x
-# backwards, 0 is stopped. Each press of the forward or backwards button
-# adds SHUTTLE_STEP (10%), up to MAX_SHUTTLE_SPEED (4x) either way.
-NORMAL_SPEED = 10
-SHUTTLE_STEP = 1
-MAX_SHUTTLE_SPEED = 40
+# Playback speeds, in hundredths of normal speed: 100 is 1x forward, -100
+# is 1x backwards, 0 is stopped. Each press of the forward or backwards
+# button adds SHUTTLE_STEP (0.25x, decision 202611153pfo), up to
+# MAX_SHUTTLE_SPEED (8x, decision 2026111504tn) either way.
+NORMAL_SPEED = 100
+SHUTTLE_STEP = 25
+MAX_SHUTTLE_SPEED = 800
 # Forward / backwards presses applied per tick at most.
 MAX_SHUTTLES_PER_TICK = 8
 # Cuts the jump knob moves over per tick at most, either way. A fast spin
 # sends a few clicks a tick; more than this is a flood.
 MAX_JUMPS_PER_TICK = 32
 # Playback the add-on drives has sound going forward up to MAX_AUDIO_SPEED
-# (5x), at its normal pitch; faster, and backwards, it is silent. Sound is
+# (5x), at its normal pitch (decision 202611150o5i); faster, and backwards
+# (decision 2026111598qg), it is silent. Sound is
 # started AUDIO_AHEAD seconds before it is heard, and at most
 # MAX_AUDIO_SOUNDS sounds play or wait at once.
-MAX_AUDIO_SPEED = 50
+MAX_AUDIO_SPEED = 500
 AUDIO_AHEAD = 2.0
 MAX_AUDIO_SOUNDS = 32
 
@@ -215,11 +217,11 @@ def jump_target(points, frame, clicks):
 
 def shuttle_speed(current, direction):
     """The playback speed after a press of the forward (direction 1) or
-    backwards (-1) button, from current (both in tenths, see NORMAL_SPEED).
-    Already going that way: 10% faster, up to MAX_SHUTTLE_SPEED. Going the
-    other way faster than 1x: 10% slower, easing off down to 1x. Going the
-    other way at 1x, or stopped: normal speed in this direction (decision
-    20261115618c)."""
+    backwards (-1) button, from current (both in hundredths, see
+    NORMAL_SPEED). Already going that way: SHUTTLE_STEP faster, up to
+    MAX_SHUTTLE_SPEED. Going the other way faster than 1x: SHUTTLE_STEP
+    slower, easing off down to 1x. Going the other way at 1x, or stopped:
+    normal speed in this direction (decision 20261115618c)."""
     if current * direction > 0:
         return direction * min(MAX_SHUTTLE_SPEED, abs(current) + SHUTTLE_STEP)
     if abs(current) > NORMAL_SPEED:
@@ -242,14 +244,14 @@ def shuttle_frame(origin, elapsed, fps, speed, start, end):
 
 
 def shuttle_has_audio(speed):
-    """Whether playback the add-on drives at speed (in tenths) has sound:
+    """Whether playback the add-on drives at speed (in hundredths) has sound:
     forward, up to MAX_AUDIO_SPEED."""
     return 0 < speed <= MAX_AUDIO_SPEED
 
 
 def audio_plan(strips, origin, elapsed, fps, speed, started, playing, ahead=AUDIO_AHEAD):
     """The sounds to start now for playback the add-on drives, which left
-    frame origin elapsed seconds ago at speed (in tenths). strips are
+    frame origin elapsed seconds ago at speed (in hundredths). strips are
     (key, start, end, content_start, sound_offset): the strip's frames
     [start, end) on the timeline, the frame its sound's first sample lands
     on, and the seconds of sound skipped before that. Every strip that is
