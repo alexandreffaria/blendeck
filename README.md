@@ -25,6 +25,7 @@ and keeps profiles.
 | A fourth knob you pick | Moves the selected strips and every strip after them, on all channels, a frame per click (right or left), like G in the video editor. They stop against the next strip instead of going over it; locked strips stay put. The playhead stays, and one turn of the knob is one Ctrl+Z | Moves the selected strips and every strip before them instead |
 | A fifth knob you pick | Slides the timeline view 5% of its width per click: right shows later frames, left earlier ones. Only the view moves: the playhead, the strips and playback stay as they are, so you can look ahead while it plays | The same |
 | A seventh button you pick | Zooms and slides every timeline to show the whole edit, like Home over the strips: every strip in view. Only the view changes; the playhead and playback stay as they are | The same |
+| An eighth button you pick | Saves the .blend file in place, like Ctrl+S, after any edit sent with it. A file never saved isn't saved: the Blendeck panel in the video editor's sidebar says to use File › Save As once. Nothing while you drag a strip or render; the panel shows when it last saved or why it didn't | The same |
 
 More come one at a time.
 
@@ -60,7 +61,8 @@ slides so the playhead is in the middle, at the same zoom.
    and on "Move selected and later strips" and "Move selected and earlier
    strips" (with Fn) and turn the knob you want for moving strips,
    and on "Pan timeline" and turn the knob you want for sliding the view,
-   and on "View whole timeline" and press the button you want for it.
+   and on "View whole timeline" and press the button you want for it,
+   and on "Save file" and press the button you want for saving.
    A `config.json` from an older version has no row for a new control:
    **Add binding**, pick its action, and learn it.
 
@@ -76,7 +78,7 @@ bridge drops it and the add-on reconnects by itself a second later.
 - **Bindings**: control → action, with frames (scrub, moving strips), zoom steps (zoom) or percent of the view (pan) per click and the knob's
   encoding (most send 1 / 127 for one click right / left). Jumping between
   edits or cuts has an encoding and is always one per click. Button actions
-  (cut, undo, ripple delete, playback, view whole timeline) have neither.
+  (cut, undo, ripple delete, playback, view whole timeline, save) have neither.
 - **Modifiers**: buttons like Fn that switch bindings while held.
 - **Profiles**: named sets of bindings; the selected one is active.
 - **Blender**: connection, scene, playhead, and test buttons.

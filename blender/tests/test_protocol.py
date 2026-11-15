@@ -107,6 +107,22 @@ class ViewAllTest(unittest.TestCase):
         self.assertEqual(protocol.edit_steps(msgs), [])
 
 
+class SaveTest(unittest.TestCase):
+    def test_wants(self):
+        self.assertTrue(protocol.wants_save([{"type": "scrub", "frames": 1}, {"type": "save"}]))
+        self.assertTrue(protocol.wants_save([{"type": "save"}] * 3))
+        self.assertFalse(protocol.wants_save([{"type": "view_all"}, {"type": "cut"}]))
+        self.assertFalse(protocol.wants_save([]))
+
+    def test_others_ignore_it(self):
+        msgs = [{"type": "save", "clicks": 5, "frames": 5}]
+        self.assertEqual(protocol.total_zoom(msgs), 0)
+        self.assertEqual(protocol.total_pan(msgs), 0)
+        self.assertEqual(protocol.total_scrub(msgs), 0)
+        self.assertEqual(protocol.edit_steps(msgs), [])
+        self.assertFalse(protocol.wants_view_all(msgs))
+
+
 class ZoomTest(unittest.TestCase):
     def test_total(self):
         msgs = [

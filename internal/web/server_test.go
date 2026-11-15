@@ -437,3 +437,22 @@ func TestTestEndpointViewAll(t *testing.T) {
 		t.Fatalf("foreign host view all: %d", rec.Code)
 	}
 }
+
+func TestTestEndpointSave(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", `{"save":true}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"save":true,"cut":true}`, `{"save":true,"view_all":true}`, `{"save":false}`, `{"save":1}`, `{"save":"yes"}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"save":true}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host save: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"save":true}`); rec.Code == http.StatusOK {
+		t.Fatalf("non-JSON save accepted")
+	}
+}

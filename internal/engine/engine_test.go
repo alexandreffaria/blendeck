@@ -1457,3 +1457,43 @@ func TestViewAllNotLearnedIgnored(t *testing.T) {
 		t.Fatalf("unlearned view-all matched: %+v", hit)
 	}
 }
+
+// The owner's save button, note 49: once per press, never on the release,
+// and the same with Fn held.
+func TestSaveOncePerPress(t *testing.T) {
+	e := New(config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "save", Name: "Save file", Control: config.Control{Type: "note", Channel: 1, Number: 49}, Action: config.ActionSave},
+		},
+	})
+	down := midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 49, Value: 64}
+	up := midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 49, Value: 64}
+	want := Command{Type: "save"}
+	if hit, _ := e.Handle(down); hit.Binding != "save" || hit.Command == nil || *hit.Command != want {
+		t.Fatalf("press: %+v", hit)
+	}
+	if hit, _ := e.Handle(up); hit.Binding != "save" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(down); hit.Binding != "save" || hit.Command == nil || *hit.Command != want {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 110, Value: 0})
+	if hit, _ := e.Handle(down); hit.Binding != "save" || hit.Command == nil || *hit.Command != want {
+		t.Fatalf("Fn released: %+v", hit)
+	}
+	b, err := json.Marshal(want)
+	if err != nil || string(b) != `{"type":"save"}` {
+		t.Fatalf("%s %v", b, err)
+	}
+}
+
+func TestSaveNotLearnedIgnored(t *testing.T) {
+	e := New(config.Default().Profiles[0])
+	if hit, _ := e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 49, Value: 64}); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned save matched: %+v", hit)
+	}
+}
