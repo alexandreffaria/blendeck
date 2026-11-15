@@ -1387,6 +1387,19 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.frame_current, 80)
         self.assertEqual(addon.shuttle.speed, 0)
 
+    def test_a_render_stops_shuttling(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        before = scene.frame_current
+        old = getattr(addon.bpy.app, "is_job_running", None)
+        self.addCleanup(setattr, addon.bpy.app, "is_job_running", old)
+        addon.bpy.app.is_job_running = lambda job: job == "RENDER"
+        advance(1.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, before)
+        self.assertEqual(addon.shuttle.speed, 0)
+
     def test_scrub_while_shuttling_carries_on_from_there(self):
         advance = self._clock()
         scene = self._shuttle_scene()

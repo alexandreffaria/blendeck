@@ -20,7 +20,7 @@ and keeps profiles.
 | A third button you pick | Ripple delete: deletes the strips under the playhead (the selected ones among them, if any) and closes the gap on every channel; the playhead goes to the join. Locked strips are never deleted; if a strip stays under the playhead or a locked strip would have to move, the gap stays open. Ctrl+Z undoes it | The same |
 | A fourth button you pick | Play / pause, like Space in the video editor: plays the scene the video editor shows, and pausing leaves the playhead where it stopped. The scrub knob, cut and ripple delete keep working while it plays; undo pauses it, as Ctrl+Z does | The same |
 | A fifth button you pick | Plays backwards; each further press plays 10% faster backwards, up to 4x. Silent: Blender only plays sound forward at normal speed | The same |
-| A sixth button you pick | Plays forward (normal speed, with sound); each further press plays 10% faster, up to 4x, silent. The opposite button eases off 10% a press down to normal speed, then switches direction; play / pause stops and the next play is normal speed. Both stop at the scene's first or last frame | The same |
+| A sixth button you pick | Plays forward (normal speed, with sound); each further press plays 10% faster, up to 4x, silent. The opposite button eases off 10% a press down to normal speed, then switches direction; play / pause stops and the next play is normal speed. Faster than normal or backwards, they stop at the first or last frame (of the preview range, when it's on); normal speed forward is Blender's own playback and loops | The same |
 
 More come one at a time.
 

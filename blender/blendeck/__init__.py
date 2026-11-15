@@ -649,14 +649,14 @@ def _shuttle_tick(scene):
     """Moves the playhead for playback the add-on drives, once per timer
     tick. It picks up from wherever something else (the scrub knob, an
     edit, the mouse) put the playhead, and stops at the ends of the play
-    range (see _play_range), when
-    the edited scene changes, or when Blender's own playback starts. Frames
+    range (see _play_range), when the edited scene changes, when Blender's
+    own playback starts, or when a render starts. Frames
     it can't show in time are skipped, like Blender's Frame Dropping.
     Never raises."""
     if not shuttle.speed:
         return
     try:
-        if scene.name != shuttle.scene or _playing():
+        if scene.name != shuttle.scene or _playing() or _rendering():
             _shuttle_stop()
             return
         if scene.frame_current != shuttle.last:
