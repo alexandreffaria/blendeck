@@ -1,6 +1,10 @@
 // Command blendeck is the bridge between a MIDI controller and Blender: it
 // reads the controller, maps it through the active profile, sends commands to
 // the Blender add-on, and serves the page for setting it all up.
+//
+// On Windows it is a background app: no console window, an icon in the
+// notification area, a log file next to the config, and optionally a
+// per-user entry that starts it at sign-in.
 package main
 
 import (
@@ -8,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,20 +21,31 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/alexandreffaria/blendeck/internal/app"
+	"github.com/alexandreffaria/blendeck/internal/autostart"
 	"github.com/alexandreffaria/blendeck/internal/config"
 	"github.com/alexandreffaria/blendeck/internal/link"
+	"github.com/alexandreffaria/blendeck/internal/logfile"
 	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/blendeck/internal/tray"
 	"github.com/alexandreffaria/blendeck/internal/web"
 )
 
 var version = "dev"
 
+// maxLog caps blendeck.log; one older copy is kept as blendeck.log.1.
+const maxLog = 1 << 20
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "blendeck:", err)
+		// Built for Windows there is no console to read that in.
+		if runtime.GOOS == "windows" {
+			tray.Alert("Blendeck couldn't start:\n\n" + err.Error())
+		}
 		os.Exit(1)
 	}
 }
@@ -42,16 +58,41 @@ func run() error {
 	verbose := flag.Bool("verbose", false, "debug logging")
 	flag.Parse()
 
-	level := slog.LevelInfo
-	if *verbose {
-		level = slog.LevelDebug
-	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-
 	for _, a := range []string{*webAddr, *linkAddr} {
 		if !isLoopback(a) {
 			return fmt.Errorf("%s is not a loopback address; Blendeck only listens on this computer", a)
 		}
+	}
+	url := "http://" + *webAddr + "/"
+
+	// One copy at a time: starting it again (say, from the Start menu while
+	// it already runs from sign-in) just opens the page.
+	release, first, err := claimInstance(*webAddr)
+	if err != nil {
+		return err
+	}
+	if !first {
+		openBrowser(url)
+		return nil
+	}
+	defer release()
+
+	level := slog.LevelInfo
+	if *verbose {
+		level = slog.LevelDebug
+	}
+	out := console{os.Stderr}
+	logPath := filepath.Join(filepath.Dir(*configPath), "blendeck.log")
+	var logw io.Writer = out
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	lf, logErr := logfile.Open(logPath, maxLog)
+	if logErr == nil {
+		defer lf.Close()
+		logw = io.MultiWriter(lf, out)
+	}
+	log := slog.New(slog.NewTextHandler(logw, &slog.HandlerOptions{Level: level}))
+	if logErr != nil {
+		log.Warn("no log file", "error", logErr)
 	}
 
 	store, err := config.Open(*configPath)
@@ -60,7 +101,9 @@ func run() error {
 	}
 	cfg := store.Get()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 
 	linkLn, err := net.Listen("tcp", *linkAddr)
@@ -76,32 +119,132 @@ func run() error {
 	conn := midi.NewConn(log, cfg.Device)
 	lnk := link.New(log)
 	a := app.New(log, store, conn, lnk, midi.Inputs)
+	start := autostart.New("Blendeck", autostartExe(), "-no-browser")
 
-	go conn.Run(ctx)
-	go a.Run(ctx, conn.Messages())
-	go func() {
+	// Everything that holds a device, socket or file stops when ctx ends;
+	// wg says when it has.
+	var wg sync.WaitGroup
+	wg.Go(func() { conn.Run(ctx) })
+	wg.Go(func() { a.Run(ctx, conn.Messages()) })
+	wg.Go(func() {
 		if err := lnk.Serve(ctx, linkLn); err != nil {
 			log.Error("blender link stopped", "error", err)
 		}
-	}()
+	})
 
-	srv := &http.Server{Handler: web.New(log, a, version, *webAddr).Handler(), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Handler:           web.New(log, a, version, *webAddr).WithAutostart(start).Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		// The page's event stream ends with ctx, so Shutdown doesn't wait on it.
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
+	serveErr := make(chan error, 1)
+	wg.Go(func() {
+		if err := srv.Serve(webLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+		cancel()
+	})
+	stopped := make(chan struct{}) // closed once all of the above has stopped
+	go func() { wg.Wait(); close(stopped) }()
+
+	tr := tray.New(tray.Options{
+		Log:       log.With("component", "tray"),
+		Icon:      tray.Icon,
+		Tooltip:   func() string { return tooltip(a.Snapshot()) },
+		OpenPage:  func() { openBrowser(url) },
+		Autostart: start,
+		// Windows ends the process right after: stop here, not in run's tail.
+		OnEndSession: func() {
+			log.Info("windows is signing out")
+			cancel()
+			select {
+			case <-stopped:
+			case <-time.After(3 * time.Second):
+			}
+		},
+	})
+	trayDone := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
+		defer close(trayDone)
+		switch err := tr.Run(); {
+		case errors.Is(err, tray.ErrUnsupported):
+		case err != nil:
+			// Keep running without it; the page still works. Built for
+			// Windows there would be no other sign it's running.
+			log.Error("no tray icon", "error", err)
+			go tray.Alert("Blendeck is running, but couldn't put its icon in the notification area:\n" +
+				err.Error() + "\n\nThe page is at " + url + ". To quit Blendeck, end blendeck.exe in Task Manager.")
+		default:
+			cancel() // Quit, or Close below
+		}
 	}()
 
-	url := "http://" + *webAddr + "/"
-	log.Info("blendeck running", "page", url, "config", store.Path(), "blender_link", *linkAddr)
+	log.Info("blendeck running", "version", version, "page", url, "config", store.Path(), "blender_link", *linkAddr)
 	if !*noBrowser {
 		openBrowser(url)
 	}
-	if err := srv.Serve(webLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+
+	<-ctx.Done()
+	log.Info("shutting down")
+	tr.Close()
+	shutdown, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelShutdown()
+	_ = srv.Shutdown(shutdown)
+	done := make(chan struct{})
+	go func() { <-stopped; <-trayDone; close(done) }()
+	select {
+	case <-done:
+		log.Info("stopped")
+	case <-time.After(3 * time.Second):
+		log.Warn("gave up waiting for everything to stop")
 	}
-	return nil
+	select {
+	case err := <-serveErr:
+		return err
+	default:
+		return nil
+	}
+}
+
+// tooltip is the tray icon's hover text.
+func tooltip(s app.Snapshot) string {
+	ctl := "looking for " + s.MIDI.Device
+	switch {
+	case s.MIDI.Device == "":
+		ctl = "none picked"
+	case s.MIDI.State == "connected":
+		ctl = s.MIDI.Device
+	case s.MIDI.State == "error":
+		ctl = "error"
+	}
+	blender := "not connected"
+	if s.Blender.Connected {
+		blender = "connected"
+	}
+	return "Blendeck\nController: " + ctl + "\nBlender: " + blender
+}
+
+// console writes to stderr when there is one; built for Windows there isn't,
+// and its errors are ignored.
+type console struct{ w io.Writer }
+
+func (c console) Write(p []byte) (int, error) {
+	_, _ = c.w.Write(p)
+	return len(p), nil
+}
+
+// autostartExe is this program's path for the sign-in entry, or "" for a
+// `go run` binary that will be deleted.
+func autostartExe() string {
+	exe, err := os.Executable()
+	if err != nil || isGoRunTemp(exe) {
+		return ""
+	}
+	if abs, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = abs
+	}
+	return exe
 }
 
 func isLoopback(addr string) bool {
@@ -147,5 +290,7 @@ func openBrowser(url string) {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	_ = cmd.Start()
+	if cmd.Start() == nil {
+		go cmd.Wait() // don't leave a zombie
+	}
 }

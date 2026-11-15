@@ -73,8 +73,31 @@ bridge drops it and the add-on reconnects by itself a second later.
 - **Profiles**: named sets of bindings; the selected one is active.
 - **Blender**: connection, scene, playhead, and test buttons.
 
+- **Startup**: Start with Windows (also in the tray menu).
+
 Flags: `-config path`, `-addr 127.0.0.1:7870`, `-link 127.0.0.1:7871`,
 `-no-browser`, `-verbose`. Settings live in `config.json` next to the exe.
+
+## Running in the background
+
+`blendeck.exe` has no console window. It sits in the notification area as
+the knob mascot: hover it to see whether the controller and Blender are
+connected, click it for the page, right-click it for **Open settings page**,
+**Start with Windows** and **Quit Blendeck** (which closes the MIDI device,
+the Blender link and the page cleanly). Starting it again while it runs
+just opens the page.
+
+**Start with Windows** adds a per-user entry
+(`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, no admin rights)
+that starts this copy of the exe with `-no-browser` when you sign in. If you
+move the exe, turn it on again from the new place.
+
+It logs to `blendeck.log` next to `config.json`; past 1 MB it moves to
+`blendeck.log.1` and starts over. If it can't start (say, another program
+holds the ports), it says why in a message box.
+
+The tray icon is drawn from the page's mascot by `go run ./scripts/mkicon`
+(into `internal/tray/blendeck.ico`); run it again if the mascot changes.
 
 ## Platforms
 
