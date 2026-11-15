@@ -329,6 +329,33 @@ class _SaveAs:
 SAVE_AS = _SaveAs()
 
 
+class _SeqDelete:
+    """Fake bpy.ops.sequencer.delete("EXEC_DEFAULT", undo): like Blender
+    5.2's, it deletes the selected strips of the level the editor shows (in
+    the scene the override names) and their effects, after stopping the
+    prefetch render. A strip that can't go makes it raise before anything
+    goes. Records (names deleted, undo)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, context="EXEC_DEFAULT", undo=True):
+        scene = ZOOM.override["sequencer_scene"]
+        ed = scene.sequence_editor
+        strips = (ed.meta_stack[-1] if ed.meta_stack else ed).strips
+        chosen = [s for s in strips if s.select]
+        if any(s.name in strips.fail for s in chosen):
+            raise RuntimeError("Strip can't be removed")
+        self.calls.append((sorted(s.name for s in chosen), undo))
+        for s in chosen:
+            if s in strips:
+                _Level.remove(strips, s)  # Blender's own removal, not strips.remove()
+        return {"FINISHED"}
+
+
+SEQ_DELETE = _SeqDelete()
+
+
 class _Player:
     """Fake bpy.ops.screen.animation_play and animation_cancel, as Blender
     5.2 behaves (checked in a real 5.2 from a timer): playing from a video
@@ -435,7 +462,7 @@ def _install_fake_bpy():
         view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan),
         ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}, undo=ED_UNDO),
         screen=types.SimpleNamespace(animation_play=PLAYER.play, animation_cancel=PLAYER.cancel),
-        sequencer=types.SimpleNamespace(view_all=ZOOM.view_all),
+        sequencer=types.SimpleNamespace(view_all=ZOOM.view_all, delete=SEQ_DELETE),
         wm=types.SimpleNamespace(save_mainfile=SAVER, save_as_mainfile=SAVE_AS),
     )
     bpy.data = types.SimpleNamespace(filepath="")
@@ -531,6 +558,7 @@ class AddonTest(unittest.TestCase):
         SAVER.frames.clear()
         SAVER.fail = False
         SAVE_AS.calls.clear()
+        SEQ_DELETE.calls.clear()
         addon.bpy.data.filepath = ""
         addon.link.note = ""
         addon._shuttle_stop()
@@ -1217,6 +1245,7 @@ class AddonTest(unittest.TestCase):
         ed.add("T", 3, 150, 180)
         SCENE.sequence_editor = ed
         SCENE.frame_current = 70
+        self._screen()  # a window: deletes go through Blender's Delete
         return ed
 
     def test_ripple_delete_middle_clips(self):
@@ -1262,9 +1291,60 @@ class AddonTest(unittest.TestCase):
         self.assertEqual([x for x in ed.spans() if x[0] in ("X", "V3")], [("V3", 50, 150), ("X", 150, 180)])
 
     def test_ripple_delete_remove_failure_moves_nothing(self):
+        # Blender's Delete refuses as a whole: nothing goes, nothing moves
         ed = self._ripple_editor()
+        ed.strips[1].select = True  # V2
+        ed.strips.fail.add("V2")
+        self.assertEqual(addon._ripple_delete(SCENE), 0)
+        self.assertEqual(len(ed.strips), 7)
+        self.assertEqual(SCENE.frame_current, 70)
+        self.assertEqual(UNDO, [])
+        self.assertEqual([s.name for s in ed.strips if s.select], ["V2"], "selection given back")
+
+    def test_ripple_delete_uses_blenders_delete(self):
+        # strips.remove() frees a strip while Blender's prefetch render may
+        # still read it (a crash in 5.2); Blender's Delete stops it first
+        ed = self._ripple_editor()
+        ed.strips.remove = lambda strip: self.fail("strips.remove() used with a window open")
+        ed.strips[0].select = True  # V1, before the playhead
+        ed.strips[-1].select = True  # T, after the gap
+        self.assertEqual(addon._ripple_delete(SCENE), 2)
+        self.assertEqual(SEQ_DELETE.calls, [(["A2", "V2"], False)], "only the clips under the playhead, no undo step of its own")
+        self.assertEqual(UNDO, ["Ripple delete"])
+        self.assertEqual(sorted(s.name for s in ed.strips if s.select), ["T", "V1"], "selection given back")
+        self.assertEqual(ed.spans(), [("A1", 1, 50), ("A3", 50, 150), ("T", 100, 130), ("V1", 1, 50), ("V3", 50, 150)])
+
+    def test_ripple_delete_operator_failure_doesnt_raise(self):
+        ed = self._ripple_editor()
+        orig = addon.bpy.ops.sequencer.delete
+
+        def refuse(*a):
+            raise RuntimeError("Operator bpy.ops.sequencer.delete.poll() failed, context is incorrect")
+
+        addon.bpy.ops.sequencer.delete = refuse
+        try:
+            self.assertEqual(addon._ripple_delete(SCENE), 0)
+        finally:
+            addon.bpy.ops.sequencer.delete = orig
+        self.assertEqual(len(ed.strips), 7)
+        self.assertEqual(UNDO, [])
+
+    def test_ripple_delete_never_deletes_in_another_scene(self):
+        ed = self._ripple_editor()
+        addon.bpy.context.sequencer_scene = _Scene()  # Blender edits another scene
+        self.assertEqual(addon._ripple_delete(SCENE), 0)
+        self.assertEqual(SEQ_DELETE.calls, [])
+        self.assertEqual(len(ed.strips), 7)
+        self.assertEqual(UNDO, [])
+
+    def test_ripple_delete_without_a_window(self):
+        # No window, nothing draws, no prefetch: strips go one by one, and
+        # one that can't go stops the gap closing
+        ed = self._ripple_editor()
+        addon.bpy.context.window_manager.windows = []
         ed.strips.fail.add("A2")
         self.assertEqual(addon._ripple_delete(SCENE), 1)
+        self.assertEqual(SEQ_DELETE.calls, [])
         self.assertEqual([x for x in ed.spans() if x[0] in ("A2", "V3")], [("A2", 50, 100), ("V3", 100, 200)])
         self.assertEqual(SCENE.frame_current, 70)
         self.assertEqual(UNDO, ["Ripple delete"], "what was deleted can be undone")
