@@ -46,6 +46,9 @@ const (
 	// whole edit, like Home over the strips, once per button press. It has no
 	// step and no encoder.
 	ActionViewAll = "timeline.view_all"
+	// ActionSave saves the .blend file in place, like Ctrl+S, once per
+	// button press. It has no step and no encoder.
+	ActionSave = "file.save"
 	// ActionCut cuts the strips under the playhead, once per button press.
 	// It has no step and no encoder.
 	ActionCut = "timeline.cut"
@@ -143,6 +146,7 @@ func Default() Config {
 				{ID: "zoom-fine", Name: "Zoom timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
 				{ID: "pan", Name: "Pan timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionPan, Step: 5},
 				{ID: "view-all", Name: "View whole timeline", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionViewAll},
+				{ID: "save", Name: "Save file", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionSave},
 				{ID: "cut", Name: "Cut at playhead", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionCut},
 				{ID: "undo", Name: "Undo", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionUndo},
 				{ID: "ripple-delete", Name: "Ripple delete", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionRippleDelete},
@@ -277,8 +281,8 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause, ActionForward, ActionReverse, ActionViewAll:
-				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause", ActionForward: "play forward", ActionReverse: "play backwards", ActionViewAll: "view whole timeline"}[b.Action]
+			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause, ActionForward, ActionReverse, ActionViewAll, ActionSave:
+				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause", ActionForward: "play forward", ActionReverse: "play backwards", ActionViewAll: "view whole timeline", ActionSave: "save file"}[b.Action]
 				if b.Control.Type != "note" && b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: %s needs a button (note or cc)", b.Name, what)
 				}

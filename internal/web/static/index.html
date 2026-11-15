@@ -283,6 +283,7 @@ tr.flash td { animation: flash 600ms ease-out; }
         <button class="btn" data-test-cut title="Cut at playhead">✂ Cut</button>
         <button class="btn" data-test-ripple title="Ripple delete">⌫ Ripple</button>
         <button class="btn" data-test-undo title="Undo">↶ Undo</button>
+        <button class="btn" data-test-save title="Save the .blend file">Save</button>
       </div></div>
       <div class="group"><span>Play</span><div class="seg">
         <button class="btn" data-test-shuttle="-1" title="Backwards / faster" aria-label="Backwards, faster"><svg class="ico" viewBox="0 0 16 16"><path d="M8 3.5v9L1.5 8zM14.5 3.5v9L8 8z"/></svg></button>
@@ -376,7 +377,7 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.view_all': 'View whole timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.view_all': 'View whole timeline', 'file.save': 'Save file', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep, config.MaxPanStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
@@ -575,6 +576,8 @@ function describe(ev) {
     } else if (h.command.type === 'move') {
       const f = h.command.frames;
       what = `move ${h.command.before ? 'earlier' : 'later'} strips ${f > 0 ? '+' : ''}${f} frame${Math.abs(f) === 1 ? '' : 's'}`;
+    } else if (h.command.type === 'save') {
+      what = 'save file';
     } else if (h.command.type === 'view_all') {
       what = 'view whole timeline';
     } else if (h.command.type === 'pan') {
@@ -712,6 +715,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.testZoom) return sendTest({ zoom: +t.dataset.testZoom });
   if (t.dataset.testPan) return sendTest({ pan: +t.dataset.testPan });
   if (t.dataset.testViewAll !== undefined) return sendTest({ view_all: true });
+  if (t.dataset.testSave !== undefined) return sendTest({ save: true });
   if (t.dataset.testCut !== undefined) return sendTest({ cut: true });
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });
@@ -823,7 +827,7 @@ $('clear').onclick = () => { $('log').querySelectorAll('.log-row:not(.log-head)'
 // Switching a binding's action: a step that made sense for the old one
 // (10 frames) can be out of range for the new one (20 zoom steps at most),
 // so it starts over, and a name still at the old default follows along.
-// A button action (cut, undo, ripple delete, playback) has no step or encoder; a knob action gets them back
+// A button action (cut, undo, ripple delete, playback, view all, save) has no step or encoder; a knob action gets them back
 // (jumping between cuts gets an encoder and no step).
 function setAction(b, action) {
   const was = b.action;

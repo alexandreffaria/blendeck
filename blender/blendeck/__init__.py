@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.12.0"
+ADDON_VERSION = "0.13.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -32,6 +32,7 @@ class _Link:
     last_state = None
     last_sent = 0.0
     move_undo = 0.0  # when the move knob last moved strips with no undo step yet (0: none waiting)
+    note = ""  # what the last save press did, shown in the panel
 
 
 link = _Link()
@@ -66,6 +67,8 @@ def _redraw():
     if not wm:
         return
     for win in wm.windows:
+        if win.screen is None:
+            continue  # a window still opening or closing
         for area in win.screen.areas:
             if area.type == "SEQUENCE_EDITOR":
                 area.tag_redraw()
@@ -460,6 +463,50 @@ def _undo():
         print("Blendeck: undo skipped:", e)
         return False
     _redraw()
+    return done
+
+
+def _note(text):
+    """Sets the panel's save note. Never raises: a panel that can't redraw
+    must not drop the bridge."""
+    if link.note != text:
+        link.note = text
+        try:
+            _redraw()
+        except Exception as e:
+            print("Blendeck: panel not redrawn:", e)
+
+
+UNSAVED = "Not saved yet: use File > Save As once"
+
+
+def _save():
+    """Saves the .blend file in place, like Ctrl+S on a file saved before.
+    A file never saved is left alone: the panel asks for one Save As first.
+    Refused, like undo, while a modal operator runs or the interface is
+    locked (a render). Never raises. Returns True if it saved."""
+    try:
+        if not bpy.data.filepath:
+            _note(UNSAVED)
+            return False
+        wm = bpy.context.window_manager
+        modal = []
+        for win in (wm.windows if wm else ()):
+            modal.extend(op.bl_idname for op in getattr(win, "modal_operators", ()))
+        why = protocol.undo_blocked(modal, bool(getattr(wm, "is_interface_locked", False)))
+        if why is None:
+            ctx, why = _undo_context()
+        if why is not None:
+            print("Blendeck: save skipped:", why)
+            _note("Not saved: " + why)
+            return False
+        with bpy.context.temp_override(**ctx):
+            done = "FINISHED" in bpy.ops.wm.save_mainfile()
+    except Exception as e:
+        print("Blendeck: save failed:", e)
+        _note("Not saved: %s" % e)
+        return False
+    _note(("Saved at " + time.strftime("%H:%M:%S")) if done else "Not saved")
     return done
 
 
@@ -1097,6 +1144,11 @@ def _tick():
     _flush()
     messages = _read()
     _apply(messages, prefs)
+    if protocol.wants_save(messages):
+        # After the edits, so the file holds every one from the same read,
+        # and with the move knob's undo step pushed. It needs no scene.
+        _move_undo()
+        _save()
     _watch_stop(not protocol.wants_view_all(messages))
     _move_undo(time.monotonic())
     return TICK
@@ -1141,6 +1193,8 @@ class SEQUENCER_PT_blendeck(bpy.types.Panel):
         col = self.layout.column()
         icon = "CHECKMARK" if link.sock is not None else "ERROR"
         col.label(text=link.status, icon=icon)
+        if link.note:
+            col.label(text=link.note, icon="FILE_TICK" if link.note.startswith("Saved") else "INFO")
         if prefs:
             col.prop(prefs, "enabled")
             col.prop(prefs, "clamp")

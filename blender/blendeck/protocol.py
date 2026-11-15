@@ -133,6 +133,12 @@ def wants_view_all(messages):
     return any(m.get("type") == "view_all" for m in messages)
 
 
+def wants_save(messages):
+    """Whether messages hold a save press. Presses in one read are one:
+    saving twice in a row writes the same file."""
+    return any(m.get("type") == "save" for m in messages)
+
+
 def pan_pixels(width, percent):
     """How far to pan a region width pixels wide for percent of its width,
     in pixels (positive shows later frames)."""

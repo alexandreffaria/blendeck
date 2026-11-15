@@ -259,6 +259,29 @@ class _EdUndo:
 ED_UNDO = _EdUndo()
 
 
+class _Saver:
+    """Fake bpy.ops.wm.save_mainfile, as a timer sees it: it needs a window
+    in the context. Logs the temp_override keys of each save."""
+
+    def __init__(self):
+        self.calls = []
+        self.frames = []  # the playhead when each save ran
+        self.fail = False
+
+    def __call__(self):
+        kw = ZOOM.override or {}
+        if not kw.get("window"):
+            raise RuntimeError("Operator bpy.ops.wm.save_mainfile.poll() failed, context is incorrect")
+        if self.fail:
+            raise RuntimeError("Cannot open file for writing: Permission denied")
+        self.calls.append(sorted(kw))
+        self.frames.append(sys.modules["bpy"].context.scene.frame_current)
+        return {"FINISHED"}
+
+
+SAVER = _Saver()
+
+
 class _Player:
     """Fake bpy.ops.screen.animation_play and animation_cancel, as Blender
     5.2 behaves (checked in a real 5.2 from a timer): playing from a video
@@ -366,7 +389,9 @@ def _install_fake_bpy():
         ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}, undo=ED_UNDO),
         screen=types.SimpleNamespace(animation_play=PLAYER.play, animation_cancel=PLAYER.cancel),
         sequencer=types.SimpleNamespace(view_all=ZOOM.view_all),
+        wm=types.SimpleNamespace(save_mainfile=SAVER),
     )
+    bpy.data = types.SimpleNamespace(filepath="")
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
     bpy.props = types.SimpleNamespace(BoolProperty=lambda **k: None, StringProperty=lambda **k: None, IntProperty=lambda **k: None)
@@ -455,6 +480,11 @@ class AddonTest(unittest.TestCase):
         ED_UNDO.restore_frame = 1
         PLAYER.calls.clear()
         PLAYER.fail = False
+        SAVER.calls.clear()
+        SAVER.frames.clear()
+        SAVER.fail = False
+        addon.bpy.data.filepath = ""
+        addon.link.note = ""
         addon._shuttle_stop()
         addon.bpy.context.sequencer_scene = None
         PREFS.follow_selection = False
@@ -594,6 +624,79 @@ class AddonTest(unittest.TestCase):
         ZOOM.fail_in.add("strips")
         addon._view_all()  # must not raise
         self.assertEqual(ZOOM.calls, [("view_all", "both")])
+
+    def test_save_on_press(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        # Two presses in one read are one save
+        conn.sendall(b'{"type":"save"}\n{"type":"save"}\n')
+        self.assertTrue(tick_until(lambda: SAVER.calls))
+        self.assertEqual(SAVER.calls, [["area", "region", "screen", "window"]])
+        self.assertTrue(addon.link.note.startswith("Saved at "))
+        conn.close()
+        bridge.close()
+
+    def test_save_after_edits_in_same_read(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        conn.sendall(b'{"type":"save"}\n{"type":"scrub","frames":5}\n')
+        self.assertTrue(tick_until(lambda: SAVER.calls))
+        # The scrub landed before the file was written
+        self.assertEqual(SAVER.frames, [55])
+        conn.close()
+        bridge.close()
+
+    def test_save_untitled_leaves_note(self):
+        self._undo_scene()
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVER.calls, [])
+        self.assertEqual(addon.link.note, addon.UNSAVED)
+
+    def test_save_refused_during_modal_operator(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        addon.bpy.context.window_manager.windows[0].modal_operators = [types.SimpleNamespace(bl_idname="TRANSFORM_OT_seq_slide")]
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVER.calls, [])
+        self.assertIn("TRANSFORM_OT_seq_slide", addon.link.note)
+
+    def test_save_refused_while_rendering(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        addon.bpy.context.window_manager.is_interface_locked = True
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVER.calls, [])
+
+    def test_save_without_window(self):
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVER.calls, [])
+
+    def test_save_failure_doesnt_raise(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        SAVER.fail = True
+        self.assertFalse(addon._save())
+        self.assertIn("Permission denied", addon.link.note)
+        self.assertIsNone(ZOOM.override, "the override ended")
+
+    def test_save_note_redraw_failure_doesnt_raise(self):
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        # An area whose redraw fails: the save still counts, nothing raises
+        area = addon.bpy.context.window_manager.windows[0].screen.areas[0]
+        area.tag_redraw = lambda: 1 / 0
+        self.assertTrue(addon._save())
+        self.assertTrue(addon.link.note.startswith("Saved at "))
 
     def test_view_all_without_windows(self):
         addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
