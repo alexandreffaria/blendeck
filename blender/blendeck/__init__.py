@@ -707,10 +707,26 @@ def _shuttle(scene, direction):
         return 0
 
 
+def _cache_window_range(scene):
+    """True when the preview range is one the Cache Window extension
+    borrowed: it publishes scene["cache_window"] with the start and end it
+    set while it holds the range. Any error reading it means not borrowed."""
+    try:
+        marker = scene.get("cache_window")
+        if marker is None:
+            return False
+        return (int(marker["start"]) == scene.frame_preview_start
+                and int(marker["end"]) == scene.frame_preview_end)
+    except Exception:
+        return False
+
+
 def _play_range(scene):
     """The frames playback runs over: the preview range when it is on, as
-    for Blender's own playback, else the scene's."""
-    if getattr(scene, "use_preview_range", False):
+    for Blender's own playback, else the scene's. A preview range Cache
+    Window borrowed to prefetch around the playhead isn't the user's, so it
+    is passed over."""
+    if getattr(scene, "use_preview_range", False) and not _cache_window_range(scene):
         return scene.frame_preview_start, scene.frame_preview_end
     return scene.frame_start, scene.frame_end
 
