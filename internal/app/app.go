@@ -4,6 +4,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,10 +29,12 @@ type Event struct {
 	Delivered bool `json:"delivered"`
 }
 
-// Learned is the control captured by the latest learn.
+// Learned is the control captured by the latest learn, and the modifiers
+// held when it was captured.
 type Learned struct {
 	Seq     int64          `json:"seq"`
 	Control config.Control `json:"control"`
+	Held    []string       `json:"held"`
 }
 
 // Devices lists MIDI inputs; replaced in tests.
@@ -44,6 +48,9 @@ type App struct {
 	engine  *engine.Engine
 	link    *link.Link
 	devices Devices
+	run     string // changes every start, so the page can tell a restart
+
+	cfgMu sync.Mutex // serializes SetConfig so disk and engine agree
 
 	mu      sync.Mutex
 	events  []Event // ring buffer, oldest first once full
@@ -61,8 +68,19 @@ func New(log *slog.Logger, store *config.Store, conn *midi.Conn, lnk *link.Link,
 		engine:  engine.New(*cfg.Active()),
 		link:    lnk,
 		devices: devices,
+		run:     newRunID(),
+		learned: Learned{Held: []string{}},
 	}
 }
+
+func newRunID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// Run is this process's run id.
+func (a *App) RunID() string { return a.run }
 
 // Run handles controller messages until ctx ends.
 func (a *App) Run(ctx context.Context, messages <-chan midi.Message) {
@@ -94,14 +112,18 @@ func (a *App) Handle(m midi.Message) {
 		a.events[len(a.events)-1] = ev
 	}
 	if learned != nil {
-		a.learned = Learned{Seq: a.seq, Control: *learned}
+		a.learned = Learned{Seq: a.seq, Control: learned.Control, Held: learned.Held}
 	}
 }
 
-// EventsSince returns the logged events newer than seq, oldest first.
+// EventsSince returns the logged events newer than seq, oldest first. A seq
+// from the future (the page saw an earlier run) starts from the beginning.
 func (a *App) EventsSince(seq int64) []Event {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if seq > a.seq {
+		seq = 0
+	}
 	out := []Event{}
 	for _, e := range a.events {
 		if e.Seq > seq {
@@ -117,7 +139,8 @@ type Snapshot struct {
 	Dropped  int64       `json:"dropped"`
 	Blender  link.State  `json:"blender"`
 	Held     []string    `json:"held"`
-	Learning bool        `json:"learning"`
+	Run      string      `json:"run"`
+	Learning string      `json:"learning"` // "", "binding" or "modifier"
 	Learned  Learned     `json:"learned"`
 	LastSeq  int64       `json:"last_seq"`
 }
@@ -132,20 +155,23 @@ func (a *App) Snapshot() Snapshot {
 		Dropped:  a.conn.Dropped(),
 		Blender:  a.link.State(),
 		Held:     a.engine.Held(),
-		Learning: a.engine.Learning(),
+		Run:      a.run,
+		Learning: string(a.engine.Learning()),
 		Learned:  learned,
 		LastSeq:  seq,
 	}
 }
 
-// Learn arms or cancels learn mode.
-func (a *App) Learn(on bool) { a.engine.Learn(on) }
+// Learn arms learn mode for t, or cancels it with engine.LearnOff.
+func (a *App) Learn(t engine.Target) { a.engine.Learn(t) }
 
 // Config returns the saved config.
 func (a *App) Config() config.Config { return a.store.Get() }
 
 // SetConfig validates and saves cfg, then applies it.
 func (a *App) SetConfig(cfg config.Config) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := a.store.Set(cfg); err != nil {
 		return err
 	}

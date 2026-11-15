@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func start(t *testing.T) (*Link, string) {
 
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out: %s", what)
@@ -38,18 +39,32 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
+func dialHello(t *testing.T, addr string) net.Conn {
+	t.Helper()
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	fmt.Fprintln(c, `{"type":"hello","blender":"5.1.0","addon":"0.1.0"}`)
+	return c
+}
+
+func closedByPeer(t *testing.T, c net.Conn) bool {
+	t.Helper()
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, err := c.Read(make([]byte, 1))
+	return err != nil && !strings.Contains(err.Error(), "timeout")
+}
+
 func TestRoundTrip(t *testing.T) {
 	l, addr := start(t)
 	if l.Send(engine.Command{Type: "scrub", Frames: 1}) {
 		t.Fatal("Send reported a receiver with nobody connected")
 	}
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	fmt.Fprintln(conn, `{"type":"hello","blender":"5.1.0","addon":"0.1.0"}`)
+	conn := dialHello(t, addr)
 	fmt.Fprintln(conn, `not json`)
+	fmt.Fprintln(conn, `{"type":"ping"}`)
 	fmt.Fprintln(conn, `{"type":"state","scene":"Edit","frame":42,"start":1,"end":250,"fps":24}`)
 	eventually(t, "state", func() bool { s := l.State(); return s.Frame == 42 && s.Blender == "5.1.0" })
 	s := l.State()
@@ -76,25 +91,69 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-func TestClientCap(t *testing.T) {
+// A web page can make a no-CORS request to this port; it must not count as
+// Blender or be able to post a state.
+func TestHTTPRequestIsNotAnAddon(t *testing.T) {
 	l, addr := start(t)
-	var conns []net.Conn
-	for i := 0; i < MaxClients; i++ {
-		c, err := net.Dial("tcp", addr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		conns = append(conns, c)
-		defer c.Close()
-	}
-	eventually(t, "all connected", func() bool { return l.State().Clients == MaxClients })
-	extra, err := net.Dial("tcp", addr)
+	c, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer extra.Close()
-	extra.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := extra.Read(make([]byte, 1)); err == nil {
+	defer c.Close()
+	fmt.Fprint(c, "POST / HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\n\r\n"+
+		`{"type":"hello"}`+"\n"+`{"type":"state","scene":"forged","frame":999}`+"\n")
+	if !closedByPeer(t, c) {
+		t.Fatal("HTTP connection was kept open")
+	}
+	if s := l.State(); s.Connected || s.Scene == "forged" {
+		t.Fatalf("state = %+v", s)
+	}
+}
+
+func TestSilentConnectionTimesOut(t *testing.T) {
+	old := HelloTimeout
+	HelloTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { HelloTimeout = old })
+	l, addr := start(t)
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if !closedByPeer(t, c) {
+		t.Fatal("silent connection kept open")
+	}
+	if l.State().Connected {
+		t.Fatal("silent connection counted as an add-on")
+	}
+}
+
+func TestIdleAddonDropped(t *testing.T) {
+	old := IdleTimeout
+	IdleTimeout = 80 * time.Millisecond
+	t.Cleanup(func() { IdleTimeout = old })
+	l, addr := start(t)
+	c := dialHello(t, addr)
+	eventually(t, "connected", func() bool { return l.State().Connected })
+	// Pings keep it alive past the timeout
+	for range 4 {
+		time.Sleep(40 * time.Millisecond)
+		fmt.Fprintln(c, `{"type":"ping"}`)
+	}
+	if !l.State().Connected {
+		t.Fatal("dropped despite pings")
+	}
+	eventually(t, "dropped when quiet", func() bool { return !l.State().Connected })
+}
+
+func TestClientCap(t *testing.T) {
+	l, addr := start(t)
+	for range MaxClients {
+		dialHello(t, addr)
+	}
+	eventually(t, "all connected", func() bool { return l.State().Clients == MaxClients })
+	extra := dialHello(t, addr)
+	if !closedByPeer(t, extra) {
 		t.Fatal("extra connection was not closed")
 	}
 	if l.State().Clients != MaxClients {
@@ -104,16 +163,8 @@ func TestClientCap(t *testing.T) {
 
 func TestLongLineDropsClient(t *testing.T) {
 	l, addr := start(t)
-	c, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
+	c := dialHello(t, addr)
 	eventually(t, "connected", func() bool { return l.State().Connected })
-	big := make([]byte, 70*1024)
-	for i := range big {
-		big[i] = 'a'
-	}
-	c.Write(big)
+	c.Write([]byte(strings.Repeat("a", maxLine+10)))
 	eventually(t, "dropped", func() bool { return !l.State().Connected })
 }

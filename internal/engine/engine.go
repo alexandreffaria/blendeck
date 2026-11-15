@@ -4,6 +4,7 @@ package engine
 
 import (
 	"sync"
+	"time"
 
 	"github.com/alexandreffaria/blendeck/internal/config"
 	"github.com/alexandreffaria/blendeck/internal/midi"
@@ -25,15 +26,41 @@ type Hit struct {
 
 // Engine is safe for concurrent use.
 type Engine struct {
-	mu       sync.Mutex
-	profile  config.Profile
-	held     map[string]bool
-	learning bool
+	mu      sync.Mutex
+	profile config.Profile
+	held    map[string]bool
+	learn   Target
+	until   time.Time
+	now     func() time.Time
+}
+
+// Target says what learn mode is capturing for.
+type Target string
+
+const (
+	// LearnOff means not learning.
+	LearnOff Target = ""
+	// LearnBinding captures a control for a binding. Learned modifiers are
+	// passed through, so a binding can be learned with Fn held.
+	LearnBinding Target = "binding"
+	// LearnModifier captures any control, learned modifiers included.
+	LearnModifier Target = "modifier"
+)
+
+// LearnTimeout is how long learn mode waits before giving up, so a page that
+// was closed mid-learn can't leave the next press swallowed.
+const LearnTimeout = 30 * time.Second
+
+// Learned is what learn mode captured: the control, and the modifiers held
+// at the time.
+type Learned struct {
+	Control config.Control `json:"control"`
+	Held    []string       `json:"held"`
 }
 
 // New makes an Engine running profile p.
 func New(p config.Profile) *Engine {
-	e := &Engine{held: map[string]bool{}}
+	e := &Engine{held: map[string]bool{}, now: time.Now}
 	e.SetProfile(p)
 	return e
 }
@@ -56,6 +83,10 @@ func (e *Engine) SetProfile(p config.Profile) {
 func (e *Engine) Held() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.heldLocked()
+}
+
+func (e *Engine) heldLocked() []string {
 	out := []string{}
 	for _, m := range e.profile.Modifiers {
 		if e.held[m.Name] {
@@ -65,19 +96,28 @@ func (e *Engine) Held() []string {
 	return out
 }
 
-// Learn arms learn mode: the next message (other than a release) is returned
-// by Handle as learned instead of being acted on.
-func (e *Engine) Learn(on bool) {
+// Learn arms learn mode for t (or turns it off with LearnOff): the next
+// message, other than a release, is returned by Handle as learned instead of
+// being acted on. It turns itself off after LearnTimeout.
+func (e *Engine) Learn(t Target) {
 	e.mu.Lock()
-	e.learning = on
+	e.learn = t
+	e.until = e.now().Add(LearnTimeout)
 	e.mu.Unlock()
 }
 
-// Learning reports whether learn mode is armed.
-func (e *Engine) Learning() bool {
+// Learning reports what learn mode is armed for, or LearnOff.
+func (e *Engine) Learning() Target {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.learning
+	return e.learningLocked()
+}
+
+func (e *Engine) learningLocked() Target {
+	if e.learn != LearnOff && !e.now().Before(e.until) {
+		e.learn = LearnOff
+	}
+	return e.learn
 }
 
 // ControlOf says which control sent m.
@@ -125,7 +165,7 @@ func Delta(value int, encoder string) int {
 
 // Handle processes one message. learned is set when learn mode captured it;
 // learn mode then turns off.
-func (e *Engine) Handle(m midi.Message) (hit Hit, learned *config.Control) {
+func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	ctl, ok := ControlOf(m)
 	if !ok {
 		return Hit{}, nil
@@ -133,13 +173,9 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *config.Control) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.learning {
-		// A button release (or a knob coming to rest) isn't a choice
-		if m.Kind == midi.NoteOff {
-			return Hit{}, nil
-		}
-		e.learning = false
-		return Hit{}, &ctl
+	target := e.learningLocked()
+	if target == LearnModifier {
+		return e.capture(m, ctl)
 	}
 
 	for _, mod := range e.profile.Modifiers {
@@ -148,6 +184,10 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *config.Control) {
 			e.held[mod.Name] = down
 			return Hit{Modifier: mod.Name, Held: down}, nil
 		}
+	}
+
+	if target == LearnBinding {
+		return e.capture(m, ctl)
 	}
 
 	b := e.match(ctl)
@@ -162,6 +202,15 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *config.Control) {
 		}
 	}
 	return hit, nil
+}
+
+func (e *Engine) capture(m midi.Message, ctl config.Control) (Hit, *Learned) {
+	// A button release isn't a choice
+	if m.Kind == midi.NoteOff {
+		return Hit{}, nil
+	}
+	e.learn = LearnOff
+	return Hit{}, &Learned{Control: ctl, Held: e.heldLocked()}
 }
 
 // match picks the binding for ctl: one whose modifier is held wins over one

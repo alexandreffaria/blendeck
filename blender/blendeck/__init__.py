@@ -5,14 +5,16 @@ add-on connects to it, applies the commands it sends, and reports the playhead
 back so the bridge's page can show it."""
 
 import socket
+import time
 
 import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.1.0"
+ADDON_VERSION = "0.1.1"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
+PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
 
 
 class _Link:
@@ -20,8 +22,7 @@ class _Link:
     buf = None
     status = "Not connected"
     last_state = None
-    next_try = 0.0
-    clock = 0.0
+    last_sent = 0.0
 
 
 link = _Link()
@@ -33,7 +34,9 @@ def _prefs():
 
 
 def _scene():
-    scene = getattr(bpy.context, "scene", None)
+    # Blender 5 edits video in the workspace's sequencer scene, which can
+    # differ from the window's scene
+    scene = getattr(bpy.context, "sequencer_scene", None) or getattr(bpy.context, "scene", None)
     if scene is None:
         wm = bpy.context.window_manager
         if wm and wm.windows:
@@ -70,8 +73,12 @@ def _close(reason):
 
 
 def _connect(prefs):
+    host = protocol.bridge_host(prefs.host)
+    if host is None:
+        _set_status("Host must be an IP address, like 127.0.0.1")
+        return
     try:
-        s = socket.create_connection((prefs.host, prefs.port), timeout=0.05)
+        s = socket.create_connection((host, prefs.port), timeout=0.05)
     except OSError:
         _set_status("Bridge not running")
         return
@@ -88,6 +95,7 @@ def _send(msg):
         return
     try:
         link.sock.sendall(protocol.encode(msg))
+        link.last_sent = time.monotonic()
     except BlockingIOError:
         pass  # the bridge is slow to read; a later state message catches up
     except OSError:
@@ -128,9 +136,24 @@ def _apply(messages, prefs):
     if state != link.last_state:
         link.last_state = state
         _send({"type": "state", "scene": state[0], "frame": state[1], "start": state[2], "end": state[3], "fps": state[4]})
+    elif time.monotonic() - link.last_sent > PING:
+        _send({"type": "ping"})
 
 
 def tick():
+    # The timer stops for good if this raises, so nothing may escape
+    try:
+        return _tick()
+    except Exception as e:
+        print("Blendeck:", e)
+        try:
+            _close("Error: %s" % e)
+        except Exception:
+            link.sock = None
+        return RETRY
+
+
+def _tick():
     prefs = _prefs()
     if prefs is None:
         return RETRY
@@ -143,10 +166,7 @@ def tick():
         _connect(prefs)
         if link.sock is None:
             return RETRY
-    try:
-        _apply(_read(), prefs)
-    except Exception as e:  # never let the timer die
-        print("Blendeck:", e)
+    _apply(_read(), prefs)
     return TICK
 
 
@@ -154,7 +174,7 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     enabled: bpy.props.BoolProperty(name="Connect to bridge", default=True)
-    host: bpy.props.StringProperty(name="Host", default="127.0.0.1")
+    host: bpy.props.StringProperty(name="Host", description="The bridge's IP address", default="127.0.0.1")
     port: bpy.props.IntProperty(name="Port", default=7871, min=1, max=65535)
     clamp: bpy.props.BoolProperty(
         name="Stop at scene start and end",

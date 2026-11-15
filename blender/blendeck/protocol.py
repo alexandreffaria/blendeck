@@ -1,6 +1,7 @@
 """Wire format and playhead math for the Blendeck link. No bpy here, so it can
 be tested without Blender."""
 
+import ipaddress
 import json
 
 MAX_LINE = 64 * 1024
@@ -62,3 +63,15 @@ def scrub_target(frame, delta, start, end, clamp):
     lo = min(start, frame)
     hi = max(end, frame)
     return max(lo, min(hi, target))
+
+
+def bridge_host(text):
+    """The bridge's IP address, or None. Names other than localhost are
+    refused, so connecting never waits on a DNS lookup on Blender's UI thread."""
+    text = text.strip()
+    if text.lower() == "localhost":
+        return "127.0.0.1"
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return None

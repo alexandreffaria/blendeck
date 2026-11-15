@@ -154,7 +154,7 @@ tr.flash td { animation: flash 600ms ease-out; }
           <tbody id="bindings"></tbody>
         </table>
       </div>
-      <div class="card-body"><p class="hint">Click <b>Learn</b>, then turn the knob (or press the button). Hold a modifier like Fn while turning to make a second binding on the same knob.</p></div>
+      <div class="card-body"><p class="hint">Click <b>Learn</b>, then turn the knob. To make the Fn version of a knob, hold Fn while you turn it: "While held" is set for you.</p></div>
     </section>
 
     <section class="card">
@@ -236,6 +236,7 @@ const state = {
   draft: null,       // config being edited
   live: null,
   lastSeq: 0,
+  run: '',           // the bridge's run id; changes when it restarts
   learn: null,       // { kind: 'binding'|'modifier', index, baseSeq }
   paused: false,
   devices: [],
@@ -356,7 +357,8 @@ function renderLive() {
   mp.className = 'pill ' + (l.midi.state === 'connected' ? 'ok' : l.midi.state === 'error' ? 'bad' : 'wait');
   $('midiText').textContent = l.midi.state === 'connected' ? l.midi.device : l.midi.state === 'error' ? 'Controller error' : 'Looking for ' + (l.midi.device || 'controller');
   $('midiDetail').textContent = l.midi.error || (l.midi.state === 'connected' ? 'Connected.' : 'Waiting for the device to be plugged in.');
-  $('dropped').textContent = l.dropped ? `${l.dropped} dropped` : '';
+  const lost = l.dropped + (l.blender.dropped || 0);
+  $('dropped').textContent = lost ? `${lost} dropped` : '';
 
   const b = l.blender;
   const bp = $('blenderPill');
@@ -426,15 +428,21 @@ function flash(key) {
 async function startLearn(kind, index) {
   if (state.learn && state.learn.kind === kind && state.learn.index === index) return cancelLearn();
   try {
-    const snap = await api('POST', '/api/learn', { on: true });
+    const snap = await api('POST', '/api/learn', { target: kind });
     state.learn = { kind, index, baseSeq: snap.learned.seq };
   } catch (e) { toast(e.message, true); }
   renderBindings(); renderModifiers();
 }
 async function cancelLearn() {
-  state.learn = null;
+  dropLearn();
   renderBindings(); renderModifiers();
-  try { await api('POST', '/api/learn', { on: false }); } catch (e) { /* ignore */ }
+}
+// Forget a pending learn here and on the bridge, so the next press isn't
+// swallowed by a learn nobody is waiting for any more.
+function dropLearn() {
+  if (!state.learn) return;
+  state.learn = null;
+  api('POST', '/api/learn', { target: '' }).catch(() => {});
 }
 function checkLearned() {
   const l = state.learn;
@@ -447,6 +455,9 @@ function checkLearned() {
       state.learn = null; startLearn(l.kind, l.index); return;
     }
     p.bindings[l.index].control = c;
+    // Learned while holding a modifier: that's the binding's modifier
+    const held = state.live.learned.held || [];
+    if (held.length) p.bindings[l.index].modifier = held[0];
   } else if (l.kind === 'modifier' && p.modifiers[l.index]) {
     if (c.type === 'pitch_bend') { toast('A modifier must be a button.', true); state.learn = null; renderModifiers(); return; }
     p.modifiers[l.index].control = c;
@@ -461,8 +472,8 @@ document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t) return;
   if (t.dataset.learn) return startLearn(t.dataset.learn, +t.dataset.i);
-  if (t.dataset.delB !== undefined) { profile().bindings.splice(+t.dataset.delB, 1); state.learn = null; renderBindings(); renderSaveBar(); return; }
-  if (t.dataset.delM !== undefined) { profile().modifiers.splice(+t.dataset.delM, 1); state.learn = null; renderAll(); return; }
+  if (t.dataset.delB !== undefined) { dropLearn(); profile().bindings.splice(+t.dataset.delB, 1); renderBindings(); renderSaveBar(); return; }
+  if (t.dataset.delM !== undefined) { dropLearn(); profile().modifiers.splice(+t.dataset.delM, 1); renderAll(); return; }
   if (t.dataset.test) return sendTest(+t.dataset.test);
 });
 
@@ -475,15 +486,25 @@ document.addEventListener('input', (e) => {
     else b[t.dataset.f] = t.value;
     if (t.dataset.f === 'modifier') { if (!t.value) delete b.modifier; renderBindings(); }
     renderSaveBar();
-  } else if (t.dataset.m !== undefined) {
-    const m = p.modifiers[+t.dataset.m];
-    const old = m.name;
-    m.name = t.value;
-    for (const b of p.bindings) if (b.modifier === old) b.modifier = t.value;
-    renderSaveBar();
   }
 });
-document.addEventListener('change', (e) => { if (e.target.dataset.m !== undefined && e.target.dataset.f === 'name') renderBindings(); });
+// A modifier is renamed when the field is left, not on every keystroke, so
+// passing through another modifier's name on the way can't take its bindings.
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.m === undefined || t.dataset.f !== 'name') return;
+  const p = profile();
+  const m = p.modifiers[+t.dataset.m];
+  const name = t.value.trim();
+  if (!name || p.modifiers.some((o) => o !== m && o.name === name)) {
+    toast(name ? `There is already a modifier called ${name}.` : 'A modifier needs a name.', true);
+    t.value = m.name;
+    return;
+  }
+  for (const b of p.bindings) if (b.modifier === m.name) b.modifier = name;
+  m.name = name;
+  renderBindings(); renderSaveBar();
+});
 
 $('addBinding').onclick = () => {
   profile().bindings.push({ id: uid(), name: 'Scrub timeline', control: { type: 'cc', channel: 1, number: -1 }, encoder: 'relative_twos', action: 'timeline.scrub', step: 10 });
@@ -499,7 +520,7 @@ $('addModifier').onclick = () => {
   startLearn('modifier', p.modifiers.length - 1);
 };
 
-$('profileSelect').onchange = (e) => { state.draft.active_profile = e.target.value; state.learn = null; renderAll(); };
+$('profileSelect').onchange = (e) => { dropLearn(); state.draft.active_profile = e.target.value; renderAll(); };
 function askName(title, start) {
   const name = (prompt(title, start) || '').trim();
   if (!name) return null;
@@ -538,12 +559,15 @@ async function save() {
   } catch (e) { toast(e.message, true); }
 }
 $('save').onclick = save;
-$('revert').onclick = () => { state.draft = clone(state.saved); state.learn = null; renderAll(); };
+$('revert').onclick = () => { dropLearn(); state.draft = clone(state.saved); renderAll(); };
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); }
   if (e.key === 'Escape' && state.learn) cancelLearn();
 });
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('pagehide', () => {
+  if (state.learn) fetch('/api/learn', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: '{"target":""}' });
+});
 
 $('pause').onclick = () => { state.paused = !state.paused; $('pause').textContent = state.paused ? 'Resume' : 'Pause'; };
 $('clear').onclick = () => { $('log').querySelectorAll('.log-row:not(.log-head)').forEach((r) => r.remove()); $('logEmpty').hidden = false; };
@@ -561,9 +585,14 @@ async function loadDevices() {
 }
 
 function connectEvents() {
-  const es = new EventSource('/api/events?since=' + state.lastSeq);
+  const es = new EventSource(`/api/events?since=${state.lastSeq}&run=${encodeURIComponent(state.run)}`);
   es.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    if (data.live.run !== state.run) {
+      // The bridge restarted: its counters start over and any learn is gone
+      state.run = data.live.run; state.lastSeq = 0;
+      if (state.learn) { state.learn = null; renderBindings(); renderModifiers(); }
+    }
     state.live = data.live;
     if (data.events.length) state.lastSeq = data.events[data.events.length - 1].seq;
     renderLive();
@@ -583,7 +612,7 @@ async function init() {
   const st = await api('GET', '/api/state');
   $('version').textContent = st.version;
   state.saved = st.config; state.draft = clone(st.config);
-  state.live = st.live; state.lastSeq = st.live.last_seq;
+  state.live = st.live; state.lastSeq = st.live.last_seq; state.run = st.live.run;
   renderAll(); renderLive();
   await loadDevices();
   connectEvents();

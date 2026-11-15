@@ -37,6 +37,7 @@ func TestValidateRejects(t *testing.T) {
 			m := Modifier{"Fn", Control{"note", 1, 1}}
 			c.Profiles[0].Modifiers = []Modifier{m, m}
 		},
+		"too many mods":    func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
 		"too many profile": func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
 	for name, mutate := range cases {

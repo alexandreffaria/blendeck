@@ -51,6 +51,13 @@ class ScrubTest(unittest.TestCase):
         self.assertEqual(protocol.scrub_target(300, -10, 1, 250, True), 290)
         self.assertEqual(protocol.scrub_target(-5, -1, 1, 250, True), -5)
 
+    def test_bridge_host(self):
+        self.assertEqual(protocol.bridge_host(" 127.0.0.1 "), "127.0.0.1")
+        self.assertEqual(protocol.bridge_host("LOCALHOST"), "127.0.0.1")
+        self.assertEqual(protocol.bridge_host("::1"), "::1")
+        self.assertIsNone(protocol.bridge_host("example.com"))
+        self.assertIsNone(protocol.bridge_host(""))
+
     def test_encode(self):
         self.assertEqual(protocol.encode({"type": "hello"}), b'{"type":"hello"}\n')
 

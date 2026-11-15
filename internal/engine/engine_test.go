@@ -2,6 +2,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"github.com/alexandreffaria/blendeck/internal/config"
 	"github.com/alexandreffaria/blendeck/internal/midi"
@@ -95,22 +96,62 @@ func TestZeroDeltaSendsNothing(t *testing.T) {
 
 func TestLearn(t *testing.T) {
 	e := New(scrubProfile())
-	e.Learn(true)
-	if _, l := e.Handle(fnUp); l != nil {
+	e.Learn(LearnBinding)
+	if _, l := e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 3, Number: 1}); l != nil {
 		t.Fatal("a release was learned")
 	}
 	_, l := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 2, Number: 9, Value: 1})
-	if l == nil || *l != (config.Control{Type: "cc", Channel: 2, Number: 9}) {
+	if l == nil || l.Control != (config.Control{Type: "cc", Channel: 2, Number: 9}) || len(l.Held) != 0 {
 		t.Fatalf("learned %+v", l)
 	}
-	if e.Learning() {
+	if e.Learning() != LearnOff {
 		t.Fatal("still learning")
 	}
 	// Learn mode doesn't act on the captured message
-	e.Learn(true)
+	e.Learn(LearnBinding)
 	hit, _ := e.Handle(knob(1))
 	if hit.Command != nil {
 		t.Fatal("learn mode sent a command")
+	}
+}
+
+// Learning the fine binding: hold Fn, turn the knob. Fn must not be the
+// thing learned, and the result says Fn was held.
+func TestLearnBindingWithFnHeld(t *testing.T) {
+	e := New(scrubProfile())
+	e.Learn(LearnBinding)
+	if hit, l := e.Handle(fnDown); l != nil || hit.Modifier != "Fn" {
+		t.Fatalf("Fn press during binding learn: hit %+v learned %+v", hit, l)
+	}
+	_, l := e.Handle(knob(1))
+	if l == nil || l.Control.Number != 5 || len(l.Held) != 1 || l.Held[0] != "Fn" {
+		t.Fatalf("learned %+v", l)
+	}
+}
+
+func TestLearnModifierCapturesKnownModifier(t *testing.T) {
+	e := New(scrubProfile())
+	e.Learn(LearnModifier)
+	_, l := e.Handle(fnDown)
+	if l == nil || l.Control.Type != "note" || l.Control.Number != 40 {
+		t.Fatalf("learned %+v", l)
+	}
+	if len(e.Held()) != 0 {
+		t.Fatal("the learned press also counted as holding Fn")
+	}
+}
+
+func TestLearnTimesOut(t *testing.T) {
+	e := New(scrubProfile())
+	now := time.Now()
+	e.now = func() time.Time { return now }
+	e.Learn(LearnBinding)
+	now = now.Add(LearnTimeout + time.Second)
+	if e.Learning() != LearnOff {
+		t.Fatal("learn mode outlived its timeout")
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("knob after timeout = %d, want 10", got)
 	}
 }
 

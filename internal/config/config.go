@@ -70,9 +70,10 @@ type Config struct {
 
 // Limits on what a config may hold, so a bad file or request can't blow up.
 const (
-	MaxProfiles = 64
-	MaxBindings = 512
-	MaxStep     = 100000
+	MaxProfiles  = 64
+	MaxBindings  = 512
+	MaxModifiers = 32
+	MaxStep      = 100000
 )
 
 // Default is the config a fresh install starts with: one profile with the
@@ -126,6 +127,9 @@ func (c *Config) Validate() error {
 		names[strings.ToLower(name)] = true
 		if len(p.Bindings) > MaxBindings {
 			return fmt.Errorf("profile %q: at most %d bindings", name, MaxBindings)
+		}
+		if len(p.Modifiers) > MaxModifiers {
+			return fmt.Errorf("profile %q: at most %d modifiers", name, MaxModifiers)
 		}
 		mods := map[string]bool{}
 		for _, m := range p.Modifiers {

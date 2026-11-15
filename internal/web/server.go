@@ -129,13 +129,19 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		On bool `json:"on"`
+		Target engine.Target `json:"target"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.app.Learn(req.On)
+	switch req.Target {
+	case engine.LearnOff, engine.LearnBinding, engine.LearnModifier:
+	default:
+		writeError(w, http.StatusBadRequest, `target must be "", "binding" or "modifier"`)
+		return
+	}
+	s.app.Learn(req.Target)
 	writeJSON(w, http.StatusOK, s.app.Snapshot())
 }
 
@@ -169,6 +175,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	if r.URL.Query().Get("run") != s.app.RunID() {
+		since = 0 // the page last saw an earlier run of the bridge
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	flusher.Flush()
 

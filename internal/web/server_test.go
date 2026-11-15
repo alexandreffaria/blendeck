@@ -46,11 +46,14 @@ func TestGuard(t *testing.T) {
 	if rec := do(h, "GET", "/api/state", "localhost:7870", "", ""); rec.Code != http.StatusOK {
 		t.Fatalf("localhost: %d", rec.Code)
 	}
-	if rec := do(h, "POST", "/api/learn", "127.0.0.1:7870", "text/plain", `{"on":true}`); rec.Code != http.StatusUnsupportedMediaType {
+	if rec := do(h, "POST", "/api/learn", "127.0.0.1:7870", "text/plain", `{"target":"binding"}`); rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("text/plain post: %d", rec.Code)
 	}
-	if rec := do(h, "POST", "/api/learn", "127.0.0.1:7870", "application/json; charset=utf-8", `{"on":true}`); rec.Code != http.StatusOK {
+	if rec := do(h, "POST", "/api/learn", "127.0.0.1:7870", "application/json; charset=utf-8", `{"target":"binding"}`); rec.Code != http.StatusOK {
 		t.Fatalf("json post: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/learn", "127.0.0.1:7870", "application/json", `{"target":"bogus"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad target: %d", rec.Code)
 	}
 }
 

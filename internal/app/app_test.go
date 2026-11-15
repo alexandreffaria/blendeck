@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alexandreffaria/blendeck/internal/config"
+	"github.com/alexandreffaria/blendeck/internal/engine"
 	"github.com/alexandreffaria/blendeck/internal/link"
 	"github.com/alexandreffaria/blendeck/internal/midi"
 )
@@ -23,10 +24,10 @@ func newTestApp(t *testing.T) *App {
 
 func TestLearnThenBind(t *testing.T) {
 	a := newTestApp(t)
-	a.Learn(true)
+	a.Learn(engine.LearnBinding)
 	a.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 4, Value: 1})
 	s := a.Snapshot()
-	if s.Learning || s.Learned.Seq != 1 || s.Learned.Control.Number != 4 {
+	if s.Learning != "" || s.Learned.Seq != 1 || s.Learned.Control.Number != 4 {
 		t.Fatalf("snapshot = %+v", s)
 	}
 	cfg := a.Config()
@@ -61,5 +62,13 @@ func TestSetConfigRejectsInvalid(t *testing.T) {
 	cfg.ActiveProfile = "missing"
 	if err := a.SetConfig(cfg); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestEventsSinceFutureSeqRestarts(t *testing.T) {
+	a := newTestApp(t)
+	a.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 1, Value: 1})
+	if got := a.EventsSince(500); len(got) != 1 {
+		t.Fatalf("got %d events for a seq from an earlier run", len(got))
 	}
 }
