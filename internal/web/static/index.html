@@ -628,6 +628,8 @@ function setAction(b, action) {
   if (STEPS[action]) {
     b.step = STEPS[action].start;
     if (!b.encoder) b.encoder = 'relative_twos';
+    // A knob action needs a cc; one not learned yet can just become one
+    if (b.control.number < 0) b.control.type = 'cc';
   } else {
     delete b.step;
     delete b.encoder;

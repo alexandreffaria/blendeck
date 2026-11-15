@@ -247,10 +247,14 @@ def _zoom(clicks):
 
 def _level(ed):
     """The strips and channels the video editor is showing: those of the
-    meta strip being edited (Tab into a meta), or the top level."""
+    meta strip being edited (Tab into a meta), or the top level. Blender
+    4.2 and 4.3 call the strips "sequences" (renamed in 4.4)."""
     stack = list(ed.meta_stack)
     owner = stack[-1] if stack else ed
-    return owner.strips, owner.channels
+    strips = getattr(owner, "strips", None)
+    if strips is None:
+        strips = owner.sequences
+    return strips, getattr(owner, "channels", None)
 
 
 def _channel_locked(channels, number):
@@ -266,11 +270,16 @@ def _cut(scene):
     strips and strips on locked channels are skipped, both halves keep the
     strip's selection, and one undo step covers the whole cut. A strip that
     fails is skipped, never raised. Returns how many strips were cut."""
-    ed = scene.sequence_editor
-    if ed is None:
+    try:
+        ed = scene.sequence_editor
+        if ed is None:
+            return 0
+        frame = scene.frame_current
+        strips, channels = _level(ed)
+    except Exception as e:
+        # An editor this add-on doesn't understand: no cut, link kept
+        print("Blendeck: cut skipped:", e)
         return 0
-    frame = scene.frame_current
-    strips, channels = _level(ed)
     done = 0
     for strip in list(strips):
         try:

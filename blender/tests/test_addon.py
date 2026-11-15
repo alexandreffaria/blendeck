@@ -412,6 +412,21 @@ class AddonTest(unittest.TestCase):
         finally:
             addon.bpy.ops.ed.undo_push = orig
 
+    def test_cut_on_blender_4_2(self):
+        # Before 4.4 the strips are "sequences"
+        ed = self._editor()
+        ed.sequences = ed.strips
+        del ed.strips
+        self.assertEqual(addon._cut(SCENE), 2)
+        self.assertEqual(ed.log, [("A", 50, "SOFT"), ("C", 50, "SOFT")])
+
+    def test_cut_unknown_editor_doesnt_raise(self):
+        SCENE.sequence_editor = types.SimpleNamespace(meta_stack=[])  # no strips at all
+        self.assertEqual(addon._cut(SCENE), 0)
+        SCENE.sequence_editor = types.SimpleNamespace()  # no meta_stack either
+        self.assertEqual(addon._cut(SCENE), 0)
+        self.assertEqual(UNDO, [])
+
     def test_cut_without_strips(self):
         self.assertEqual(addon._cut(SCENE), 0)  # no sequence editor at all
         SCENE.sequence_editor = _Editor()
