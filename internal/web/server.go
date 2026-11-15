@@ -206,7 +206,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		cmd = engine.Command{Type: "shuttle", Clicks: req.Shuttle}
 	case req.Jump != 0:
 		if req.Jump != 1 && req.Jump != -1 {
-			writeError(w, http.StatusBadRequest, "jump must be 1 (next cut) or -1 (previous cut)")
+			writeError(w, http.StatusBadRequest, "jump must be 1 (next) or -1 (previous)")
 			return
 		}
 		cmd = engine.Command{Type: "jump", Clicks: req.Jump, Sound: req.Sound}

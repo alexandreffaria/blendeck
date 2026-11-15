@@ -227,10 +227,10 @@ func (c *Config) Validate() error {
 				}
 			case ActionJumpEdit, ActionJumpCut:
 				if b.Control.Type != "cc" {
-					return fmt.Errorf("binding %q: jumping between cuts needs a knob (cc)", b.Name)
+					return fmt.Errorf("binding %q: jumping needs a knob (cc)", b.Name)
 				}
 				if b.Step != 0 {
-					return fmt.Errorf("binding %q: jumping between cuts has no step: each click is one cut", b.Name)
+					return fmt.Errorf("binding %q: jumping has no step: each click is one edit or cut", b.Name)
 				}
 				if err := validEncoder(b); err != nil {
 					return err
