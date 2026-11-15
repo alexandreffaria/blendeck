@@ -3,6 +3,15 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Scrub knob stops at the scene's ends (202611153dil)
+
+By default, scrubbing stops at the scene's first and last frame: turning past
+frame 250 of a 1–250 scene leaves the playhead on 250, and a playhead already
+outside the range can't go further out. At 10 frames per click a fast spin
+would otherwise overshoot into frames that aren't rendered. It stays a
+checkbox in the add-on ("Stop at scene start and end"), ticked by default;
+untick it to scrub freely like Blender's own timeline.
+
 ## Zoom knob: Fn means finer (20261115fu2b)
 
 A plain click on the zoom knob zooms 4 steps (about 27%), and 1 step (7.5%)
