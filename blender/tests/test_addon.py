@@ -122,9 +122,11 @@ class _Strip:
     the left part and adds the right part to the same level, copying lock
     and selection like the real Strip.split. Every split goes into log."""
 
-    def __init__(self, name, channel, start, end, log, level, lock=False, select=False, fail=False, type="MOVIE"):
+    def __init__(self, name, channel, start, end, log, level, lock=False, select=False, fail=False, type="MOVIE", head=0, tail=0):
         self.name, self.channel, self.type = name, channel, type
         self.frame_final_start, self.frame_final_end = start, end
+        # Frames of content hidden before the start and after the end
+        self.head, self.tail = head, tail
         self.lock, self.select, self.fail = lock, select, fail
         self.log, self.level = log, level
         self.input_1 = self.input_2 = None
@@ -134,25 +136,49 @@ class _Strip:
         return id(self)
 
     # Blender 5 names for the handles; the add-on uses these when present
+    # Like Blender 5.2's: a handle moves over the content, which stays put,
+    # and can go past it (Blender doesn't stop it)
     @property
     def left_handle(self):
         return self.frame_final_start
+
+    @left_handle.setter
+    def left_handle(self, value):
+        if type(value) is not int:
+            raise TypeError("left_handle expected an int type")
+        if self.fail:
+            raise RuntimeError("handle can't move")
+        self.head += value - self.frame_final_start
+        self.frame_final_start = value
 
     @property
     def right_handle(self):
         return self.frame_final_end
 
+    @right_handle.setter
+    def right_handle(self, value):
+        if type(value) is not int:
+            raise TypeError("right_handle expected an int type")
+        if self.fail:
+            raise RuntimeError("handle can't move")
+        self.tail -= value - self.frame_final_end
+        self.frame_final_end = value
+
     @property
     def content_start(self):
-        return float(self.frame_final_start)
+        return float(self.frame_final_start - self.head)
 
     @content_start.setter
     def content_start(self, value):
         if self.fixed:
             raise AttributeError('attribute "content_start" is read-only')
-        d = int(value) - self.frame_final_start
+        d = int(value) - int(self.content_start)
         self.frame_final_start += d
         self.frame_final_end += d
+
+    @property
+    def content_end(self):
+        return self.frame_final_end + self.tail
 
     def split(self, frame, method):
         if self.fail:
@@ -2405,6 +2431,79 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "move", "frames": 1}], PREFS)
         addon._close("gone")
         self.assertEqual(UNDO, ["Move strips"] * 2 + ["Cut at playhead", "Move strips"], "a dropped link pushes the waiting step")
+
+    def _trim_editor(self):
+        """The owner's flow: video (1) and sound (2) clips at 50-100 and
+        120-200, a gap between, each with 30 frames of footage hidden on
+        either side; a color strip (3) at 120-140."""
+        ed = _Editor()
+        for name, ch in (("V", 1), ("A", 2)):
+            ed.add(name + "1", ch, 50, 100, head=30, tail=30)
+            ed.add(name + "2", ch, 120, 200, head=30, tail=30)
+        ed.add("C", 3, 120, 140, type="COLOR")
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 120
+        return ed
+
+    def test_trim_start_into_the_gap_and_back(self):
+        ed = self._trim_editor()
+        addon._apply([{"type": "trim", "frames": -3}, {"type": "trim", "frames": -2}], PREFS)
+        self.assertEqual(ed.spans(), [("A1", 50, 100), ("A2", 115, 200), ("C", 115, 140), ("V1", 50, 100), ("V2", 115, 200)])
+        self.assertEqual(SCENE.frame_current, 115, "the playhead rides the handle")
+        self.assertEqual(ed.strips[1].content_start, 90.0, "the footage stays put")
+        # As far as the gap goes, then back the other way
+        addon._apply([{"type": "trim", "frames": -100}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] == "V2"], [("V2", 100, 200)])
+        self.assertEqual(SCENE.frame_current, 100)
+        addon._apply([{"type": "trim", "frames": 4}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V2", "A2")], [("A2", 104, 200), ("V2", 104, 200)])
+
+    def test_trim_end_and_the_cut_rolls(self):
+        ed = self._trim_editor()
+        SCENE.frame_current = 100
+        addon._apply([{"type": "trim", "frames": 100}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V1", "A1")], [("A1", 50, 120), ("V1", 50, 120)])
+        self.assertEqual(SCENE.frame_current, 120)
+        # Now the clips meet: right rolls the cut as far as V1's footage
+        # goes (10 more frames), and V2 / A2 / C lose as much
+        addon._apply([{"type": "trim", "frames": 50}], PREFS)
+        self.assertEqual(ed.spans(), [("A1", 50, 130), ("A2", 130, 200), ("C", 130, 140), ("V1", 50, 130), ("V2", 130, 200)])
+        addon._apply([{"type": "trim", "frames": -5}], PREFS)
+        self.assertEqual(ed.spans(), [("A1", 50, 125), ("A2", 125, 200), ("C", 125, 140), ("V1", 50, 125), ("V2", 125, 200)])
+
+    def test_trim_skips_locked_and_needs_a_handle(self):
+        ed = self._trim_editor()
+        ed.channels[3].lock = True
+        ed.strips[3].lock = True  # A2
+        addon._apply([{"type": "trim", "frames": -5}], PREFS)
+        self.assertEqual(ed.spans(), [("A1", 50, 100), ("A2", 120, 200), ("C", 120, 140), ("V1", 50, 100), ("V2", 115, 200)])
+        SCENE.frame_current = 110
+        before = ed.spans()
+        addon._apply([{"type": "trim", "frames": -5}], PREFS)
+        self.assertEqual(ed.spans(), before, "no handle at the playhead")
+        self.assertEqual(SCENE.frame_current, 110)
+
+    def test_trim_failure_stops_and_doesnt_raise(self):
+        ed = self._trim_editor()
+        SCENE.frame_current = 100
+        ed.strips[0].fail = True  # V1's handle can't move
+        addon._apply([{"type": "trim", "frames": 5}], PREFS)  # must not raise
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V1", "A1")], [("A1", 50, 100), ("V1", 50, 100)])
+        self.assertEqual(SCENE.frame_current, 100)
+        SCENE.sequence_editor = types.SimpleNamespace(meta_stack=[])  # one it can't read
+        addon._apply([{"type": "trim", "frames": 1}], PREFS)
+        self.assertEqual(addon.link.move_undo, 0.0)
+
+    def test_trim_and_move_each_get_an_undo_step(self):
+        ed = self._trim_editor()
+        ed.strips[1].select = True  # V2
+        addon._apply([{"type": "trim", "frames": -2}], PREFS)
+        addon._move_undo(time.monotonic())
+        self.assertEqual(UNDO, [], "the knob is still turning")
+        addon._apply([{"type": "move", "frames": 1}], PREFS)
+        self.assertEqual(UNDO, ["Trim handle"], "the other knob ends the trim's turn")
+        addon._move_undo(time.monotonic() + addon.MOVE_UNDO_DELAY)
+        self.assertEqual(UNDO, ["Trim handle", "Move strips"])
 
     def test_move_nothing_to_do(self):
         addon._apply([{"type": "move", "frames": 1}], PREFS)  # no sequence editor

@@ -1497,3 +1497,27 @@ func TestSaveNotLearnedIgnored(t *testing.T) {
 		t.Fatalf("unlearned save matched: %+v", hit)
 	}
 }
+
+// The trim knob, cc 33 on the owner's Loupedeck, sends 1 clockwise and 127
+// counter-clockwise: the handles at the playhead move by the step.
+func TestTrimClicks(t *testing.T) {
+	e := New(config.Profile{
+		Name: "p",
+		Bindings: []config.Binding{
+			{ID: "trim", Name: "Trim", Control: config.Control{Type: "cc", Channel: 1, Number: 33}, Encoder: config.EncoderTwos, Action: config.ActionTrim, Step: 2},
+		},
+	})
+	for v, want := range map[int]int{1: 2, 127: -2, 3: 6} {
+		hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 33, Value: v})
+		if hit.Binding != "trim" || hit.Command == nil || *hit.Command != (Command{Type: "trim", Frames: want}) {
+			t.Fatalf("value %d: %+v", v, hit)
+		}
+	}
+	if hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 33, Value: 0}); hit.Command != nil {
+		t.Fatalf("value 0 sent %+v", hit.Command)
+	}
+	b, err := json.Marshal(Command{Type: "trim", Frames: -1})
+	if err != nil || string(b) != `{"type":"trim","frames":-1}` {
+		t.Fatalf("%s %v", b, err)
+	}
+}

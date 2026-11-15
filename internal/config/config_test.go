@@ -411,15 +411,18 @@ func TestJumpEditBinding(t *testing.T) {
 
 func TestMoveBindings(t *testing.T) {
 	c := Default()
-	after, before := byID(&c, "move-after"), byID(&c, "move-before")
-	if after.Action != ActionMoveAfter || after.Control.Learned() || after.Control.Type != "cc" || after.Modifier != "" || after.Step != 1 || after.Encoder != EncoderTwos {
+	// 10 frames a click, 1 with Fn held; moving earlier strips has no
+	// default control but can still be bound
+	after, fine := byID(&c, "move-after"), byID(&c, "move-after-fine")
+	if after.Action != ActionMoveAfter || after.Control.Learned() || after.Control.Type != "cc" || after.Modifier != "" || after.Step != 10 || after.Encoder != EncoderTwos {
 		t.Fatalf("default move-after binding = %+v", after)
 	}
-	if before.Action != ActionMoveBefore || before.Control.Learned() || before.Modifier != "Fn" || before.Step != 1 || before.Encoder != EncoderTwos {
-		t.Fatalf("default move-before binding = %+v", before)
+	if fine.Action != ActionMoveAfter || fine.Control.Learned() || fine.Modifier != "Fn" || fine.Step != 1 || fine.Encoder != EncoderTwos {
+		t.Fatalf("default move-after-fine binding = %+v", fine)
 	}
 	after.Control = Control{"cc", 1, 36}
-	before.Control = Control{"cc", 1, 36}
+	fine.Control = Control{"cc", 1, 36}
+	c.Profiles[0].Bindings = append(c.Profiles[0].Bindings, Binding{ID: "before", Name: "Move earlier", Control: Control{"cc", 1, 37}, Encoder: EncoderTwos, Action: ActionMoveBefore, Step: 1})
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +435,7 @@ func TestMoveBindings(t *testing.T) {
 		"huge step":   {func(b *Binding) { b.Step = MaxStep + 1 }, "frames per click"},
 		"no encoder":  {func(b *Binding) { b.Encoder = "" }, "unknown encoder"},
 	} {
-		for _, id := range []string{"move-after", "move-before"} {
+		for _, id := range []string{"move-after", "move-after-fine", "trim"} {
 			c := Default()
 			b := byID(&c, id)
 			b.Control = Control{"cc", 1, 36}
@@ -441,6 +444,18 @@ func TestMoveBindings(t *testing.T) {
 				t.Fatalf("%s %s: err = %v", id, name, err)
 			}
 		}
+	}
+}
+
+func TestTrimBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "trim")
+	if b.Action != ActionTrim || b.Name != "Trim handle at playhead" || b.Control.Learned() || b.Control.Type != "cc" || b.Modifier != "" || b.Step != 1 || b.Encoder != EncoderTwos {
+		t.Fatalf("default trim binding = %+v", b)
+	}
+	b.Control = Control{"cc", 1, 33}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

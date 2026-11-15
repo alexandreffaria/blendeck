@@ -5,6 +5,7 @@ add-on connects to it, applies the commands it sends, and reports the playhead
 back so the bridge's page can show it."""
 
 import errno
+import math
 import select
 import socket
 import time
@@ -13,12 +14,12 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.13.0"
+ADDON_VERSION = "0.14.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
-# A turn of the move knob is one undo step: it is pushed once the knob has
-# been still this long, or right before any other command.
+# A turn of the move or trim knob is one undo step: it is pushed once the
+# knob has been still this long, or right before any other command.
 MOVE_UNDO_DELAY = 0.5
 
 
@@ -31,7 +32,8 @@ class _Link:
     status = "Not connected"
     last_state = None
     last_sent = 0.0
-    move_undo = 0.0  # when the move knob last moved strips with no undo step yet (0: none waiting)
+    move_undo = 0.0  # when the move or trim knob last changed strips with no undo step yet (0: none waiting)
+    undo_message = "Move strips"  # what that waiting undo step is called
     note = ""  # what the last save press did, shown in the panel
 
 
@@ -644,24 +646,124 @@ def _move(scene, frames, before=False):
             print("Blendeck: move couldn't move a strip:", e)
             break
     if moved:
-        link.move_undo = time.monotonic()
+        _knob_turned("Move strips")
         _redraw()
     return moved
 
 
+# Strip types whose handles stop at the end of their content. The others
+# (color, text, adjustment, a single image) can be as long as you like.
+_CONTENT_TYPES = {"MOVIE", "SOUND", "SCENE", "MOVIECLIP", "MASK", "META"}
+
+
+def _content(strip):
+    """How far a strip's handles can go: (lo, hi), the first frame of its
+    content and the frame after the last one, or (None, None) for no
+    limit."""
+    kind = getattr(strip, "type", "")
+    if kind == "IMAGE":
+        elements = getattr(strip, "elements", None)
+        if elements is None or len(elements) <= 1:
+            return None, None
+    elif kind not in _CONTENT_TYPES:
+        return None, None
+    try:
+        return int(math.ceil(strip.content_start)), int(math.floor(strip.content_end))
+    except AttributeError:
+        return None, None  # before Blender 5: no content_start / content_end
+
+
+def _set_handle(strip, which, frame):
+    """Puts a strip's start (which "start") or end handle on frame,
+    without moving its content."""
+    if which == "start":
+        if hasattr(strip, "left_handle"):
+            strip.left_handle = frame
+        else:
+            strip.frame_final_start = frame
+    elif hasattr(strip, "right_handle"):
+        strip.right_handle = frame
+    else:
+        strip.frame_final_end = frame
+
+
+def _trim(scene, frames):
+    """The trim knob: moves the handles at the playhead frames right, or
+    left when negative, in the level the editor shows, and the playhead
+    with them (see protocol.trim_plan for which handles and how far). Turn
+    left on a clip's start to show more of its beginning, right on its end
+    to show more of its end; where two clips meet, the cut rolls. The undo
+    step waits for the knob to stop, like the move knob's. Never raises.
+    Returns whether anything changed."""
+    try:
+        ed = scene.sequence_editor
+        if ed is None:
+            return False
+        strips, channels = _level(ed)
+        items = list(strips)
+        clips = []
+        for s in items:
+            start, end = _span(s)
+            locked = bool(s.lock) or _channel_locked(channels, s.channel)
+            follows = getattr(s, "input_1", None) is not None
+            lo, hi = _content(s)
+            clips.append(protocol.Clip(start, end, locked, s.channel, follows, lo, hi))
+        plan = protocol.trim_plan(clips, scene.frame_current, frames)
+    except Exception as e:
+        print("Blendeck: trim skipped:", e)
+        return False
+    if plan is None:
+        return False
+    # Shrinking handles first, so where two clips meet on a channel the one
+    # growing never lands on the other: right, starts shrink; left, ends.
+    if plan.shift > 0:
+        order = [(i, "start") for i in plan.starts] + [(i, "end") for i in plan.ends]
+    else:
+        order = [(i, "end") for i in plan.ends] + [(i, "start") for i in plan.starts]
+    changed = False
+    for i, which in order:
+        clip = clips[i]
+        frame = (clip.start if which == "start" else clip.end) + plan.shift
+        try:
+            _set_handle(items[i], which, frame)
+            changed = True
+        except Exception as e:
+            # Stop here: the rest could grow onto a strip that didn't shrink
+            print("Blendeck: trim couldn't move a handle:", e)
+            break
+    if changed:
+        try:
+            _seek(scene, plan.playhead)
+        except Exception as e:
+            print("Blendeck: trim left the playhead:", e)
+        _knob_turned("Trim handle")
+        _redraw()
+    return changed
+
+
+def _knob_turned(message):
+    """Notes that the move or trim knob just changed strips: their undo
+    step, called message, waits for the knob to stop. A turn of the other
+    knob first gets its own step."""
+    if link.move_undo and link.undo_message != message:
+        _move_undo()
+    link.move_undo = time.monotonic()
+    link.undo_message = message
+
+
 def _move_undo(now=None):
-    """Pushes the undo step for the move knob's last turn, if one is
-    waiting: always when now is None, else once the knob has been still for
-    MOVE_UNDO_DELAY. Never raises."""
+    """Pushes the undo step for the move or trim knob's last turn, if one
+    is waiting: always when now is None, else once the knob has been still
+    for MOVE_UNDO_DELAY. Never raises."""
     if not link.move_undo:
         return
     if now is not None and now - link.move_undo < MOVE_UNDO_DELAY:
         return
     link.move_undo = 0.0
     try:
-        bpy.ops.ed.undo_push(message="Move strips")
+        bpy.ops.ed.undo_push(message=link.undo_message)
     except Exception as e:
-        print("Blendeck: no undo step for the move:", e)
+        print("Blendeck: no undo step for the knob:", e)
 
 
 def _follow(scene):
@@ -1092,6 +1194,10 @@ def _apply(messages, prefs):
     for kind, frames in protocol.edit_steps(messages):
         if kind in ("move", "move_before"):
             _move(scene, frames, kind == "move_before")
+            _audio_restart()
+            continue
+        if kind == "trim":
+            _trim(scene, frames)
             _audio_restart()
             continue
         # Anything else ends the knob's turn: its undo step comes first, so

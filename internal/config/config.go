@@ -84,6 +84,11 @@ const (
 	// ActionMoveBefore is ActionMoveAfter for the selected strips and every
 	// strip before them.
 	ActionMoveBefore = "timeline.move_before"
+	// ActionTrim moves the clip handles at the playhead Step frames per
+	// encoder click, and the playhead with them: turned left on a clip's
+	// start it shows more of the clip's beginning, turned right on its end
+	// more of its end. Where two clips meet, the cut between them rolls.
+	ActionTrim = "timeline.trim"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -155,8 +160,9 @@ func Default() Config {
 				{ID: "forward", Name: "Play forward / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionForward},
 				{ID: "jump-edit", Name: "Jump between video edits", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionJumpEdit},
 				{ID: "jump-cut", Name: "Jump between all cuts", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionJumpCut},
-				{ID: "move-after", Name: "Move selected and later strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 1},
-				{ID: "move-before", Name: "Move selected and earlier strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionMoveBefore, Step: 1},
+				{ID: "move-after", Name: "Move selected and later strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 10},
+				{ID: "move-after-fine", Name: "Move selected and later strips (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 1},
+				{ID: "trim", Name: "Trim handle at playhead", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionTrim, Step: 1},
 			},
 		}},
 	}
@@ -241,9 +247,9 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionMoveAfter, ActionMoveBefore:
+			case ActionMoveAfter, ActionMoveBefore, ActionTrim:
 				if b.Control.Type != "cc" {
-					return fmt.Errorf("binding %q: moving strips needs a knob (cc)", b.Name)
+					return fmt.Errorf("binding %q: moving strips or handles needs a knob (cc)", b.Name)
 				}
 				if b.Step < 1 || b.Step > MaxStep {
 					return fmt.Errorf("binding %q: frames per click must be 1 to %d", b.Name, MaxStep)
