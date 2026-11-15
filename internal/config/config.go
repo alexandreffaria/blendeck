@@ -44,6 +44,10 @@ const (
 	// ActionUndo runs Blender's undo, once per button press. It has no step
 	// and no encoder.
 	ActionUndo = "edit.undo"
+	// ActionRippleDelete deletes the strips under the playhead and closes
+	// the gap they leave, once per button press. It has no step and no
+	// encoder.
+	ActionRippleDelete = "timeline.ripple_delete"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -104,6 +108,7 @@ func Default() Config {
 				{ID: "zoom-fine", Name: "Zoom timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
 				{ID: "cut", Name: "Cut at playhead", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionCut},
 				{ID: "undo", Name: "Undo", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionUndo},
+				{ID: "ripple-delete", Name: "Ripple delete", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionRippleDelete},
 			},
 		}},
 	}
@@ -198,8 +203,8 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionCut, ActionUndo:
-				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo"}[b.Action]
+			case ActionCut, ActionUndo, ActionRippleDelete:
+				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete"}[b.Action]
 				if b.Control.Type != "note" && b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: %s needs a button (note or cc)", b.Name, what)
 				}

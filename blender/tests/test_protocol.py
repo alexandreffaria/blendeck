@@ -195,6 +195,122 @@ class UndoTest(unittest.TestCase):
         self.assertEqual(protocol.undo_blocked([], True), "the interface is locked")
 
 
+S = protocol.Span
+
+
+class RippleDeleteTest(unittest.TestCase):
+    def plan(self, spans, frame):
+        return protocol.ripple_plan(spans, frame)
+
+    def test_steps_keep_order_and_never_merge(self):
+        msgs = [{"type": "scrub", "frames": 5}, {"type": "ripple_delete"}, {"type": "ripple_delete"}, {"type": "cut"}, {"type": "ripple_delete"}]
+        self.assertEqual(
+            protocol.edit_steps(msgs),
+            [("scrub", 5), ("ripple_delete", None), ("ripple_delete", None), ("cut", None), ("ripple_delete", None)],
+        )
+
+    def test_steps_capped_scrubs_kept(self):
+        msgs = [{"type": "ripple_delete"}, {"type": "scrub", "frames": 1}] * (protocol.MAX_RIPPLES_PER_TICK + 5)
+        steps = protocol.edit_steps(msgs)
+        self.assertEqual(steps.count(("ripple_delete", None)), protocol.MAX_RIPPLES_PER_TICK)
+        self.assertEqual(sum(n for k, n in steps if k == "scrub"), protocol.MAX_RIPPLES_PER_TICK + 5)
+        self.assertEqual(protocol.edit_steps([{"type": "ripple_delete", "x": 1}, {"type": "ripple"}]), [("ripple_delete", None)])
+
+    def test_cut_twice_then_delete_the_middle(self):
+        # The owner's workflow: video and audio cut at 50 and 100, playhead
+        # on the middle clip; a title later on
+        spans = [S(1, 50), S(50, 100), S(100, 200), S(1, 50), S(50, 100), S(100, 200), S(150, 180)]
+        p = self.plan(spans, 70)
+        self.assertEqual(p.delete, [1, 4])
+        self.assertEqual((p.shift, p.playhead), (50, 50))
+        self.assertEqual(p.move, [2, 5, 6])
+
+    def test_nothing_under_playhead(self):
+        self.assertIsNone(self.plan([S(1, 50), S(60, 100)], 55))
+        self.assertIsNone(self.plan([], 10))
+
+    def test_under_means_start_inclusive_end_exclusive(self):
+        spans = [S(1, 50), S(50, 100)]
+        self.assertEqual(self.plan(spans, 50).delete, [1])
+        self.assertEqual(self.plan(spans, 49).delete, [0])
+
+    def test_selected_under_playhead_win(self):
+        spans = [S(1, 100, selected=True), S(1, 100), S(200, 300, selected=True)]
+        p = self.plan(spans, 50)
+        self.assertEqual(p.delete, [0])
+        # The unselected strip is kept under the playhead: the gap stays
+        self.assertEqual((p.shift, p.move, p.playhead), (0, [], None))
+        # A selection elsewhere doesn't count: all under the playhead go
+        p = self.plan([S(1, 100), S(1, 100), S(200, 300, selected=True)], 50)
+        self.assertEqual((p.delete, p.shift, p.move, p.playhead), ([0, 1], 99, [2], 1))
+
+    def test_locked_never_deleted(self):
+        p = self.plan([S(1, 100, locked=True), S(1, 100)], 50)
+        self.assertEqual((p.delete, p.shift), ([1], 0))
+        self.assertIsNone(self.plan([S(1, 100, locked=True)], 50))
+
+    def test_locked_strip_after_gap_keeps_it_open(self):
+        p = self.plan([S(1, 50), S(50, 100), S(120, 150, locked=True), S(100, 140)], 60)
+        self.assertEqual((p.delete, p.shift, p.move, p.playhead), ([1], 0, [], None))
+
+    def test_locked_strip_before_gap_is_fine(self):
+        p = self.plan([S(1, 50, locked=True), S(50, 100), S(100, 150)], 60)
+        self.assertEqual((p.delete, p.shift, p.move, p.playhead), ([1], 50, [2], 50))
+
+    def test_gap_trimmed_to_where_every_channel_is_empty(self):
+        # Deleted 0..100; a kept strip ends at 20 and another starts at 70:
+        # only 20..70 is empty everywhere, so later strips move by 50 and
+        # none lands on a strip that stays
+        spans = [S(0, 100), S(0, 20), S(70, 90), S(100, 150)]
+        p = self.plan(spans, 40)
+        self.assertEqual((p.delete, p.shift, p.playhead), ([0], 50, 20))
+        self.assertEqual(p.move, [2, 3])
+
+    def test_moves_never_land_on_a_kept_strip(self):
+        # Brute force over small layouts: after the plan, no two strips on
+        # one channel overlap
+        import itertools
+        layouts = list(itertools.product([(0, 10), (10, 20), (20, 30), (5, 25), (0, 30), None], repeat=3))
+        for layout in layouts:
+            for ch2 in ([(0, 10), (25, 30)], [(15, 30)], [(12, 18)]):
+                strips = [(1, a, b) for a, b in filter(None, layout[:1])] + [(1, 30, 40)] + [(2, a, b) for a, b in ch2] + [(3, a, b) for a, b in filter(None, layout[1:])]
+                # one channel can't hold overlapping strips to begin with
+                if any(c1 == c2 and a1 < b2 and a2 < b1 for i, (c1, a1, b1) in enumerate(strips) for (c2, a2, b2) in strips[i + 1:]):
+                    continue
+                for frame in range(0, 40, 3):
+                    p = self.plan([S(a, b) for _, a, b in strips], frame)
+                    if p is None:
+                        continue
+                    after = []
+                    for i, (c, a, b) in enumerate(strips):
+                        if i in p.delete:
+                            continue
+                        d = p.shift if i in p.move else 0
+                        after.append((c, a - d, b - d))
+                    for i, (c1, a1, b1) in enumerate(after):
+                        for c2, a2, b2 in after[i + 1:]:
+                            self.assertFalse(c1 == c2 and a1 < b2 and a2 < b1, (strips, frame, p))
+
+    def test_effects_go_with_their_input(self):
+        # V under the playhead; X is a crossfade from V into W, past it
+        spans = [S(1, 100, selected=True), S(60, 160), S(60, 100, inputs=(0, 1))]
+        p = self.plan(spans, 30)
+        self.assertEqual(p.delete, [2, 0], "the effect is removed before its input")
+        self.assertEqual((p.shift, p.move, p.playhead), (59, [1], 1))
+
+    def test_locked_effect_keeps_its_input(self):
+        spans = [S(1, 100), S(1, 100, locked=True, inputs=(0,)), S(1, 100)]
+        p = self.plan(spans, 30)
+        self.assertEqual((p.delete, p.shift), ([2], 0))
+
+    def test_effect_chain_order(self):
+        # 2 is an effect of 1, which is an effect of 0
+        spans = [S(1, 100), S(1, 100, inputs=(0,)), S(1, 100, inputs=(1,))]
+        self.assertEqual(self.plan(spans, 10).delete, [2, 1, 0])
+        # Bad input indexes are ignored
+        self.assertEqual(self.plan([S(1, 100, inputs=(5, 0, -1))], 10).delete, [0])
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

@@ -740,3 +740,143 @@ func TestUndoCommandJSON(t *testing.T) {
 		t.Fatalf("got %s", data)
 	}
 }
+
+// The owner's ripple delete button: note 54 on channel 1, pressed with
+// velocity 64.
+var rippleDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 54, Value: 64}
+var rippleUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 54, Value: 64}
+
+// rippleProfile is cutProfile with the ripple delete button learned as
+// note 54.
+func rippleProfile() config.Profile {
+	p := cutProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "ripple-delete" {
+			p.Bindings[i].Control.Number = 54
+		}
+	}
+	return p
+}
+
+// ripples reports whether m sends a ripple delete, and fails on any other
+// command.
+func ripples(t *testing.T, e *Engine, m midi.Message) bool {
+	t.Helper()
+	hit, _ := e.Handle(m)
+	if hit.Command == nil {
+		return false
+	}
+	if *hit.Command != (Command{Type: "ripple_delete"}) {
+		t.Fatalf("command = %+v, want a ripple delete", hit.Command)
+	}
+	return true
+}
+
+func TestRippleDeleteOncePerPress(t *testing.T) {
+	e := New(rippleProfile())
+	hit, _ := e.Handle(rippleDown)
+	if hit.Binding != "ripple-delete" || hit.Command == nil || hit.Command.Type != "ripple_delete" {
+		t.Fatalf("press: %+v", hit)
+	}
+	hit, _ = e.Handle(rippleUp)
+	if hit.Binding != "ripple-delete" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	if ripples(t, e, midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 54}) {
+		t.Fatal("velocity-0 release deleted")
+	}
+	if !ripples(t, e, rippleDown) {
+		t.Fatal("second press didn't delete")
+	}
+}
+
+// With Fn held and no Fn binding for the button, the plain one still
+// ripple deletes, and releasing Fn in between changes nothing.
+func TestRippleDeleteWithFnHeld(t *testing.T) {
+	e := New(rippleProfile())
+	e.Handle(fnDown)
+	if !ripples(t, e, rippleDown) {
+		t.Fatal("Fn + press didn't delete")
+	}
+	if ripples(t, e, rippleUp) {
+		t.Fatal("Fn + release deleted")
+	}
+	e.Handle(fnUp)
+	if !ripples(t, e, rippleDown) {
+		t.Fatal("press after Fn release didn't delete")
+	}
+}
+
+// An Fn binding on the same button wins while Fn is held, and only then.
+func TestRippleDeleteFnBindingWins(t *testing.T) {
+	p := rippleProfile()
+	p.Bindings = append(p.Bindings, config.Binding{ID: "ripple-fn", Name: "Ripple delete (Fn)", Control: config.Control{Type: "note", Channel: 1, Number: 54}, Modifier: "Fn", Action: config.ActionRippleDelete})
+	e := New(p)
+	if hit, _ := e.Handle(rippleDown); hit.Binding != "ripple-delete" {
+		t.Fatalf("plain press matched %q", hit.Binding)
+	}
+	e.Handle(fnDown)
+	if hit, _ := e.Handle(rippleDown); hit.Binding != "ripple-fn" || hit.Command == nil {
+		t.Fatalf("Fn press: %+v", hit)
+	}
+}
+
+func TestRippleDeleteNotLearnedIgnored(t *testing.T) {
+	e := New(cutProfile()) // ripple delete still at -1
+	hit, _ := e.Handle(rippleDown)
+	if hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned ripple delete matched: %+v", hit)
+	}
+}
+
+// A cc used as a button deletes at 64 and up, and not on its release.
+func TestRippleDeleteOnCCButton(t *testing.T) {
+	p := rippleProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "ripple-delete" {
+			p.Bindings[i].Control = config.Control{Type: "cc", Channel: 1, Number: 21}
+		}
+	}
+	e := New(p)
+	cc := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 21, Value: v}
+	}
+	if !ripples(t, e, cc(127)) || !ripples(t, e, cc(64)) {
+		t.Fatal("cc press didn't delete")
+	}
+	if ripples(t, e, cc(0)) || ripples(t, e, cc(63)) {
+		t.Fatal("cc release deleted")
+	}
+}
+
+// The cut button next to it still cuts, and only note 54 on channel 1
+// ripple deletes.
+func TestRippleDeleteApartFromCut(t *testing.T) {
+	e := New(rippleProfile())
+	if !cuts(t, e, cutDown) {
+		t.Fatal("cut button didn't cut")
+	}
+	if ripples(t, e, midi.Message{Kind: midi.NoteOn, Channel: 2, Number: 54, Value: 64}) {
+		t.Fatal("note 54 on channel 2 deleted")
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("scrub = %d", got)
+	}
+}
+
+func TestRippleDeleteCommandJSON(t *testing.T) {
+	data, _ := json.Marshal(Command{Type: "ripple_delete"})
+	if string(data) != `{"type":"ripple_delete"}` {
+		t.Fatalf("got %s", data)
+	}
+}
+
+// Fn + the cut button only cuts: ripple delete has no Fn variant
+// (decision 202611156qj4).
+func TestFnCutButtonStillCuts(t *testing.T) {
+	e := New(rippleProfile())
+	e.Handle(fnDown)
+	if !cuts(t, e, cutDown) {
+		t.Fatal("Fn + cut button didn't cut")
+	}
+}

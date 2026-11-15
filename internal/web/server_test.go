@@ -159,6 +159,53 @@ func TestPutConfigCutBinding(t *testing.T) {
 	}
 }
 
+func TestTestEndpointRippleDelete(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", `{"ripple_delete":true}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"ripple_delete":true,"cut":true}`, `{"ripple_delete":true,"frames":1}`, `{"ripple_delete":true,"zoom":1}`, `{"ripple_delete":false}`, `{"ripple_delete":1}`, `{"ripple_delete":"yes"}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"ripple_delete":true}`); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain ripple delete: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"ripple_delete":true}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host ripple delete: %d", rec.Code)
+	}
+}
+
+// The page saves a ripple delete binding learned on the owner's button
+// as it sends it: no step, no encoder.
+func TestPutConfigRippleDeleteBinding(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+	var st stateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for i, b := range st.Config.Profiles[0].Bindings {
+		if b.Action == config.ActionRippleDelete {
+			st.Config.Profiles[0].Bindings[i].Control = config.Control{Type: "note", Channel: 1, Number: 54}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no ripple delete binding in the default config")
+	}
+	body, _ := json.Marshal(st.Config)
+	if strings.Contains(string(body), `"action":"timeline.ripple_delete","step"`) {
+		t.Fatalf("ripple delete binding carries a step: %s", body)
+	}
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestIndexServed(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")

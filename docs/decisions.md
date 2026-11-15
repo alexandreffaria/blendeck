@@ -3,6 +3,38 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Ripple delete deletes the selected strips under the playhead, else all (20261115e3it)
+
+Of the strips under the playhead, the selected ones are deleted; with none
+of them selected, all of them are. Locked strips and strips on locked
+channels never are. That is the cut button's rule (202611159rr6). The owner
+wants the playhead to select everything under it, so normally everything
+under it goes; selection following the playhead comes in a later change.
+
+## Ripple delete closes the gap on all channels (202611153gow)
+
+The gap is the deleted strips' span, trimmed to where every channel is
+empty, and everything after it moves left on every channel, so picture,
+sound and titles stay in sync. If a strip that isn't deleted is still under
+the playhead, the strips are deleted and the gap stays open.
+
+## A locked strip keeps the gap open (20261115msw5)
+
+If closing the gap would move a locked strip or a strip on a locked
+channel, the strips are deleted and nothing moves.
+
+## After a ripple delete the playhead is at the join (20261115xwbm)
+
+With the gap closed, the playhead goes to where the gap was, the first frame
+of what came after it. If the gap stays open, the playhead doesn't move.
+
+## No Fn variant of ripple delete (202611156qj4, reverses 20261115d0tu)
+
+Ripple delete has its own button, and Fn + that button does the same ripple
+delete. The owner first wanted Fn + the cut button to ripple delete
+(20261115d0tu), then decided against any Fn for ripple delete: Fn + the cut
+button just cuts, and the default config has no Fn ripple delete binding.
+
 ## Scrub knob stops at the scene's ends (202611153dil)
 
 By default, scrubbing stops at the scene's first and last frame: turning past
@@ -25,11 +57,3 @@ in about 16 clicks. Default bindings: "Zoom timeline" step 4, "Zoom timeline
 Zooming keeps the playhead at its spot on screen, so the frame you scrubbed
 to stays in view. If the playhead is off screen, the view first centers on
 it, then zooms. (Blender's own zoom keys zoom around the view's middle.)
-
-## Scrub stops at the scene's ends (202611153dil)
-
-By default the scrub knob stops at the scene's first and last frame, so a
-fast spin at 10 frames a click can't overshoot into frames that aren't
-rendered. A playhead already outside the range is never pulled back. The
-add-on's "Stop at scene start and end" checkbox turns it off to move freely,
-like Blender's own scrubbing.

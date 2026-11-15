@@ -3,6 +3,7 @@ be tested without Blender."""
 
 import ipaddress
 import json
+from collections import namedtuple
 
 MAX_LINE = 64 * 1024
 # Zoom steps applied per tick at most, so a burst of commands can't keep
@@ -16,6 +17,10 @@ MAX_CUTS_PER_TICK = 8
 # session at once, and one undo of a big file can take a good fraction of a
 # second. Undos past this in one read are dropped.
 MAX_UNDOS_PER_TICK = 4
+# Ripple deletes applied per tick at most. Unlike cuts, two in a row both
+# do something (the second deletes what slid under the playhead), so they
+# are never merged.
+MAX_RIPPLES_PER_TICK = 8
 
 
 class LineBuffer:
@@ -78,17 +83,20 @@ def total_zoom(messages):
 
 
 def edit_steps(messages):
-    """The scrubs, cuts and undos in messages, in order: ("scrub", frames),
-    ("cut", None) and ("undo", None). Order matters, since a cut lands where
+    """The scrubs, cuts, undos and ripple deletes in messages, in order:
+    ("scrub", frames), ("cut", None), ("undo", None) and
+    ("ripple_delete", None). Order matters, since a cut or delete lands where
     the playhead is at that moment and an undo takes back what came before
     it. Scrubs in a row are added up, cuts in a row with no scrub between
     become one (a second cut at the same frame does nothing), and cuts past
     MAX_CUTS_PER_TICK are dropped; scrubs after them still count. Every undo
-    is kept, one per press, never merged, up to MAX_UNDOS_PER_TICK.
-    Malformed commands are ignored."""
+    is kept, one per press, never merged, up to MAX_UNDOS_PER_TICK, and so is
+    every ripple delete, up to MAX_RIPPLES_PER_TICK. Malformed commands are
+    ignored."""
     steps = []
     cuts = 0
     undos = 0
+    ripples = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -109,6 +117,11 @@ def edit_steps(messages):
                 continue
             undos += 1
             steps.append(("undo", None))
+        elif kind == "ripple_delete":
+            if ripples >= MAX_RIPPLES_PER_TICK:
+                continue
+            ripples += 1
+            steps.append(("ripple_delete", None))
     return steps
 
 
@@ -129,6 +142,90 @@ def cuttable(start, end, frame, locked):
     the playhead must be strictly inside it, so a strip that starts or ends
     right there is left alone, and a locked one is never cut."""
     return not locked and start < frame < end
+
+
+# A strip as ripple_plan sees it: start..end (end exclusive), whether it is
+# locked (itself or its channel), whether it is selected, and the indexes of
+# the strips it is an effect of (an effect is removed with its inputs).
+Span = namedtuple("Span", "start end locked selected inputs", defaults=(False, False, ()))
+
+# What a ripple delete does. delete: indexes to remove, each before any of
+# its inputs. shift: frames to move later strips left (0 leaves the gap
+# open). move: indexes to move, leftmost first. playhead: the frame to put
+# the playhead on, or None to leave it.
+RipplePlan = namedtuple("RipplePlan", "delete shift move playhead")
+
+
+def ripple_plan(spans, frame):
+    """Plans a ripple delete at frame over spans (a list of Span), or
+    returns None when there is nothing to delete.
+
+    Deleted: the unlocked strips under the playhead (start <= frame < end);
+    if any of them is selected, only the selected ones. A strip an effect
+    depends on goes with the effect, so a strip whose effect is locked is
+    kept.
+
+    The gap closes on every channel, so nothing drifts out of sync: it runs
+    from the deleted strips' start to their end, trimmed to where every
+    channel is empty, and everything starting at or after its end moves left
+    by its length. It stays open, and nothing moves, when a strip that is
+    kept still covers the playhead or when a locked strip would have to move.
+    With the gap closed, the playhead goes to the join."""
+    n = len(spans)
+    under = [i for i, s in enumerate(spans) if not s.locked and s.start <= frame < s.end]
+    chosen = [i for i in under if spans[i].selected] or under
+    if not chosen:
+        return None
+    # Effects of a deleted strip go with it; a locked one keeps its inputs
+    dependents = [[] for _ in range(n)]
+    for i, s in enumerate(spans):
+        for j in s.inputs:
+            if 0 <= j < n and j != i:
+                dependents[j].append(i)
+
+    def closure(i, seen):
+        stack = [i]
+        while stack:
+            k = stack.pop()
+            if k in seen:
+                continue
+            seen.add(k)
+            stack.extend(dependents[k])
+        return seen
+
+    delete = set()
+    for i in chosen:
+        group = closure(i, set())
+        if not any(spans[k].locked for k in group):
+            delete |= group
+    if not delete:
+        return None
+    order = _effects_first(delete, spans)
+    kept = [i for i in range(n) if i not in delete]
+    if any(spans[i].start <= frame < spans[i].end for i in kept):
+        return RipplePlan(order, 0, [], None)
+    lo = min(spans[i].start for i in delete)
+    hi = max(spans[i].end for i in delete)
+    lo = max([lo] + [spans[i].end for i in kept if spans[i].end <= frame])
+    hi = min([hi] + [spans[i].start for i in kept if spans[i].start > frame])
+    move = sorted((i for i in kept if spans[i].start >= hi), key=lambda i: (spans[i].start, i))
+    if hi <= lo or any(spans[i].locked for i in move):
+        return RipplePlan(order, 0, [], None)
+    return RipplePlan(order, hi - lo, move, lo)
+
+
+def _effects_first(delete, spans):
+    """delete's indexes, each before the strips it is an effect of: removing
+    an input also removes its effects, so they must already be gone."""
+    order = []
+    left = set(delete)
+    while left:
+        # A strip goes when no strip still waiting is an effect of it
+        needed = {j for i in left for j in spans[i].inputs if j in left and j != i}
+        ready = sorted(left - needed) or sorted(left)  # a cycle can't happen; never loop forever
+        order.extend(ready)
+        left -= set(ready)
+    return order
 
 
 def zoom_plan(clicks):

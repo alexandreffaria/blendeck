@@ -48,6 +48,9 @@ func TestValidateRejects(t *testing.T) {
 		"undo pitchbend":    func(c *Config) { undo(c).Control = Control{"pitch_bend", 1, 0} },
 		"undo with step":    func(c *Config) { undo(c).Step = 1 },
 		"undo with encoder": func(c *Config) { undo(c).Encoder = EncoderTwos },
+		"ripple pitchbend":  func(c *Config) { ripple(c).Control = Control{"pitch_bend", 1, 0} },
+		"ripple with step":  func(c *Config) { ripple(c).Step = 1 },
+		"ripple encoder":    func(c *Config) { ripple(c).Encoder = EncoderTwos },
 		"too many mods":     func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
 		"too many profile":  func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
@@ -78,6 +81,64 @@ func cut(c *Config) *Binding {
 		}
 	}
 	panic("no cut binding in the default config")
+}
+
+// ripple returns the default profile's ripple delete binding.
+func ripple(c *Config) *Binding {
+	for i := range c.Profiles[0].Bindings {
+		if c.Profiles[0].Bindings[i].ID == "ripple-delete" {
+			return &c.Profiles[0].Bindings[i]
+		}
+	}
+	panic("no ripple delete binding in the default config")
+}
+
+func TestRippleDeleteBinding(t *testing.T) {
+	c := Default()
+	r := ripple(&c)
+	if r.Action != ActionRippleDelete || r.Name != "Ripple delete" || r.Control.Learned() || r.Control.Type != "note" || r.Modifier != "" || r.Step != 0 || r.Encoder != "" {
+		t.Fatalf("default ripple delete binding = %+v", r)
+	}
+	// The owner's button (note 54), and a cc used as a button, are both fine
+	for _, ctl := range []Control{{"note", 1, 54}, {"cc", 1, 20}} {
+		r.Control = ctl
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%+v: %v", ctl, err)
+		}
+	}
+	// With Fn too
+	r.Modifier = "Fn"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("with Fn: %v", err)
+	}
+	r.Modifier = ""
+	r.Control = Control{"pitch_bend", 1, 0}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "ripple delete needs a button") {
+		t.Fatalf("err = %v", err)
+	}
+	r.Control = Control{"note", 1, 54}
+	r.Step = 4
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+		t.Fatalf("step err = %v", err)
+	}
+}
+
+// No Fn variant of ripple delete (decision 202611156qj4): the only ripple
+// delete binding has no modifier.
+func TestNoFnRippleDeleteBinding(t *testing.T) {
+	c := Default()
+	n := 0
+	for _, b := range c.Profiles[0].Bindings {
+		if b.Action == ActionRippleDelete {
+			n++
+			if b.Modifier != "" {
+				t.Fatalf("ripple delete binding with a modifier: %+v", b)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d ripple delete bindings, want 1", n)
+	}
 }
 
 func TestCutBinding(t *testing.T) {

@@ -13,7 +13,9 @@ import (
 // Command is what the bridge sends to Blender: {"type":"scrub","frames":N}
 // moves the playhead N frames, {"type":"zoom","clicks":N} zooms the timeline
 // N steps (positive is in), {"type":"cut"} cuts the strips under the
-// playhead, {"type":"undo"} runs Blender's undo once.
+// playhead, {"type":"undo"} runs Blender's undo once,
+// {"type":"ripple_delete"} deletes the strips under the playhead and closes
+// the gap they leave.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -272,6 +274,11 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		// Once per press, like cut: never on the release
 		if pressed(m) {
 			hit.Command = &Command{Type: "undo"}
+		}
+	case config.ActionRippleDelete:
+		// Once per press, like cut: never on the release
+		if pressed(m) {
+			hit.Command = &Command{Type: "ripple_delete"}
 		}
 	}
 	return hit, nil
