@@ -1644,9 +1644,17 @@ class AddonTest(unittest.TestCase):
         addon._apply([], PREFS)
         self.assertEqual(len(plays), 1)
         addon._apply([{"type": "shuttle", "clicks": 1}] * 8, PREFS)
-        addon._apply([{"type": "shuttle", "clicks": 1}] * 8, PREFS)  # 5.25x
+        addon._apply([{"type": "shuttle", "clicks": 1}] * 7, PREFS)  # 5x: still sound
         addon._apply([], PREFS)
-        self.assertEqual(plays[0][2].status, 0, "past 5x the sound stops")
+        self.assertEqual(addon.shuttle.speed, 500)
+        at_5x = len(plays)
+        self.assertEqual(plays[-1][2].status, 1)
+        addon._apply([{"type": "shuttle", "clicks": 1}], PREFS)  # 5.25x
+        addon._apply([], PREFS)
+        addon._apply([], PREFS)
+        self.assertEqual(addon.shuttle.speed, 525)
+        self.assertEqual(plays[-1][2].status, 0, "past 5x the sound stops")
+        self.assertEqual(len(plays), at_5x, "and none starts")
 
     def test_sound_that_fails_plays_on_silent(self):
         plays = self._fake_aud()
