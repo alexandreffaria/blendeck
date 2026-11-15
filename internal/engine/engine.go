@@ -28,8 +28,10 @@ type Hit struct {
 type Engine struct {
 	mu      sync.Mutex
 	profile config.Profile
-	// down is which modifier buttons are physically held, by control, so
-	// renaming a modifier or learning with unsaved modifiers can't confuse it
+	// down is which buttons are physically held, by control: every note, and
+	// cc buttons that are modifiers. At most 16*128 notes plus the modifiers.
+	// Keeping all of them means a modifier pressed before it was saved (or
+	// before Learn was clicked) still counts once it is known.
 	down map[config.Control]bool
 	// learnMods are the modifiers a binding learn passes through: the page's
 	// unsaved ones, or the profile's when the page sent none
@@ -70,18 +72,11 @@ func New(p config.Profile) *Engine {
 	return e
 }
 
-// SetProfile switches to p. Modifier buttons held in both stay held.
+// SetProfile switches to p. Buttons held stay held.
 func (e *Engine) SetProfile(p config.Profile) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.profile = p
-	down := map[config.Control]bool{}
-	for _, m := range p.Modifiers {
-		if e.down[m.Control] {
-			down[m.Control] = true
-		}
-	}
-	e.down = down
 }
 
 // Held lists the modifiers currently held down.
@@ -213,19 +208,22 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	target := e.learningLocked()
 	name, isMod := e.modifierFor(ctl, target)
 
-	// A modifier's release always counts, even mid-learn: losing it would
-	// leave Fn held for good
-	if (isMod || e.down[ctl]) && !pressed(m) {
-		delete(e.down, ctl)
-		if isMod {
-			return Hit{Modifier: name, Held: false}, nil
+	// Button state is tracked before anything else, learn included, so a
+	// release is never lost (Fn stuck held) and a press is never missed
+	if m.Kind == midi.NoteOn || m.Kind == midi.NoteOff || (isMod && ctl.Type == "cc") {
+		if pressed(m) {
+			e.down[ctl] = true
+		} else {
+			delete(e.down, ctl)
 		}
+	}
+	if isMod && !pressed(m) {
+		return Hit{Modifier: name, Held: false}, nil
 	}
 	if target == LearnModifier {
 		return e.capture(m, ctl, e.profile.Modifiers)
 	}
 	if isMod {
-		e.down[ctl] = true
 		return Hit{Modifier: name, Held: true}, nil
 	}
 	if target == LearnBinding {

@@ -432,10 +432,13 @@ async function startLearn(kind, index) {
     // a just-learned Fn works before Save
     const body = { target: kind };
     if (kind === 'binding') body.modifiers = profile().modifiers.filter((m) => m.control.number >= 0);
+    // Moving a learn to another row of the same kind: the stream already
+    // shows it armed and won't change, so it stays confirmed
+    const already = !!(state.learn && state.learn.kind === kind && state.learn.confirmed);
     const snap = await api('POST', '/api/learn', body);
     // confirmed: the stream has shown this learn armed; until then a stale
     // message saying "not learning" must not cancel it
-    state.learn = { kind, index, baseSeq: snap.learned.seq, confirmed: false };
+    state.learn = { kind, index, baseSeq: snap.learned.seq, confirmed: already };
   } catch (e) { toast(e.message, true); }
   renderBindings(); renderModifiers();
 }

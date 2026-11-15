@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.1.2"
+ADDON_VERSION = "0.1.3"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -121,6 +121,7 @@ def _finish_connect():
     link.sock = s
     link.buf = protocol.LineBuffer()
     link.out = b""
+    link.last_state = None  # the bridge starts from nothing: send the state again
     _set_status("Connected")
     _send({"type": "hello", "blender": bpy.app.version_string, "addon": ADDON_VERSION})
     return True
@@ -181,6 +182,8 @@ def _apply(messages, prefs):
         target = protocol.scrub_target(scene.frame_current, delta, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
             scene.frame_set(target)
+    if link.sock is None:
+        return  # the read just found the bridge gone
     state = (scene.name, scene.frame_current, scene.frame_start, scene.frame_end, scene.render.fps / scene.render.fps_base)
     if state != link.last_state:
         link.last_state = state
@@ -207,7 +210,7 @@ def _tick():
     if prefs is None:
         return RETRY
     if not prefs.enabled:
-        if link.sock is not None:
+        if link.sock is not None or link.pending is not None:
             _close("Turned off")
         _set_status("Turned off")
         return RETRY

@@ -136,8 +136,23 @@ func TestLearnModifierCapturesKnownModifier(t *testing.T) {
 	if l == nil || l.Control.Type != "note" || l.Control.Number != 40 {
 		t.Fatalf("learned %+v", l)
 	}
+	e.Handle(fnUp)
 	if len(e.Held()) != 0 {
-		t.Fatal("the learned press also counted as holding Fn")
+		t.Fatalf("held = %v after the learned button was released", e.Held())
+	}
+}
+
+// Fn learned on the page but not saved, pressed before Learn is clicked:
+// it must still be reported as held when the knob is captured.
+func TestUnsavedModifierPressedBeforeLearn(t *testing.T) {
+	p := scrubProfile()
+	p.Modifiers = nil
+	e := New(p)
+	e.Handle(fnDown)
+	e.Learn(LearnBinding, []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 40}}})
+	_, l := e.Handle(knob(1))
+	if l == nil || len(l.Held) != 1 || l.Held[0] != "Fn" {
+		t.Fatalf("learned %+v", l)
 	}
 }
 
