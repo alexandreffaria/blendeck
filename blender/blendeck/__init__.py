@@ -555,6 +555,60 @@ def _move_left(strip, frames):
         strip.frame_start -= frames
 
 
+def _delete_op(scene, strips, items, delete, ctx):
+    """Deletes items[i] for each i in delete with Blender's own Delete
+    (bpy.ops.sequencer.delete), which stops the background prefetch render
+    first. strips.remove() doesn't: in Blender 5.2 it frees a strip's data
+    while the prefetch thread may still be rendering it, and Blender
+    crashes. Only the strips to delete are selected for it; the others get
+    their selection back. No undo step of its own (the caller pushes one
+    for the whole ripple). Returns (how many went, whether any stayed).
+    Never raises."""
+    try:
+        goners = {items[i].name for i in delete}
+    except Exception as e:
+        print("Blendeck: ripple delete skipped:", e)
+        return 0, True
+    before = {}
+    try:
+        for s in items:
+            before[s.name] = s.select
+            s.select = s.name in goners
+        with bpy.context.temp_override(scene=scene, sequencer_scene=scene, **ctx):
+            bpy.ops.sequencer.delete("EXEC_DEFAULT", False)
+    except Exception as e:
+        print("Blendeck: ripple delete couldn't remove the strips:", e)
+    # A deleted strip's Python object is freed: only look strips up again
+    left = set()
+    try:
+        for s in list(strips):
+            left.add(s.name)
+            if s.name in before:
+                s.select = before[s.name]
+    except Exception as e:
+        print("Blendeck: ripple delete couldn't restore the selection:", e)
+    stayed = goners & left
+    return len(goners) - len(stayed), bool(stayed)
+
+
+def _delete_each(strips, items, delete):
+    """Deletes items[i] for each i in delete with strips.remove(), for a
+    Blender with no window (nothing draws there, so no prefetch runs).
+    Effects come before their inputs in delete: removing an input also
+    removes its effects, and a removed strip must not be touched again.
+    Returns (how many went, whether any stayed). Never raises."""
+    removed = 0
+    failed = False
+    for i in delete:
+        try:
+            strips.remove(items[i])
+            removed += 1
+        except Exception as e:
+            failed = True
+            print("Blendeck: ripple delete couldn't remove a strip:", e)
+    return removed, failed
+
+
 def _ripple_delete(scene):
     """Deletes the strips under the playhead and closes the gap they leave
     on every channel, in the level the editor shows (see
@@ -577,18 +631,11 @@ def _ripple_delete(scene):
         return 0
     if plan is None:
         return 0
-    # Effects come before their inputs in plan.delete: removing an input
-    # also removes its effects, and a removed strip must not be touched
-    # again.
-    removed = 0
-    failed = False
-    for i in plan.delete:
-        try:
-            strips.remove(items[i])
-            removed += 1
-        except Exception as e:
-            failed = True
-            print("Blendeck: ripple delete couldn't remove a strip:", e)
+    ctx, _ = _undo_context()
+    if ctx is not None:
+        removed, failed = _delete_op(scene, strips, items, plan.delete, ctx)
+    else:
+        removed, failed = _delete_each(strips, items, plan.delete)
     if plan.shift and not failed:
         # Leftmost first: each lands where the gap, or a strip already
         # moved, was. Effects with inputs follow their inputs by themselves.
