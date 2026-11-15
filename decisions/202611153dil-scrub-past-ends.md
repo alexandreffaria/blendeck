@@ -34,6 +34,7 @@ options:
 resolution:
   choice: stop
   resolved_at: 2026-11-15T04:45:16Z
+applied_at: 2026-11-15T06:04:08Z
 ---
 
 ## Context

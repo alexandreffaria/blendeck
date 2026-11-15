@@ -34,6 +34,7 @@ options:
 resolution:
   choice: playhead
   resolved_at: 2026-11-15T05:39:31Z
+applied_at: 2026-11-15T05:43:50Z
 ---
 
 ## Context
