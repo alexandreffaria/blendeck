@@ -443,3 +443,34 @@ func TestMoveBindings(t *testing.T) {
 		}
 	}
 }
+
+func TestPanBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "pan")
+	// Nothing on Fn: one plain knob, 5% of the view per click
+	if b.Action != ActionPan || b.Name != "Pan timeline" || b.Control.Learned() || b.Control.Type != "cc" || b.Modifier != "" || b.Step != 5 || b.Encoder != EncoderTwos {
+		t.Fatalf("default pan binding = %+v", b)
+	}
+	// The owner's knob: cc 35, 1 clockwise and 127 counter-clockwise
+	b.Control = Control{"cc", 1, 35}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		mod  func(*Binding)
+		want string
+	}{
+		"on a button": {func(b *Binding) { b.Control = Control{"note", 1, 35} }, "needs a knob"},
+		"no step":     {func(b *Binding) { b.Step = 0 }, "percent of the view"},
+		"over a view": {func(b *Binding) { b.Step = MaxPanStep + 1 }, "percent of the view"},
+		"no encoder":  {func(b *Binding) { b.Encoder = "" }, "unknown encoder"},
+	} {
+		c := Default()
+		b := byID(&c, "pan")
+		b.Control = Control{"cc", 1, 35}
+		tc.mod(b)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}

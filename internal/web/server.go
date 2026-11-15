@@ -214,6 +214,8 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 
 // handleTest sends Blender a command as if a control had been used:
 // {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in),
+// {"pan":N} slides the timeline view N percent of its width (positive
+// shows later frames),
 // {"cut":true} cuts at the playhead, {"undo":true} runs Blender's undo
 // once, {"ripple_delete":true} ripple deletes at the playhead,
 // {"play_pause":true} starts or pauses playback, {"shuttle":1} plays
@@ -226,6 +228,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Frames  int  `json:"frames"`
 		Zoom    int  `json:"zoom"`
+		Pan     int  `json:"pan"`
 		Cut     bool `json:"cut"`
 		Undo    bool `json:"undo"`
 		Ripple  bool `json:"ripple_delete"`
@@ -241,7 +244,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := 0
-	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0, req.Move != 0} {
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0, req.Move != 0, req.Pan != 0} {
 		if set {
 			n++
 		}
@@ -257,7 +260,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var cmd engine.Command
 	switch {
 	case n > 1:
-		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete, play_pause, shuttle, jump or move")
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom, pan, cut, undo, ripple_delete, play_pause, shuttle, jump or move")
 		return
 	case req.Undo:
 		cmd = engine.Command{Type: "undo"}
@@ -285,6 +288,12 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cmd = engine.Command{Type: "move", Frames: req.Move, Before: req.Before}
+	case req.Pan != 0:
+		if req.Pan > config.MaxPanStep || req.Pan < -config.MaxPanStep {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("pan must be between -%d and %d, not 0", config.MaxPanStep, config.MaxPanStep))
+			return
+		}
+		cmd = engine.Command{Type: "pan", Clicks: req.Pan}
 	case req.Zoom != 0:
 		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))

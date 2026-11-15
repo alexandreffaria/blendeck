@@ -258,6 +258,10 @@ tr.flash td { animation: flash 600ms ease-out; }
         <button class="btn" data-test-zoom="-1" title="Zoom out" aria-label="Zoom out">−</button>
         <button class="btn" data-test-zoom="1" title="Zoom in" aria-label="Zoom in">+</button>
       </div></div>
+      <div class="group"><span>Pan</span><div class="seg">
+        <button class="btn" data-test-pan="-5" title="Show earlier frames (5% of the view)" aria-label="Pan timeline left">◀</button>
+        <button class="btn" data-test-pan="5" title="Show later frames (5% of the view)" aria-label="Pan timeline right">▶</button>
+      </div></div>
       <div class="group"><span>Edits</span><div class="seg">
         <button class="btn" data-test-jump="-1" title="Previous video edit" aria-label="Previous video edit">⇤</button>
         <button class="btn" data-test-jump="1" title="Next video edit" aria-label="Next video edit">⇥</button>
@@ -371,13 +375,14 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
 // What a binding's step means for each knob action, its limit
-// (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
+// (config.MaxStep, config.MaxZoomStep, config.MaxPanStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
 const STEPS = {
   'timeline.scrub': { unit: 'frames', label: 'Frames per click', max: 100000, start: 10, verb: 'Scrubbing' },
   'timeline.zoom': { unit: 'clicks', label: 'Zoom steps per click', max: 20, start: 4, verb: 'Zooming' },
+  'timeline.pan': { unit: '% of view', label: 'Percent of the view per click', max: 100, start: 5, verb: 'Panning' },
   'timeline.move_after': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
   'timeline.move_before': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
 };
@@ -569,6 +574,9 @@ function describe(ev) {
     } else if (h.command.type === 'move') {
       const f = h.command.frames;
       what = `move ${h.command.before ? 'earlier' : 'later'} strips ${f > 0 ? '+' : ''}${f} frame${Math.abs(f) === 1 ? '' : 's'}`;
+    } else if (h.command.type === 'pan') {
+      const n = h.command.clicks;
+      what = `pan ${n > 0 ? 'right' : 'left'} ${Math.abs(n)}% of the view`;
     } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
@@ -699,6 +707,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.delM !== undefined) { dropLearn(); profile().modifiers.splice(+t.dataset.delM, 1); renderAll(); return; }
   if (t.dataset.test) return sendTest({ frames: +t.dataset.test });
   if (t.dataset.testZoom) return sendTest({ zoom: +t.dataset.testZoom });
+  if (t.dataset.testPan) return sendTest({ pan: +t.dataset.testPan });
   if (t.dataset.testCut !== undefined) return sendTest({ cut: true });
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });

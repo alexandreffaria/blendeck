@@ -536,6 +536,50 @@ class AddonTest(unittest.TestCase):
             addon.bpy.context.scene = SCENE
         self.assertEqual(sorted(zooms()), [("in", "both"), ("in", "strips")])
 
+    def test_pan_every_timeline(self):
+        self._screen()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        regions = addon.bpy.context.window_manager.windows[0].screen.areas
+        strips, both = regions[0].regions[1], regions[1].regions[1]
+        assert (strips.name, both.name) == ("strips", "both")
+        # 5% right, 15% left and 5% right in one read: 5% left in all, on
+        # every timeline; the playhead stays
+        conn.sendall(b'{"type":"pan","clicks":5}\n{"type":"pan","clicks":-15}\n{"type":"pan","clicks":5}\n')
+        self.assertTrue(tick_until(lambda: abs(strips.view2d.xmin + 12.5) < 0.01 and abs(both.view2d.xmin + 12.5) < 0.01))
+        self.assertAlmostEqual(strips.view2d.xmax - strips.view2d.xmin, 250, delta=0.01)
+        self.assertEqual(ZOOM.calls.count(("pan", "strips")), 1)
+        self.assertEqual(SCENE.frame_current, 10)
+        conn.close()
+        bridge.close()
+
+    def test_pan_a_whole_view(self):
+        region = self._strips()
+        addon._pan(100)
+        self.assertAlmostEqual(region.view2d.xmin, 250, delta=0.01)
+        addon._pan(-100)
+        self.assertAlmostEqual(region.view2d.xmin, 0, delta=0.01)
+        self.assertEqual(zooms(), [])
+
+    def test_pan_nothing(self):
+        self._screen()
+        addon._pan(0)
+        self.assertEqual(ZOOM.calls, [])
+
+    def test_pan_failure_skips_that_editor(self):
+        region = self._strips()
+        both = addon.bpy.context.window_manager.windows[0].screen.areas[1].regions[1]
+        region.view2d = None  # a region gone stale
+        addon._pan(5)  # must not raise
+        self.assertAlmostEqual(both.view2d.xmin, 12.5, delta=0.01, msg="the other editor still panned")
+
+    def test_pan_without_windows(self):
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
+        addon._pan(5)
+        self.assertEqual(ZOOM.calls, [])
+
     def test_zoom_without_windows(self):
         addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
         addon._zoom(1)
