@@ -17,7 +17,9 @@ import (
 // {"type":"ripple_delete"} deletes the strips under the playhead and closes
 // the gap they leave, {"type":"play_pause"} starts or pauses playback,
 // {"type":"shuttle","clicks":1} plays forward or faster forward and
-// {"type":"shuttle","clicks":-1} backwards or faster backwards.
+// {"type":"shuttle","clicks":-1} backwards or faster backwards, and
+// {"type":"jump","clicks":N} moves the playhead N edit points (strip starts
+// and ends) right, or left when N is negative.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -266,6 +268,10 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	case config.ActionZoom:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "zoom", Clicks: d * b.Step}
+		}
+	case config.ActionJumpEdit:
+		if d := Delta(m.Value, b.Encoder); d != 0 {
+			hit.Command = &Command{Type: "jump", Clicks: d}
 		}
 	case config.ActionCut:
 		// Once per press: a note off (or a cc below 64) is the release

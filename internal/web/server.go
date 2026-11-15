@@ -155,8 +155,8 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 // {"cut":true} cuts at the playhead, {"undo":true} runs Blender's undo
 // once, {"ripple_delete":true} ripple deletes at the playhead,
 // {"play_pause":true} starts or pauses playback, {"shuttle":1} plays
-// forward or faster, {"shuttle":-1} backwards or faster. Exactly one of
-// them.
+// forward or faster, {"shuttle":-1} backwards or faster, {"jump":1} jumps
+// to the next cut and {"jump":-1} to the previous one. Exactly one of them.
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Frames  int  `json:"frames"`
@@ -166,13 +166,14 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 		Ripple  bool `json:"ripple_delete"`
 		Play    bool `json:"play_pause"`
 		Shuttle int  `json:"shuttle"`
+		Jump    int  `json:"jump"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	n := 0
-	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0} {
+	for _, set := range []bool{req.Frames != 0, req.Zoom != 0, req.Cut, req.Undo, req.Ripple, req.Play, req.Shuttle != 0, req.Jump != 0} {
 		if set {
 			n++
 		}
@@ -180,7 +181,7 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var cmd engine.Command
 	switch {
 	case n > 1:
-		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete, play_pause or shuttle")
+		writeError(w, http.StatusBadRequest, "send one of frames, zoom, cut, undo, ripple_delete, play_pause, shuttle or jump")
 		return
 	case req.Undo:
 		cmd = engine.Command{Type: "undo"}
@@ -196,6 +197,12 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cmd = engine.Command{Type: "shuttle", Clicks: req.Shuttle}
+	case req.Jump != 0:
+		if req.Jump != 1 && req.Jump != -1 {
+			writeError(w, http.StatusBadRequest, "jump must be 1 (next cut) or -1 (previous cut)")
+			return
+		}
+		cmd = engine.Command{Type: "jump", Clicks: req.Jump}
 	case req.Zoom != 0:
 		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))

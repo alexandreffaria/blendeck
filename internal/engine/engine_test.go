@@ -1211,3 +1211,64 @@ func TestShuttleCommandJSON(t *testing.T) {
 		}
 	}
 }
+
+func jumpProfile() config.Profile {
+	return config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "scrub", Name: "Scrub", Control: config.Control{Type: "cc", Channel: 1, Number: 42}, Encoder: config.EncoderTwos, Action: config.ActionScrub, Step: 10},
+			{ID: "jump-edit", Name: "Jump", Control: config.Control{Type: "cc", Channel: 1, Number: 48}, Encoder: config.EncoderTwos, Action: config.ActionJumpEdit},
+		},
+	}
+}
+
+func jumpKnob(v int) midi.Message {
+	return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 48, Value: v}
+}
+
+// The owner's knob sends 1 clockwise and 127 counter-clockwise: one cut
+// right, one cut left. A faster turn's bigger values are that many cuts.
+func TestJumpEditClicks(t *testing.T) {
+	e := New(jumpProfile())
+	for v, want := range map[int]int{1: 1, 127: -1, 3: 3, 125: -3} {
+		hit, _ := e.Handle(jumpKnob(v))
+		if hit.Binding != "jump-edit" || hit.Command == nil || *hit.Command != (Command{Type: "jump", Clicks: want}) {
+			t.Fatalf("value %d: %+v", v, hit)
+		}
+	}
+	if hit, _ := e.Handle(jumpKnob(0)); hit.Command != nil {
+		t.Fatalf("value 0 sent %+v", hit.Command)
+	}
+	// The scrub knob still scrubs
+	hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 42, Value: 1})
+	if hit.Command == nil || *hit.Command != (Command{Type: "scrub", Frames: 10}) {
+		t.Fatalf("scrub: %+v", hit)
+	}
+}
+
+// With Fn held and no Fn binding, the knob still jumps.
+func TestJumpEditWithFnHeld(t *testing.T) {
+	e := New(jumpProfile())
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	hit, _ := e.Handle(jumpKnob(127))
+	if hit.Command == nil || *hit.Command != (Command{Type: "jump", Clicks: -1}) {
+		t.Fatalf("Fn + turn: %+v", hit)
+	}
+}
+
+func TestJumpEditNotLearnedIgnored(t *testing.T) {
+	p := jumpProfile()
+	p.Bindings[1].Control.Number = -1
+	e := New(p)
+	if hit, _ := e.Handle(jumpKnob(1)); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned knob: %+v", hit)
+	}
+}
+
+func TestJumpCommandJSON(t *testing.T) {
+	b, err := json.Marshal(Command{Type: "jump", Clicks: -2})
+	if err != nil || string(b) != `{"type":"jump","clicks":-2}` {
+		t.Fatalf("%s %v", b, err)
+	}
+}

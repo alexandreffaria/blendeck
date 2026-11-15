@@ -33,6 +33,9 @@ SHUTTLE_STEP = 1
 MAX_SHUTTLE_SPEED = 40
 # Forward / backwards presses applied per tick at most.
 MAX_SHUTTLES_PER_TICK = 8
+# Cuts the jump knob moves over per tick at most, either way. A fast spin
+# sends a few clicks a tick; more than this is a flood.
+MAX_JUMPS_PER_TICK = 32
 
 
 class LineBuffer:
@@ -108,13 +111,16 @@ def edit_steps(messages):
     even run leaves nothing, an odd one a single toggle. At most
     MAX_TOGGLES_PER_TICK presses count. Forward and backwards presses are
     ("shuttle", 1) and ("shuttle", -1), one each, never merged, up to
-    MAX_SHUTTLES_PER_TICK. Malformed commands are ignored."""
+    MAX_SHUTTLES_PER_TICK. Jumps between cuts are ("jump", clicks): jumps
+    in a row are added up, and at most MAX_JUMPS_PER_TICK clicks count
+    either way in one read. Malformed commands are ignored."""
     steps = []
     cuts = 0
     undos = 0
     ripples = 0
     toggles = 0
     shuttles = 0
+    jumps = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -154,7 +160,50 @@ def edit_steps(messages):
                 continue
             shuttles += 1
             steps.append(("shuttle", clicks))
+        elif kind == "jump":
+            clicks = m.get("clicks")
+            if type(clicks) is not int or clicks == 0:
+                continue
+            room = MAX_JUMPS_PER_TICK - jumps
+            clicks = max(-room, min(room, clicks))
+            if clicks == 0:
+                continue
+            jumps += abs(clicks)
+            if steps and steps[-1][0] == "jump":
+                steps[-1] = ("jump", steps[-1][1] + clicks)
+                if steps[-1][1] == 0:
+                    steps.pop()  # right then left: back where it was
+            else:
+                steps.append(("jump", clicks))
     return steps
+
+
+def edit_points(spans):
+    """The frames the jump knob stops on, sorted: every start and end of the
+    strips in spans (a list of (start, end) pairs, end exclusive, so the end
+    is the first frame after the strip, where the next one would start)."""
+    points = set()
+    for start, end in spans:
+        points.add(start)
+        points.add(end)
+    return sorted(points)
+
+
+def jump_target(points, frame, clicks):
+    """Where the playhead lands moving clicks edit points from frame
+    (points: sorted, see edit_points): right when clicks is positive, left
+    when negative. A playhead on an edit point moves to the next one. Past
+    the last edit point that way it stops on the last one; with none that
+    way, None (the playhead stays)."""
+    if clicks > 0:
+        ahead = [p for p in points if p > frame]
+    elif clicks < 0:
+        ahead = [p for p in points if p < frame][::-1]
+    else:
+        return None
+    if not ahead:
+        return None
+    return ahead[min(abs(clicks), len(ahead)) - 1]
 
 
 def shuttle_speed(current, direction):

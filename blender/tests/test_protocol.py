@@ -461,5 +461,47 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(m.group(1), manifest["version"], "ADDON_VERSION and the manifest disagree")
 
 
+class JumpTest(unittest.TestCase):
+    def test_edit_points(self):
+        self.assertEqual(protocol.edit_points([(1, 50), (50, 100), (20, 80), (100, 200)]), [1, 20, 50, 80, 100, 200])
+        self.assertEqual(protocol.edit_points([]), [])
+
+    def test_jump_target(self):
+        pts = [1, 20, 50, 80, 100, 200]
+        self.assertEqual(protocol.jump_target(pts, 30, 1), 50)
+        self.assertEqual(protocol.jump_target(pts, 30, -1), 20)
+        # On a cut: the next one, not the same one
+        self.assertEqual(protocol.jump_target(pts, 50, 1), 80)
+        self.assertEqual(protocol.jump_target(pts, 50, -1), 20)
+        self.assertEqual(protocol.jump_target(pts, 30, 3), 100)
+        self.assertEqual(protocol.jump_target(pts, 30, -2), 1)
+        # Past the last cut that way: stops on the last one
+        self.assertEqual(protocol.jump_target(pts, 30, 99), 200)
+        self.assertEqual(protocol.jump_target(pts, 30, -99), 1)
+        # None that way: stays
+        self.assertIsNone(protocol.jump_target(pts, 200, 1))
+        self.assertIsNone(protocol.jump_target(pts, 250, 1))
+        self.assertIsNone(protocol.jump_target(pts, 1, -1))
+        self.assertEqual(protocol.jump_target(pts, -10, 1), 1)
+        self.assertEqual(protocol.jump_target(pts, 250, -1), 200)
+        self.assertIsNone(protocol.jump_target([], 10, 1))
+        self.assertIsNone(protocol.jump_target(pts, 30, 0))
+
+    def test_edit_steps_jumps(self):
+        J = lambda n: {"type": "jump", "clicks": n}
+        self.assertEqual(protocol.edit_steps([J(1), J(1), J(-1)]), [("jump", 1)])
+        self.assertEqual(protocol.edit_steps([J(1), J(-1)]), [], "right then left: nothing")
+        # A cut between keeps them apart, in order
+        self.assertEqual(protocol.edit_steps([J(1), {"type": "cut"}, J(2)]), [("jump", 1), ("cut", None), ("jump", 2)])
+        self.assertEqual(protocol.edit_steps([{"type": "scrub", "frames": 3}, J(-1)]), [("scrub", 3), ("jump", -1)])
+        for bad in (J(0), J(True), J("1"), J(1.0), J(None), {"type": "jump"}):
+            self.assertEqual(protocol.edit_steps([bad]), [], bad)
+        # A flood is capped, either way, per read
+        cap = protocol.MAX_JUMPS_PER_TICK
+        self.assertEqual(protocol.edit_steps([J(1)] * (cap + 50)), [("jump", cap)])
+        self.assertEqual(protocol.edit_steps([J(-1000)]), [("jump", -cap)])
+        self.assertEqual(protocol.edit_steps([J(cap), {"type": "cut"}, J(1)]), [("jump", cap), ("cut", None)])
+
+
 if __name__ == "__main__":
     unittest.main()

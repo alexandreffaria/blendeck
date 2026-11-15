@@ -176,6 +176,7 @@ class _Level(list):
 class _Channel:
     def __init__(self, lock=False):
         self.lock = lock
+        self.mute = False
 
 
 class _Owner:
@@ -1612,6 +1613,97 @@ class AddonTest(unittest.TestCase):
         self.assertIn({"type": "ping"}, read_lines(conn))
         conn.close()
         bridge.close()
+
+
+    # ---------- the jump knob ----------
+
+    def _jump_editor(self):
+        """Video cut at 50 and 100, audio cut at 70, a title 150..180."""
+        ed = _Editor()
+        ed.add("V1", 1, 1, 50)
+        ed.add("V2", 1, 50, 100)
+        ed.add("V3", 1, 100, 200)
+        ed.add("A1", 2, 1, 70)
+        ed.add("A2", 2, 70, 200)
+        ed.add("T", 3, 150, 180)
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 60
+        return ed
+
+    def test_jump_right_and_left(self):
+        self._jump_editor()
+        for clicks, want in ((1, 70), (1, 100), (1, 150), (-1, 100), (-3, 1), (-1, 1), (2, 70), (99, 200), (1, 200)):
+            addon._apply([{"type": "jump", "clicks": clicks}], PREFS)
+            self.assertEqual(SCENE.frame_current, want, (clicks, want))
+        self.assertEqual(UNDO, [], "a jump is no edit")
+
+    def test_jump_skips_muted(self):
+        ed = self._jump_editor()
+        ed.strips[3].mute = True  # A1: its end at 70 no longer counts, A2's start still does
+        ed.channels[3].mute = True  # the title
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 70)
+        ed.strips[4].mute = True  # A2 too
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 100)
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 200, "the title's channel is muted")
+
+    def test_jump_inside_meta(self):
+        ed = self._jump_editor()
+        meta = _Owner(ed.log)
+        meta.add("M1", 1, 10, 30)
+        ed.meta_stack = [meta]
+        SCENE.frame_current = 15
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 30)
+
+    def test_jump_selection_follows(self):
+        ed = self._jump_editor()
+        PREFS.follow_selection = True
+        FRAME_HANDLERS.append(addon.on_frame_change)
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 70)
+        self.assertEqual(sorted(s.name for s in ed.strips if s.select), ["A2", "V2"])
+
+    def test_jump_nothing_to_do(self):
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)  # no sequence editor
+        self.assertEqual(SCENE.frame_current, 10)
+        SCENE.sequence_editor = types.SimpleNamespace(meta_stack=[])  # one it can't read
+        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 10)
+        SCENE.sequence_editor = _Editor()  # no strips
+        addon._apply([{"type": "jump", "clicks": -1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 10)
+
+    def test_jump_while_playing_moves_the_sound_too(self):
+        scene = self._seek_scene()
+        ed = _Editor()
+        ed.add("V1", 1, 1, 50)
+        ed.add("V2", 1, 50, 150)
+        scene.sequence_editor = ed
+        scene.frame_current = 70
+        scene.log.clear()
+        self._play_window(sequencer_scene=scene)
+        addon.bpy.context.sequencer_scene = scene
+        PLAYER._set(True)
+        addon._apply([{"type": "jump", "clicks": -1}], PREFS)
+        self.assertEqual(scene.log, [("assign", 50), ("frame_set", 50)])
+
+    def test_jump_over_the_link(self):
+        self._jump_editor()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        read_lines(conn)
+        try:
+            conn.sendall(b'{"type":"jump","clicks":1}\n{"type":"jump","clicks":1}\n')
+            self.assertTrue(tick_until(lambda: SCENE.frame_current == 100))
+            self.assertTrue(any(m.get("type") == "state" and m.get("frame") == 100 for m in read_lines(conn)))
+        finally:
+            conn.close()
+            bridge.close()
 
 
 if __name__ == "__main__":

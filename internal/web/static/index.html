@@ -208,6 +208,11 @@ tr.flash td { animation: flash 600ms ease-out; }
           <button class="btn small" data-test-zoom="-1">− Zoom out</button>
           <button class="btn small" data-test-zoom="1">Zoom in +</button>
         </div>
+        <div class="hint" style="margin:10px 0 6px">Send a test jump between cuts</div>
+        <div class="test-row">
+          <button class="btn small" data-test-jump="-1">⇤ Previous cut</button>
+          <button class="btn small" data-test-jump="1">Next cut ⇥</button>
+        </div>
         <div class="hint" style="margin:10px 0 6px">Send a test cut or delete</div>
         <div class="test-row">
           <button class="btn small" data-test-cut>✂ Cut at playhead</button>
@@ -245,7 +250,7 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump to previous / next cut' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
@@ -253,6 +258,11 @@ const STEPS = {
   'timeline.scrub': { unit: 'frames', label: 'Frames per click', max: 100000, start: 10, verb: 'Scrubbing' },
   'timeline.zoom': { unit: 'clicks', label: 'Zoom steps per click', max: 20, start: 4, verb: 'Zooming' },
 };
+// Knob actions with no step: an encoder, and one of something per click.
+const FIXED_KNOBS = {
+  'timeline.jump_edit': { per: '1 cut', verb: 'Jumping between cuts' },
+};
+const knob = (action) => STEPS[action] || FIXED_KNOBS[action];
 const ENCODERS = {
   relative_twos: '1 / 127',
   relative_offset: '65 / 63',
@@ -338,8 +348,8 @@ function renderBindings() {
       <td><select class="select" data-b="${i}" data-f="modifier" aria-label="Modifier">${modOpts.join('')}</select>
         ${missingMod ? `<div class="warn">${esc(b.modifier)} isn't learned yet</div>` : ''}</td>
       <td><select class="select" data-b="${i}" data-f="action" aria-label="Action">${Object.entries(ACTIONS).map(([k, v]) => `<option value="${k}"${k === b.action ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
-      <td style="white-space:nowrap">${(() => { const st = STEPS[b.action]; if (!st) return '<span class="hint" title="Once per press">—</span>'; return `<input class="input num" type="number" min="1" max="${st.max}" step="1" data-b="${i}" data-f="step" value="${b.step}" aria-label="${st.label}"><span class="unit">${st.unit}</span>`; })()}</td>
-      <td>${!STEPS[b.action] ? '<span class="hint">—</span>' : `<select class="select" data-b="${i}" data-f="encoder" aria-label="Encoder type" title="What the knob sends for one click right / left">${Object.entries(ENCODERS).map(([k, v]) => `<option value="${k}"${k === b.encoder ? ' selected' : ''}>${v}</option>`).join('')}</select>`}</td>
+      <td style="white-space:nowrap">${(() => { const st = STEPS[b.action]; if (FIXED_KNOBS[b.action]) return `<span class="hint" title="Per click">${FIXED_KNOBS[b.action].per}</span>`; if (!st) return '<span class="hint" title="Once per press">—</span>'; return `<input class="input num" type="number" min="1" max="${st.max}" step="1" data-b="${i}" data-f="step" value="${b.step}" aria-label="${st.label}"><span class="unit">${st.unit}</span>`; })()}</td>
+      <td>${!knob(b.action) ? '<span class="hint">—</span>' : `<select class="select" data-b="${i}" data-f="encoder" aria-label="Encoder type" title="What the knob sends for one click right / left">${Object.entries(ENCODERS).map(([k, v]) => `<option value="${k}"${k === b.encoder ? ' selected' : ''}>${v}</option>`).join('')}</select>`}</td>
       <td><button class="btn ghost small" data-del-b="${i}" aria-label="Delete binding">✕</button></td>
     </tr>`;
   }).join('');
@@ -421,6 +431,9 @@ function describe(ev) {
       what = 'play / pause';
     } else if (h.command.type === 'shuttle') {
       what = h.command.clicks > 0 ? 'forward / faster' : 'backwards / faster';
+    } else if (h.command.type === 'jump') {
+      const n = h.command.clicks;
+      what = `${Math.abs(n)} cut${Math.abs(n) === 1 ? '' : 's'} ${n > 0 ? 'right' : 'left'}`;
     } else if (h.command.type === 'zoom') {
       const n = h.command.clicks;
       what = `zoom ${n > 0 ? 'in' : 'out'} ${Math.abs(n)}`;
@@ -504,7 +517,7 @@ function checkLearned() {
   const c = state.live.learned.control;
   const p = profile();
   if (l.kind === 'binding' && p.bindings[l.index]) {
-    const st = STEPS[p.bindings[l.index].action];
+    const st = knob(p.bindings[l.index].action);
     if (c.type !== 'cc' && st) {
       toast(`That was a button (${ctlLabel(c)}). ${st.verb} needs a knob. Try again.`, true);
       state.learn = null; startLearn(l.kind, l.index); return;
@@ -539,6 +552,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.testUndo !== undefined) return sendTest({ undo: true });
   if (t.dataset.testRipple !== undefined) return sendTest({ ripple_delete: true });
   if (t.dataset.testPlay !== undefined) return sendTest({ play_pause: true });
+  if (t.dataset.testJump) return sendTest({ jump: +t.dataset.testJump });
   if (t.dataset.testShuttle) return sendTest({ shuttle: +t.dataset.testShuttle });
 });
 
@@ -644,12 +658,14 @@ $('clear').onclick = () => { $('log').querySelectorAll('.log-row:not(.log-head)'
 // Switching a binding's action: a step that made sense for the old one
 // (10 frames) can be out of range for the new one (20 zoom steps at most),
 // so it starts over, and a name still at the old default follows along.
-// A button action (cut, undo, ripple delete, playback) has no step or encoder; a knob action gets them back.
+// A button action (cut, undo, ripple delete, playback) has no step or encoder; a knob action gets them back
+// (jumping between cuts gets an encoder and no step).
 function setAction(b, action) {
   const was = b.action;
   b.action = action;
-  if (STEPS[action]) {
-    b.step = STEPS[action].start;
+  if (knob(action)) {
+    if (STEPS[action]) b.step = STEPS[action].start;
+    else delete b.step;
     if (!b.encoder) b.encoder = 'relative_twos';
     // A knob action needs a cc; one not learned yet can just become one
     if (b.control.number < 0) b.control.type = 'cc';

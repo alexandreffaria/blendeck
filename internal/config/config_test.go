@@ -369,3 +369,34 @@ func TestShuttleBindings(t *testing.T) {
 		b.Step = 0
 	}
 }
+
+func TestJumpEditBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "jump-edit")
+	if b.Action != ActionJumpEdit || b.Name != "Jump to previous / next cut" || b.Control.Learned() || b.Control.Type != "cc" || b.Modifier != "" || b.Step != 0 || b.Encoder != EncoderTwos {
+		t.Fatalf("default jump-edit binding = %+v", b)
+	}
+	// The owner's knob: cc 48, 1 clockwise and 127 counter-clockwise
+	b.Control = Control{"cc", 1, 48}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		mod  func(*Binding)
+		want string
+	}{
+		"on a button": {func(b *Binding) { b.Control = Control{"note", 1, 48} }, "needs a knob"},
+		"pitch bend":  {func(b *Binding) { b.Control = Control{"pitch_bend", 1, 0} }, "needs a knob"},
+		"with a step": {func(b *Binding) { b.Step = 2 }, "has no step"},
+		"no encoder":  {func(b *Binding) { b.Encoder = "" }, "unknown encoder"},
+		"odd encoder": {func(b *Binding) { b.Encoder = "absolute" }, "unknown encoder"},
+	} {
+		c := Default()
+		b := byID(&c, "jump-edit")
+		b.Control = Control{"cc", 1, 48}
+		tc.mod(b)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}
