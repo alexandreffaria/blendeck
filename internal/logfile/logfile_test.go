@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func read(t *testing.T, path string) string {
@@ -105,5 +106,44 @@ func TestKeepsLoggingWhenTheOldCopyCantBeReplaced(t *testing.T) {
 	}
 	if got := read(t, path); got != "cccc\n" {
 		t.Fatalf("log = %q", got)
+	}
+}
+
+func TestHardCapWhileRotationFails(t *testing.T) {
+	oldRename, oldTruncate := rename, truncate
+	t.Cleanup(func() { rename, truncate = oldRename, oldTruncate })
+	tries := 0
+	fail := func() error { tries++; return os.ErrPermission }
+	rename = func(string, string) error { return fail() }
+	truncate = func(string, int64) error { return os.ErrPermission }
+
+	path := filepath.Join(t.TempDir(), "x.log")
+	l, err := Open(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	now := time.Now()
+	l.now = func() time.Time { return now }
+
+	for range 10 {
+		if n, err := l.Write([]byte("abcd\n")); n != 5 || err != nil {
+			t.Fatalf("Write = %d, %v", n, err)
+		}
+	}
+	// It kept logging past the cap up to twice it, then dropped lines.
+	if got := len(read(t, path)); got != 20 {
+		t.Fatalf("log is %d bytes, want 20", got)
+	}
+	if tries != 1 {
+		t.Fatalf("rotation tried %d times within a minute, want 1", tries)
+	}
+
+	// A minute later it tries again, and once rotation works it starts over.
+	rename, truncate = oldRename, oldTruncate
+	now = now.Add(retryEvery)
+	l.Write([]byte("new\n"))
+	if got := read(t, path); got != "new\n" {
+		t.Fatalf("after recovery log = %q", got)
 	}
 }

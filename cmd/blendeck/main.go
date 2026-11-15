@@ -138,9 +138,6 @@ func run() error {
 		// The page's event stream ends with ctx, so Shutdown doesn't wait on it.
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-	stopped := make(chan struct{}) // closed once all of the above has stopped
-	go func() { wg.Wait(); close(stopped) }()
-
 	serveErr := make(chan error, 1)
 	wg.Go(func() {
 		if err := srv.Serve(webLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -148,6 +145,8 @@ func run() error {
 		}
 		cancel()
 	})
+	stopped := make(chan struct{}) // closed once all of the above has stopped
+	go func() { wg.Wait(); close(stopped) }()
 
 	tr := tray.New(tray.Options{
 		Log:       log.With("component", "tray"),
@@ -174,7 +173,7 @@ func run() error {
 			// Keep running without it; the page still works. Built for
 			// Windows there would be no other sign it's running.
 			log.Error("no tray icon", "error", err)
-			tray.Alert("Blendeck is running, but couldn't put its icon in the notification area:\n" +
+			go tray.Alert("Blendeck is running, but couldn't put its icon in the notification area:\n" +
 				err.Error() + "\n\nThe page is at " + url + ". To quit Blendeck, end blendeck.exe in Task Manager.")
 		default:
 			cancel() // Quit, or Close below
