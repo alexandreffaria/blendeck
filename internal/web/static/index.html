@@ -145,7 +145,7 @@ td .select { min-width: 84px; }
 td .select[data-f="action"] { min-width: 168px; }
 td .select[data-f="encoder"] { min-width: 86px; }
 .ctl { display: inline-flex; align-items: center; gap: 6px; }
-.ctl-label { display: inline-flex; align-items: baseline; gap: 5px; font-size: 12.5px; padding: 3px 8px; border-radius: 6px; background: var(--well); border: 1px solid var(--line); white-space: nowrap; width: 92px; justify-content: space-between; }
+.ctl-label { display: inline-flex; align-items: baseline; gap: 5px; font-size: 12.5px; padding: 3px 8px; border-radius: 6px; background: var(--well); border: 1px solid var(--line); white-space: nowrap; min-width: 92px; justify-content: space-between; }
 .ctl-label b { font-weight: 600; }
 .ctl-label i { font-style: normal; color: var(--muted); font-size: 11.5px; }
 .ctl-label.cc b { color: var(--sky); }
@@ -556,7 +556,10 @@ function describe(ev) {
 }
 
 function appendEvents(events) {
-  if (!events.length || state.paused) return;
+  if (!events.length) return;
+  // The mascot answers the controller even while the log is paused
+  mascotReact(events[events.length - 1].message);
+  if (state.paused) return;
   $('logEmpty').hidden = true;
   const log = $('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
@@ -571,7 +574,6 @@ function appendEvents(events) {
     frag.appendChild(row);
     flashRows(ctlOfMessage(m));
   }
-  mascotReact(events[events.length - 1].message);
   log.appendChild(frag);
   const rows = log.querySelectorAll('.log-row:not(.log-head)');
   for (let i = 0; i < rows.length - 500; i++) rows[i].remove();
@@ -834,6 +836,7 @@ function connectEvents() {
     $('midiPill').className = 'pill bad'; $('midiText').textContent = 'Blendeck not running';
     $('blenderPill').className = 'pill bad'; $('blenderText').textContent = '—';
     $('mascot').classList.add('sleepy');
+    $('tests').disabled = true;
     es.close(); setTimeout(connectEvents, 1500);
   };
 }
