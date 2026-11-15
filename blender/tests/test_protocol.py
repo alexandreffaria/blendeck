@@ -739,6 +739,19 @@ class AudioPlanTest(unittest.TestCase):
         self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 0, 200, set(), 0), [])
 
 
+class ScrubSoundsTest(unittest.TestCase):
+    # 24 fps; strips are (key, start, end, content_start, sound_offset)
+    def test_one_frame_of_each_strip_under_the_playhead(self):
+        strips = [("b", 150, 400, 150, 0.0), ("a", 100, 340, 40, 1.0), ("gone", 0, 160, 0, 0.0), ("ahead", 161, 200, 161, 0.0)]
+        self.assertEqual(protocol.scrub_sounds(strips, 160, 24), [("a", 6.0, 6.0 + 1 / 24), ("b", 10 / 24, 11 / 24)])
+
+    def test_stops_at_the_strips_end_and_caps(self):
+        self.assertEqual(protocol.scrub_sounds([("a", 100, 101, 100, 0.0)], 100, 24, frames=5), [("a", 0.0, 1 / 24)])
+        strips = [(i, 0, 400, 0, 0.0) for i in range(40)]
+        self.assertEqual(len(protocol.scrub_sounds(strips, 10, 24)), protocol.MAX_AUDIO_SOUNDS)
+        self.assertEqual(protocol.scrub_sounds(strips, 10, 0), [])
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

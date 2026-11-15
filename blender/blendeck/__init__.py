@@ -1215,6 +1215,57 @@ def _audio_tick(scene, elapsed, fps):
         audio.failed = True
 
 
+class _Scrub:
+    """The sound the last scrub click started (see _scrub_sound): handles
+    to stop when the next click lands; error is the last failure printed."""
+
+    handles = []
+    error = None
+
+
+scrub = _Scrub()
+
+
+def _scrub_stop():
+    for handle in scrub.handles:
+        try:
+            handle.stop()
+        except Exception:
+            pass
+    scrub.handles = []
+
+
+def _scrub_sound(scene):
+    """Plays the sound under the playhead after a scrub click moved it,
+    like Blender's own audio scrubbing (which a script's frame change
+    doesn't trigger): protocol.SCRUB_FRAMES frames of every sound strip
+    heard there, at the strip's volume. What the previous click started is
+    stopped first. Silent while anything plays, since playback has its own
+    sound. Never raises; a failure is printed once until it changes."""
+    _scrub_stop()
+    if _playing() or shuttle.speed:
+        return
+    try:
+        import aud
+
+        found = _sound_strips(scene)
+        files = {span[0]: (path, volume) for span, path, volume in found}
+        fps = scene.render.fps / scene.render.fps_base
+        plan = protocol.scrub_sounds([span for span, _, _ in found], scene.frame_current, fps)
+        if not plan:
+            return
+        device = aud.Device()
+        for key, from_s, to_s in plan:
+            path, volume = files[key]
+            scrub.handles.append(device.play(aud.Sound(path).limit(from_s, to_s).volume(volume)))
+        scrub.error = None
+    except Exception as e:
+        _scrub_stop()
+        if str(e) != scrub.error:
+            scrub.error = str(e)
+            print("Blendeck: scrubbing is silent:", e)
+
+
 def _rendering():
     try:
         return bool(bpy.app.is_job_running("RENDER"))
@@ -1297,6 +1348,8 @@ def _apply(messages, prefs):
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
             _seek(scene, target)
+            if prefs.scrub_audio:
+                _scrub_sound(scene)
     if link.sock is None:
         return  # the read just found the bridge gone
     state = (scene.name, scene.frame_current, scene.frame_start, scene.frame_end, scene.render.fps / scene.render.fps_base)
@@ -1362,6 +1415,11 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
         description="Scrubbing stops at the scene's first and last frame",
         default=True,
     )
+    scrub_audio: bpy.props.BoolProperty(
+        name="Sound while scrubbing",
+        description="Each click of the scrub knob plays a frame of the sound under the playhead, like Blender's audio scrubbing",
+        default=True,
+    )
     follow_selection: bpy.props.BoolProperty(
         name="Selection follows playhead",
         description="Whenever the playhead moves, the strips under it are selected and the rest deselected, so cut and ripple delete act on them. Works with or without the bridge connected",
@@ -1372,6 +1430,7 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
         col = self.layout.column()
         col.prop(self, "enabled")
         col.prop(self, "clamp")
+        col.prop(self, "scrub_audio")
         col.prop(self, "follow_selection")
         row = col.row()
         row.prop(self, "host")
@@ -1395,6 +1454,7 @@ class SEQUENCER_PT_blendeck(bpy.types.Panel):
         if prefs:
             col.prop(prefs, "enabled")
             col.prop(prefs, "clamp")
+            col.prop(prefs, "scrub_audio")
             col.prop(prefs, "follow_selection")
 
 
@@ -1424,5 +1484,6 @@ def unregister():
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
     _close("Not connected")
+    _scrub_stop()
     for c in reversed(classes):
         bpy.utils.unregister_class(c)

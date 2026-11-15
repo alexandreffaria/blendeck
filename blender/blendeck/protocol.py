@@ -54,6 +54,9 @@ MAX_TRIMS_PER_TICK = 32
 MAX_AUDIO_SPEED = 500
 AUDIO_AHEAD = 2.0
 MAX_AUDIO_SOUNDS = 32
+# A scrub knob click that moves the playhead plays SCRUB_FRAMES frames of
+# the sound under it, like Blender's own audio scrubbing.
+SCRUB_FRAMES = 1
 
 
 class LineBuffer:
@@ -355,6 +358,25 @@ def audio_plan(strips, origin, elapsed, fps, speed, started, playing, ahead=AUDI
             continue
         plan.append((key, from_s, to_s, (frm - now) / rate))
         room -= 1
+    return plan
+
+
+def scrub_sounds(strips, frame, fps, frames=SCRUB_FRAMES):
+    """What a scrub that lands on frame plays: (key, from_s, to_s) for every
+    strip under the playhead (strips as for audio_plan), from frame for
+    frames frames or to the strip's end, at most MAX_AUDIO_SOUNDS."""
+    if fps <= 0 or frames <= 0:
+        return []
+    plan = []
+    for key, start, end, content_start, sound_offset in sorted(strips, key=lambda s: s[1]):
+        if len(plan) >= MAX_AUDIO_SOUNDS:
+            break
+        if not start <= frame < end:
+            continue
+        from_s = max(0.0, (frame - content_start) / fps + sound_offset)
+        to_s = (min(end, frame + frames) - content_start) / fps + sound_offset
+        if to_s > from_s:
+            plan.append((key, from_s, to_s))
     return plan
 
 
