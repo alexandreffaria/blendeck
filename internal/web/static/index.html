@@ -172,6 +172,8 @@ tr.flash td { animation: flash 600ms ease-out; }
 .log .empty { font-family: var(--font); padding: 48px 24px; }
 .device { padding: 0 18px 16px; }
 .device p { margin-top: 8px; }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--amber); cursor: pointer; }
 
 /* ---------- save bar ---------- */
 .savebar { position: fixed; left: 50%; bottom: 18px; z-index: 8; display: flex; align-items: center; gap: 10px;
@@ -333,6 +335,14 @@ tr.flash td { animation: flash 600ms ease-out; }
         <div class="device">
           <select class="select" id="deviceSelect" aria-label="MIDI input"></select>
           <p class="hint" id="midiDetail"></p>
+        </div>
+      </section>
+
+      <section class="sheet" id="autostartSheet" hidden>
+        <div class="sheet-head"><h3>Startup</h3></div>
+        <div class="device">
+          <label class="check"><input type="checkbox" id="autostart"> Start with Windows</label>
+          <p class="hint">Blendeck waits in the notification area. Click its icon for this page, right-click it to quit.</p>
         </div>
       </section>
     </aside>
@@ -849,8 +859,28 @@ function connectEvents() {
   $('blenderOff').prepend(nap);
 }
 
+// Start with Windows lives in the registry, not the profile: it saves at once.
+function renderAutostart(a) {
+  $('autostartSheet').hidden = !a.supported;
+  $('autostart').checked = a.enabled;
+}
+$('autostart').onchange = async (e) => {
+  const want = e.target.checked;
+  e.target.disabled = true;
+  try {
+    renderAutostart(await api('PUT', '/api/autostart', { enabled: want }));
+    toast(want ? 'Blendeck starts with Windows' : 'Blendeck no longer starts with Windows');
+  } catch (err) {
+    e.target.checked = !want;
+    toast('Could not change it: ' + err.message, true);
+  } finally {
+    e.target.disabled = false;
+  }
+};
+
 async function init() {
   const st = await api('GET', '/api/state');
+  if (st.autostart) renderAutostart(st.autostart);
   $('version').textContent = st.version;
   state.saved = st.config; state.draft = clone(st.config);
   state.live = st.live; state.lastSeq = st.live.last_seq; state.run = st.live.run;

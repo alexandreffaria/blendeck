@@ -28,10 +28,25 @@ const maxBody = 1 << 20
 
 // Server holds the handlers.
 type Server struct {
-	log     *slog.Logger
-	app     *app.App
-	version string
-	port    string
+	log       *slog.Logger
+	app       *app.App
+	version   string
+	port      string
+	autostart Autostart
+}
+
+// Autostart is the "start when I sign in" setting (internal/autostart).
+type Autostart interface {
+	Supported() bool
+	Enabled() (bool, error)
+	Set(on bool) error
+}
+
+// WithAutostart lets the page show and change a; without it the page says
+// starting with the system isn't available.
+func (s *Server) WithAutostart(a Autostart) *Server {
+	s.autostart = a
+	return s
 }
 
 // New makes a Server for an app listening on addr (host:port).
@@ -53,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/learn", s.handleLearn)
 	mux.HandleFunc("POST /api/test", s.handleTest)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("PUT /api/autostart", s.handlePutAutostart)
 	return s.guard(mux)
 }
 
@@ -86,10 +102,29 @@ func (s *Server) guard(next http.Handler) http.Handler {
 }
 
 type stateResponse struct {
-	Version    string        `json:"version"`
-	ConfigPath string        `json:"config_path"`
-	Config     config.Config `json:"config"`
-	Live       app.Snapshot  `json:"live"`
+	Version    string         `json:"version"`
+	ConfigPath string         `json:"config_path"`
+	Config     config.Config  `json:"config"`
+	Live       app.Snapshot   `json:"live"`
+	Autostart  autostartState `json:"autostart"`
+}
+
+type autostartState struct {
+	Supported bool   `json:"supported"`
+	Enabled   bool   `json:"enabled"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (s *Server) autostartState() autostartState {
+	if s.autostart == nil || !s.autostart.Supported() {
+		return autostartState{}
+	}
+	on, err := s.autostart.Enabled()
+	st := autostartState{Supported: true, Enabled: on}
+	if err != nil {
+		st.Error = err.Error()
+	}
+	return st
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +133,34 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ConfigPath: s.app.ConfigPath(),
 		Config:     s.app.Config(),
 		Live:       s.app.Snapshot(),
+		Autostart:  s.autostartState(),
 	})
+}
+
+// handlePutAutostart turns starting with the system on or off:
+// {"enabled":true} or {"enabled":false}.
+func (s *Server) handlePutAutostart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Enabled == nil {
+		writeError(w, http.StatusBadRequest, `send {"enabled": true} or {"enabled": false}`)
+		return
+	}
+	if s.autostart == nil || !s.autostart.Supported() {
+		writeError(w, http.StatusConflict, "starting with the system isn't available for this copy of Blendeck")
+		return
+	}
+	if err := s.autostart.Set(*req.Enabled); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.log.Info("start with Windows", "on", *req.Enabled)
+	writeJSON(w, http.StatusOK, s.autostartState())
 }
 
 func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
