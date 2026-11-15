@@ -1362,6 +1362,18 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.frame_current, 1000)
         self.assertEqual(addon.shuttle.speed, 0)
 
+    def test_stops_at_the_preview_range(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        scene.use_preview_range = True
+        scene.frame_preview_start, scene.frame_preview_end = 80, 200
+        self.addCleanup(delattr, scene, "use_preview_range")
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(60.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, 80)
+        self.assertEqual(addon.shuttle.speed, 0)
+
     def test_scrub_while_shuttling_carries_on_from_there(self):
         advance = self._clock()
         scene = self._shuttle_scene()

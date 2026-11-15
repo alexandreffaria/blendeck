@@ -636,10 +636,19 @@ def _shuttle(scene, direction):
         return 0
 
 
+def _play_range(scene):
+    """The frames playback runs over: the preview range when it is on, as
+    for Blender's own playback, else the scene's."""
+    if getattr(scene, "use_preview_range", False):
+        return scene.frame_preview_start, scene.frame_preview_end
+    return scene.frame_start, scene.frame_end
+
+
 def _shuttle_tick(scene):
     """Moves the playhead for playback the add-on drives, once per timer
     tick. It picks up from wherever something else (the scrub knob, an
-    edit, the mouse) put the playhead, and stops at the scene's ends, when
+    edit, the mouse) put the playhead, and stops at the ends of the play
+    range (see _play_range), when
     the edited scene changes, or when Blender's own playback starts. Frames
     it can't show in time are skipped, like Blender's Frame Dropping.
     Never raises."""
@@ -653,7 +662,8 @@ def _shuttle_tick(scene):
             _shuttle_anchor(scene)
         fps = scene.render.fps / scene.render.fps_base
         elapsed = time.monotonic() - shuttle.since
-        frame, at_end = protocol.shuttle_frame(shuttle.origin, elapsed, fps, shuttle.speed, scene.frame_start, scene.frame_end)
+        start, end = _play_range(scene)
+        frame, at_end = protocol.shuttle_frame(shuttle.origin, elapsed, fps, shuttle.speed, start, end)
         if frame != scene.frame_current:
             scene.frame_set(frame)
         shuttle.last = scene.frame_current
