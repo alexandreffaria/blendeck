@@ -582,8 +582,10 @@ def trim_plan(clips, frame, frames):
 
     How far: a handle never goes past its strip's content (lo, hi), never
     leaves the strip less than one frame long, and stops against a strip
-    that stays on its channel. Every handle moves the same amount, so they
-    all stop at the first limit; with none left that way, nothing moves."""
+    that stays on its channel. An effect whose edge is there (it follows
+    its inputs) stops them against the strips on its own channel too.
+    Every handle moves the same amount, so they all stop at the first
+    limit; with none left that way, nothing moves."""
     if frames == 0:
         return None
     starts = [i for i, c in enumerate(clips) if not c.locked and not c.follows and c.start == frame]
@@ -591,27 +593,33 @@ def trim_plan(clips, frame, frames):
     if not starts and not ends:
         return None
     moving_starts, moving_ends = set(starts), set(ends)
+    # An effect with an edge there grows and shrinks with its inputs, so it
+    # must not run into its own neighbors either
+    edge_starts = moving_starts | {i for i, c in enumerate(clips) if c.follows and c.start == frame}
+    edge_ends = moving_ends | {i for i, c in enumerate(clips) if c.follows and c.end == frame}
     shift = frames
     for i in starts:
         c = clips[i]
         if shift > 0:
             shift = min(shift, c.end - 1 - c.start)
-            continue
-        if c.lo is not None:
+        elif c.lo is not None:
             shift = max(shift, min(0, c.lo - c.start))
-        for j, o in enumerate(clips):
-            # A neighbor whose end rolls with this start is no limit
-            if j != i and o.channel == c.channel and o.end <= c.start and j not in moving_ends:
-                shift = max(shift, o.end - c.start)
     for i in ends:
         c = clips[i]
         if shift < 0:
             shift = max(shift, c.start + 1 - c.end)
-            continue
-        if c.hi is not None:
+        elif c.hi is not None:
             shift = min(shift, max(0, c.hi - c.end))
+    for i in sorted(edge_starts):
+        c = clips[i]
         for j, o in enumerate(clips):
-            if j != i and o.channel == c.channel and o.start >= c.end and j not in moving_starts:
+            # A neighbor whose end rolls with this start is no limit
+            if shift < 0 and j != i and o.channel == c.channel and o.end <= c.start and j not in edge_ends:
+                shift = max(shift, o.end - c.start)
+    for i in sorted(edge_ends):
+        c = clips[i]
+        for j, o in enumerate(clips):
+            if shift > 0 and j != i and o.channel == c.channel and o.start >= c.end and j not in edge_starts:
                 shift = min(shift, o.start - c.end)
     if shift == 0 or shift * frames < 0:
         return None

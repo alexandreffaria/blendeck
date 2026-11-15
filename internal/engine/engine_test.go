@@ -1521,3 +1521,32 @@ func TestTrimClicks(t *testing.T) {
 		t.Fatalf("%s %v", b, err)
 	}
 }
+
+// With Fn held and no Fn trim binding, the trim knob still trims: Fn only
+// switches a control that has an Fn binding.
+func TestTrimWithFnHeld(t *testing.T) {
+	e := New(config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "trim", Name: "Trim", Control: config.Control{Type: "cc", Channel: 1, Number: 33}, Encoder: config.EncoderTwos, Action: config.ActionTrim, Step: 1},
+		},
+	})
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 33, Value: 127})
+	if hit.Binding != "trim" || hit.Command == nil || *hit.Command != (Command{Type: "trim", Frames: -1}) {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+}
+
+// The default trim binding is not learned yet: no knob may reach it.
+func TestTrimNotLearnedIgnored(t *testing.T) {
+	c := config.Default()
+	e := New(c.Profiles[0])
+	for _, n := range []int{-1, 0, 33} {
+		hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: n & 0x7F, Value: 1})
+		if hit.Binding != "" || hit.Command != nil {
+			t.Fatalf("cc %d reached an unlearned binding: %+v", n, hit)
+		}
+	}
+}

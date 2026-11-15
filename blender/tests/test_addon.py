@@ -2494,6 +2494,41 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "trim", "frames": 1}], PREFS)
         self.assertEqual(addon.link.move_undo, 0.0)
 
+    def test_trim_failure_puts_back_what_moved(self):
+        ed = self._trim_editor()
+        SCENE.frame_current = 100
+        ed.strips[2].fail = True  # A1's handle can't move, after V1's did
+        addon._apply([{"type": "trim", "frames": 5}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V1", "A1")], [("A1", 50, 100), ("V1", 50, 100)], "picture and sound stay in step")
+        self.assertEqual(SCENE.frame_current, 100)
+        self.assertEqual(addon.link.move_undo, 0.0, "nothing changed: no undo step")
+
+    def test_trim_on_blender_4_2(self):
+        # Before 4.4: "sequences" and frame_final_start/end; before 5, the
+        # footage runs from frame_start for frame_duration frames
+        ed = _Editor()
+        ed.sequences = ed.strips
+        del ed.strips
+
+        class Old:
+            type = "MOVIE"
+
+            def __init__(self, start, end, frame_start, duration):
+                self.name, self.channel, self.lock, self.select = "old", 1, False, False
+                self.frame_final_start, self.frame_final_end = start, end
+                self.frame_start, self.frame_duration = frame_start, duration
+
+        old = Old(50, 100, 40, 80)  # footage 40..120
+        ed.sequences.append(old)
+        SCENE.sequence_editor = ed
+        SCENE.frame_current = 50
+        addon._apply([{"type": "trim", "frames": -100}], PREFS)
+        self.assertEqual((old.frame_final_start, SCENE.frame_current), (40, 40))
+        addon._apply([{"type": "trim", "frames": 1}], PREFS)
+        SCENE.frame_current = 100
+        addon._apply([{"type": "trim", "frames": 100}], PREFS)
+        self.assertEqual((old.frame_final_start, old.frame_final_end, SCENE.frame_current), (41, 120, 120))
+
     def test_trim_and_move_each_get_an_undo_step(self):
         ed = self._trim_editor()
         ed.strips[1].select = True  # V2

@@ -531,6 +531,17 @@ class TrimTest(unittest.TestCase):
         self.assertIsNone(protocol.trim_plan(clips, 100, 4))
         self.assertIsNone(protocol.trim_plan(clips, 200, 4), "nothing unlocked ends there")
 
+    def test_an_effect_stops_at_its_own_neighbors(self):
+        C = self.C
+        # A transform on V2 (channel 3, following it) with a title 5
+        # frames before it on channel 3
+        clips = self.gap() + [C(120, 200, channel=3, follows=True), C(100, 115, channel=3)]
+        self.assertEqual(protocol.trim_plan(clips, 120, -100).shift, -5)
+        # A neighbor touching the effect rolls with it instead: it ends at
+        # the playhead too, and stops one frame from its own start
+        clips[5] = C(100, 120, channel=3)
+        self.assertEqual(protocol.trim_plan(clips, 120, -100), protocol.TrimPlan([1, 3], [5], -19, 101))
+
     def test_no_limit_without_footage(self):
         C = self.C
         clips = [C(10, 20, channel=4)]  # a color strip

@@ -667,10 +667,12 @@ def _content(strip):
             return None, None
     elif kind not in _CONTENT_TYPES:
         return None, None
-    try:
+    if hasattr(strip, "content_start") and hasattr(strip, "content_end"):
         return int(math.ceil(strip.content_start)), int(math.floor(strip.content_end))
-    except AttributeError:
-        return None, None  # before Blender 5: no content_start / content_end
+    # Before Blender 5: the content starts at frame_start and lasts
+    # frame_duration frames
+    start = strip.frame_start
+    return int(math.ceil(start)), int(math.floor(start + strip.frame_duration))
 
 
 def _set_handle(strip, which, frame):
@@ -720,17 +722,25 @@ def _trim(scene, frames):
         order = [(i, "start") for i in plan.starts] + [(i, "end") for i in plan.ends]
     else:
         order = [(i, "end") for i in plan.ends] + [(i, "start") for i in plan.starts]
-    changed = False
+    done = []
     for i, which in order:
         clip = clips[i]
         frame = (clip.start if which == "start" else clip.end) + plan.shift
         try:
             _set_handle(items[i], which, frame)
-            changed = True
+            done.append((i, which))
         except Exception as e:
-            # Stop here: the rest could grow onto a strip that didn't shrink
+            # Put back the handles already moved, last first, so a picture
+            # and its sound never end up out of step
             print("Blendeck: trim couldn't move a handle:", e)
+            for k, w in reversed(done):
+                try:
+                    _set_handle(items[k], w, clips[k].start if w == "start" else clips[k].end)
+                except Exception as e2:
+                    print("Blendeck: trim couldn't put a handle back:", e2)
+            done = []
             break
+    changed = bool(done)
     if changed:
         try:
             _seek(scene, plan.playhead)
