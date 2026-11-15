@@ -373,9 +373,15 @@ func TestShuttleBindings(t *testing.T) {
 func TestJumpEditBinding(t *testing.T) {
 	c := Default()
 	b := byID(&c, "jump-edit")
-	if b.Action != ActionJumpEdit || b.Name != "Jump to previous / next cut" || b.Control.Learned() || b.Control.Type != "cc" || b.Modifier != "" || b.Step != 0 || b.Encoder != EncoderTwos {
+	if b.Action != ActionJumpEdit || b.Name != "Jump between video edits" || b.Control.Learned() || b.Control.Type != "cc" || b.Modifier != "" || b.Step != 0 || b.Encoder != EncoderTwos {
 		t.Fatalf("default jump-edit binding = %+v", b)
 	}
+	// Fn + the same knob stops at every cut, sound included (decision 20261115s2rt)
+	all := byID(&c, "jump-cut")
+	if all.Action != ActionJumpCut || all.Name != "Jump between all cuts" || all.Control.Learned() || all.Control.Type != "cc" || all.Modifier != "Fn" || all.Step != 0 || all.Encoder != EncoderTwos {
+		t.Fatalf("default jump-cut binding = %+v", all)
+	}
+	all.Control = Control{"cc", 1, 48}
 	// The owner's knob: cc 48, 1 clockwise and 127 counter-clockwise
 	b.Control = Control{"cc", 1, 48}
 	if err := c.Validate(); err != nil {
@@ -391,12 +397,14 @@ func TestJumpEditBinding(t *testing.T) {
 		"no encoder":  {func(b *Binding) { b.Encoder = "" }, "unknown encoder"},
 		"odd encoder": {func(b *Binding) { b.Encoder = "absolute" }, "unknown encoder"},
 	} {
-		c := Default()
-		b := byID(&c, "jump-edit")
-		b.Control = Control{"cc", 1, 48}
-		tc.mod(b)
-		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("%s: err = %v", name, err)
+		for _, id := range []string{"jump-edit", "jump-cut"} {
+			c := Default()
+			b := byID(&c, id)
+			b.Control = Control{"cc", 1, 48}
+			tc.mod(b)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%s %s: err = %v", id, name, err)
+			}
 		}
 	}
 }

@@ -112,8 +112,8 @@ class _Strip:
     the left part and adds the right part to the same level, copying lock
     and selection like the real Strip.split. Every split goes into log."""
 
-    def __init__(self, name, channel, start, end, log, level, lock=False, select=False, fail=False):
-        self.name, self.channel = name, channel
+    def __init__(self, name, channel, start, end, log, level, lock=False, select=False, fail=False, type="MOVIE"):
+        self.name, self.channel, self.type = name, channel, type
         self.frame_final_start, self.frame_final_end = start, end
         self.lock, self.select, self.fail = lock, select, fail
         self.log, self.level = log, level
@@ -1656,7 +1656,7 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "shuttle", "clicks": 1}] * 5, PREFS)  # 2x
         addon._apply([], PREFS)
         self.assertEqual([p[0] for p in plays], ["C:/edit/A.wav"])
-        addon._apply([{"type": "jump", "clicks": 1}], PREFS)  # to the cut on 200
+        addon._apply([{"type": "jump", "clicks": 1, "sound": True}], PREFS)  # to the cut on 200
         self.assertEqual(scene.frame_current, 200)
         addon._apply([], PREFS)
         self.assertEqual(plays[0][2].status, 0, "A's sound stopped")
@@ -1823,30 +1823,44 @@ class AddonTest(unittest.TestCase):
         ed.add("V1", 1, 1, 50)
         ed.add("V2", 1, 50, 100)
         ed.add("V3", 1, 100, 200)
-        ed.add("A1", 2, 1, 70)
-        ed.add("A2", 2, 70, 200)
-        ed.add("T", 3, 150, 180)
+        ed.add("A1", 2, 1, 70, type="SOUND")
+        ed.add("A2", 2, 70, 200, type="SOUND")
+        ed.add("T", 3, 150, 180, type="TEXT")
         SCENE.sequence_editor = ed
         SCENE.frame_current = 60
         return ed
 
     def test_jump_right_and_left(self):
+        # The knob alone stops where the picture changes: the audio cut on
+        # 70 is skipped, the title's ends count (decision 20261115s2rt)
         self._jump_editor()
-        for clicks, want in ((1, 70), (1, 100), (1, 150), (-1, 100), (-3, 1), (-1, 1), (2, 70), (99, 200), (1, 200)):
+        for clicks, want in ((1, 100), (1, 150), (-1, 100), (-1, 50), (-2, 1), (-1, 1), (2, 100), (99, 200), (1, 200)):
             addon._apply([{"type": "jump", "clicks": clicks}], PREFS)
             self.assertEqual(SCENE.frame_current, want, (clicks, want))
         self.assertEqual(UNDO, [], "a jump is no edit")
+
+    def test_jump_with_sound(self):
+        # With Fn, every cut counts, sound strips' too
+        self._jump_editor()
+        for clicks, want in ((1, 70), (1, 100), (1, 150), (-1, 100), (-3, 1), (-1, 1), (2, 70), (99, 200), (1, 200)):
+            addon._apply([{"type": "jump", "clicks": clicks, "sound": True}], PREFS)
+            self.assertEqual(SCENE.frame_current, want, (clicks, want))
+        # Both kinds in one read, in order
+        SCENE.frame_current = 60
+        addon._apply([{"type": "jump", "clicks": 1, "sound": True}, {"type": "jump", "clicks": 1}], PREFS)
+        self.assertEqual(SCENE.frame_current, 100)
 
     def test_jump_skips_muted(self):
         ed = self._jump_editor()
         ed.strips[3].mute = True  # A1: its end at 70 no longer counts, A2's start still does
         ed.channels[3].mute = True  # the title
-        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        J = {"type": "jump", "clicks": 1, "sound": True}
+        addon._apply([J], PREFS)
         self.assertEqual(SCENE.frame_current, 70)
         ed.strips[4].mute = True  # A2 too
-        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        addon._apply([J], PREFS)
         self.assertEqual(SCENE.frame_current, 100)
-        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        addon._apply([J], PREFS)
         self.assertEqual(SCENE.frame_current, 200, "the title's channel is muted")
 
     def test_jump_inside_meta(self):
@@ -1862,7 +1876,7 @@ class AddonTest(unittest.TestCase):
         ed = self._jump_editor()
         PREFS.follow_selection = True
         FRAME_HANDLERS.append(addon.on_frame_change)
-        addon._apply([{"type": "jump", "clicks": 1}], PREFS)
+        addon._apply([{"type": "jump", "clicks": 1, "sound": True}], PREFS)
         self.assertEqual(SCENE.frame_current, 70)
         self.assertEqual(sorted(s.name for s in ed.strips if s.select), ["A2", "V2"])
 
@@ -1899,8 +1913,8 @@ class AddonTest(unittest.TestCase):
         read_lines(conn)
         try:
             conn.sendall(b'{"type":"jump","clicks":1}\n{"type":"jump","clicks":1}\n')
-            self.assertTrue(tick_until(lambda: SCENE.frame_current == 100))
-            self.assertTrue(any(m.get("type") == "state" and m.get("frame") == 100 for m in read_lines(conn)))
+            self.assertTrue(tick_until(lambda: SCENE.frame_current == 150))
+            self.assertTrue(any(m.get("type") == "state" and m.get("frame") == 150 for m in read_lines(conn)))
         finally:
             conn.close()
             bridge.close()
