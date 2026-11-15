@@ -44,6 +44,8 @@ MAX_JUMPS_PER_TICK = 32
 # are added up, so this only bounds a flood that keeps switching between
 # the knob with and without Fn.
 MAX_MOVES_PER_TICK = 32
+# Trim knob commands applied per tick at most, like MAX_MOVES_PER_TICK.
+MAX_TRIMS_PER_TICK = 32
 # Playback the add-on drives has sound going forward up to MAX_AUDIO_SPEED
 # (5x), at its normal pitch (decision 202611150o5i); faster, and backwards
 # (decision 2026111598qg), it is silent. Sound is
@@ -166,7 +168,9 @@ def edit_steps(messages):
     together. Moves of the selected strips and those after them are
     ("move", frames), of the selected strips and those before them
     ("move_before", frames): moves of one kind in a row are added up, at
-    most MAX_MOVES_PER_TICK commands count. Malformed commands are ignored."""
+    most MAX_MOVES_PER_TICK commands count. Turns of the trim knob are
+    ("trim", frames), added up the same way, at most MAX_TRIMS_PER_TICK
+    commands. Malformed commands are ignored."""
     steps = []
     cuts = 0
     undos = 0
@@ -175,6 +179,7 @@ def edit_steps(messages):
     shuttles = 0
     jumps = 0
     moves = 0
+    trims = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -244,6 +249,17 @@ def edit_steps(messages):
                     steps.pop()  # right then left: back where it was
             else:
                 steps.append((step, frames))
+        elif kind == "trim":
+            frames = m.get("frames")
+            if type(frames) is not int or frames == 0 or trims >= MAX_TRIMS_PER_TICK:
+                continue
+            trims += 1
+            if steps and steps[-1][0] == "trim":
+                steps[-1] = ("trim", steps[-1][1] + frames)
+                if steps[-1][1] == 0:
+                    steps.pop()  # right then left: back where it was
+            else:
+                steps.append(("trim", frames))
     return steps
 
 
@@ -537,6 +553,77 @@ def move_plan(spans, frames, before=False):
         return None
     order = sorted(move, key=lambda i: (spans[i].start, i), reverse=shift > 0)
     return MovePlan(order, shift)
+
+
+# A strip as trim_plan sees it: start..end (end exclusive), whether it is
+# locked (itself or its channel), its channel, whether it follows other
+# strips (an effect with inputs: its ends are theirs, it is never trimmed
+# itself), and how far its handles can go: lo and hi are the first frame
+# of its content and the frame after the last one, or None where a handle
+# can go as far as it likes (a color or a text strip, a single image).
+Clip = namedtuple("Clip", "start end locked channel follows lo hi", defaults=(False, 0, False, None, None))
+
+# What the trim knob does. starts and ends: indexes of the strips whose
+# start or end handle moves. shift: frames, right when positive. playhead:
+# where the playhead goes, on the moved handles.
+TrimPlan = namedtuple("TrimPlan", "starts ends shift playhead")
+
+
+def trim_plan(clips, frame, frames):
+    """Plans the trim knob over clips (a list of Clip) with the playhead at
+    frame: the handles at the playhead move frames right, or left when
+    negative, and the playhead goes with them. Returns None when nothing
+    moves.
+
+    Which handles: the start of every unlocked strip that starts at the
+    playhead and the end of every one that ends there, on every channel, so
+    a picture and its sound stay in sync. Where one strip ends and the next
+    starts, both move: the cut between them rolls.
+
+    How far: a handle never goes past its strip's content (lo, hi), never
+    leaves the strip less than one frame long, and stops against a strip
+    that stays on its channel. An effect whose edge is there (it follows
+    its inputs) stops them against the strips on its own channel too.
+    Every handle moves the same amount, so they all stop at the first
+    limit; with none left that way, nothing moves."""
+    if frames == 0:
+        return None
+    starts = [i for i, c in enumerate(clips) if not c.locked and not c.follows and c.start == frame]
+    ends = [i for i, c in enumerate(clips) if not c.locked and not c.follows and c.end == frame]
+    if not starts and not ends:
+        return None
+    moving_starts, moving_ends = set(starts), set(ends)
+    # An effect with an edge there grows and shrinks with its inputs, so it
+    # must not run into its own neighbors either
+    edge_starts = moving_starts | {i for i, c in enumerate(clips) if c.follows and c.start == frame}
+    edge_ends = moving_ends | {i for i, c in enumerate(clips) if c.follows and c.end == frame}
+    shift = frames
+    for i in starts:
+        c = clips[i]
+        if shift > 0:
+            shift = min(shift, c.end - 1 - c.start)
+        elif c.lo is not None:
+            shift = max(shift, min(0, c.lo - c.start))
+    for i in ends:
+        c = clips[i]
+        if shift < 0:
+            shift = max(shift, c.start + 1 - c.end)
+        elif c.hi is not None:
+            shift = min(shift, max(0, c.hi - c.end))
+    for i in sorted(edge_starts):
+        c = clips[i]
+        for j, o in enumerate(clips):
+            # A neighbor whose end rolls with this start is no limit
+            if shift < 0 and j != i and o.channel == c.channel and o.end <= c.start and j not in edge_ends:
+                shift = max(shift, o.end - c.start)
+    for i in sorted(edge_ends):
+        c = clips[i]
+        for j, o in enumerate(clips):
+            if shift > 0 and j != i and o.channel == c.channel and o.start >= c.end and j not in edge_starts:
+                shift = min(shift, o.start - c.end)
+    if shift == 0 or shift * frames < 0:
+        return None
+    return TrimPlan(starts, ends, shift, frame + shift)
 
 
 def _effects_first(delete, spans):

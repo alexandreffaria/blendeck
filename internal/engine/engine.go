@@ -26,7 +26,9 @@ import (
 // with "sound":true it stops at sound strips' too. {"type":"move","frames":N}
 // moves the selected strips and every strip after them N frames (left when
 // negative), stopping against strips that stay; with "before":true it moves
-// the selected strips and every strip before them.
+// the selected strips and every strip before them. {"type":"trim","frames":N}
+// moves the clip handles at the playhead N frames (left when negative),
+// and the playhead with them.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -285,6 +287,10 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 	case config.ActionMoveAfter, config.ActionMoveBefore:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "move", Frames: d * b.Step, Before: b.Action == config.ActionMoveBefore}
+		}
+	case config.ActionTrim:
+		if d := Delta(m.Value, b.Encoder); d != 0 {
+			hit.Command = &Command{Type: "trim", Frames: d * b.Step}
 		}
 	case config.ActionJumpEdit, config.ActionJumpCut:
 		if d := Delta(m.Value, b.Encoder); d != 0 {

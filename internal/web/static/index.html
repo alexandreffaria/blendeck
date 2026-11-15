@@ -377,7 +377,7 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.view_all': 'View whole timeline', 'file.save': 'Save file', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.view_all': 'View whole timeline', 'file.save': 'Save file', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips', 'timeline.trim': 'Trim handle at playhead' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep, config.MaxPanStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
@@ -387,6 +387,7 @@ const STEPS = {
   'timeline.pan': { unit: '% of view', label: 'Percent of the view per click', max: 100, start: 5, verb: 'Panning' },
   'timeline.move_after': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
   'timeline.move_before': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Moving strips' },
+  'timeline.trim': { unit: 'frames', label: 'Frames per click', max: 100000, start: 1, verb: 'Trimming' },
 };
 // Knob actions with no step: an encoder, and one of something per click.
 const FIXED_KNOBS = {
@@ -576,6 +577,9 @@ function describe(ev) {
     } else if (h.command.type === 'move') {
       const f = h.command.frames;
       what = `move ${h.command.before ? 'earlier' : 'later'} strips ${f > 0 ? '+' : ''}${f} frame${Math.abs(f) === 1 ? '' : 's'}`;
+    } else if (h.command.type === 'trim') {
+      const f = h.command.frames;
+      what = `trim handle ${f > 0 ? '+' : ''}${f} frame${Math.abs(f) === 1 ? '' : 's'}`;
     } else if (h.command.type === 'save') {
       what = 'save file';
     } else if (h.command.type === 'view_all') {

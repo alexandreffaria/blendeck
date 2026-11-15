@@ -22,8 +22,9 @@ and keeps profiles.
 | A fifth button you pick | Plays backwards; each further press plays 0.25x faster backwards, up to 8x. Silent | The same |
 | A sixth button you pick | Plays forward (normal speed, with sound); each further press plays 0.25x faster, up to 8x, with sound at its normal pitch up to 5x and silent past that. That sound leaves out strips packed into the .blend, plays retimed strips at their normal speed and ignores volume animation; strips moved with the mouse while it plays are heard where they were until the next press, scrub or edit from the Loupedeck. The opposite button eases off 0.25x a press down to normal speed, then switches direction; play / pause stops and the next play is normal speed. Faster than normal or backwards, they stop at the first or last frame (of the preview range, when it's on and isn't one the Cache Window extension borrowed); normal speed forward is Blender's own playback and loops | The same |
 | A third knob you pick | Jumps the playhead to the next video edit per click right, the previous one per click left: the start and end of every strip that isn't sound, on any channel, like Blender's Up and Down arrows. Sound strips, muted strips and muted channels are skipped; past the last edit it stays put | Stops at every cut, sound strips' too |
-| A fourth knob you pick | Moves the selected strips and every strip after them, on all channels, a frame per click (right or left), like G in the video editor. They stop against the next strip instead of going over it; locked strips stay put. The playhead stays, and one turn of the knob is one Ctrl+Z | Moves the selected strips and every strip before them instead |
+| A fourth knob you pick | Moves the selected strips and every strip after them, on all channels, 10 frames per click (right or left), like G in the video editor. They stop against the next strip instead of going over it; locked strips stay put. The playhead stays, and one turn of the knob is one Ctrl+Z. ("Move selected and earlier strips" can still be bound to a knob of its own) | 1 frame per click |
 | A fifth knob you pick | Slides the timeline view 5% of its width per click: right shows later frames, left earlier ones. Only the view moves: the playhead, the strips and playback stay as they are, so you can look ahead while it plays | The same |
+| A sixth knob you pick | Trims the clip handles at the playhead a frame per click, and the playhead rides along. On a clip's start, left shows more of its beginning and right less; on a clip's end, right shows more of its end and left less. Every clip on any channel with a handle there moves, so a picture and its sound stay in sync; where two clips meet, the cut between them rolls. A handle stops at the end of the clip's footage, at the next clip on its channel, and one frame from the clip's other end; locked strips stay put, and with no handle at the playhead nothing happens. One turn of the knob is one Ctrl+Z. To lengthen a clip: open a gap with the move knob, jump to the clip's start or end, and turn | The same |
 | A seventh button you pick | Zooms and slides every timeline to show the whole edit, like Home over the strips: every strip in view. Only the view changes; the playhead and playback stay as they are | The same |
 | An eighth button you pick | Saves the .blend file in place, like Ctrl+S, after any edit sent with it. A file never saved opens Blender's Save As window, as Ctrl+S does, in the first Blender window; you pick the name and folder. Nothing while you drag a strip or render; the panel shows when it last saved or why it didn't | The same |
 
@@ -58,8 +59,10 @@ slides so the playhead is in the middle, at the same zoom.
    "Play forward / faster" and press the buttons you want for those, and
    on "Jump between video edits" and turn the knob you want for it, then
    on "Jump between all cuts" and turn the same knob with Fn held,
-   and on "Move selected and later strips" and "Move selected and earlier
-   strips" (with Fn) and turn the knob you want for moving strips,
+   and on "Move selected and later strips" and "Move selected and later
+   strips (fine)" (with Fn) and turn the knob you want for moving strips,
+   and on "Trim handle at playhead" and turn the knob you want for
+   trimming,
    and on "Pan timeline" and turn the knob you want for sliding the view,
    and on "View whole timeline" and press the button you want for it,
    and on "Save file" and press the button you want for saving.
@@ -75,7 +78,7 @@ bridge drops it and the add-on reconnects by itself a second later.
 
 - **Monitor**: every MIDI message, live, with what it did. Use it to see
   what a control sends.
-- **Bindings**: control → action, with frames (scrub, moving strips), zoom steps (zoom) or percent of the view (pan) per click and the knob's
+- **Bindings**: control → action, with frames (scrub, moving strips, trimming), zoom steps (zoom) or percent of the view (pan) per click and the knob's
   encoding (most send 1 / 127 for one click right / left). Jumping between
   edits or cuts has an encoding and is always one per click. Button actions
   (cut, undo, ripple delete, playback, view whole timeline, save) have neither.

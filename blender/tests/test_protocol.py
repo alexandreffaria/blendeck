@@ -476,6 +476,88 @@ class MoveTest(unittest.TestCase):
         self.assertEqual(len(protocol.edit_steps(flood)), protocol.MAX_MOVES_PER_TICK)
 
 
+class TrimTest(unittest.TestCase):
+    C = protocol.Clip
+
+    def gap(self):
+        """The owner's flow: video (1) and its sound (2) with a 20-frame gap
+        at 100..120 made by the move knob. Each clip has 30 frames of
+        footage hidden on either side."""
+        C = self.C
+        return [
+            C(50, 100, channel=1, lo=20, hi=130), C(120, 200, channel=1, lo=90, hi=230),
+            C(50, 100, channel=2, lo=20, hi=130), C(120, 200, channel=2, lo=90, hi=230),
+        ]
+
+    def test_start_turned_left_shows_more_of_the_clip(self):
+        p = protocol.trim_plan(self.gap(), 120, -5)
+        self.assertEqual(p, protocol.TrimPlan([1, 3], [], -5, 115))
+        # Into the clip: it gets shorter, down to one frame
+        self.assertEqual(protocol.trim_plan(self.gap(), 120, 7), protocol.TrimPlan([1, 3], [], 7, 127))
+        self.assertEqual(protocol.trim_plan(self.gap(), 120, 500).shift, 79)
+
+    def test_start_stops_at_the_gap_and_the_footage(self):
+        # 20 frames of gap but 30 of footage: the gap wins
+        self.assertEqual(protocol.trim_plan(self.gap(), 120, -100).shift, -20)
+        clips = self.gap()
+        clips[1] = clips[1]._replace(lo=110)  # 10 frames of footage left
+        self.assertEqual(protocol.trim_plan(clips, 120, -100).shift, -10)
+        clips[1] = clips[1]._replace(lo=120)  # none
+        self.assertIsNone(protocol.trim_plan(clips, 120, -1))
+
+    def test_end_mirrors_the_start(self):
+        self.assertEqual(protocol.trim_plan(self.gap(), 100, 8), protocol.TrimPlan([], [0, 2], 8, 108))
+        self.assertEqual(protocol.trim_plan(self.gap(), 100, 100).shift, 20)
+        self.assertEqual(protocol.trim_plan(self.gap(), 100, -100).shift, -49)
+
+    def test_no_handle_at_the_playhead(self):
+        self.assertIsNone(protocol.trim_plan(self.gap(), 110, 5))
+        self.assertIsNone(protocol.trim_plan(self.gap(), 60, -5))
+        self.assertIsNone(protocol.trim_plan(self.gap(), 120, 0))
+
+    def test_where_clips_meet_the_cut_rolls(self):
+        C = self.C
+        clips = [C(50, 100, channel=1, lo=0, hi=110), C(100, 200, channel=1, lo=95, hi=300)]
+        self.assertEqual(protocol.trim_plan(clips, 100, -3), protocol.TrimPlan([1], [0], -3, 97))
+        # The incoming clip has 5 frames of footage before, the outgoing 10 after
+        self.assertEqual(protocol.trim_plan(clips, 100, -50).shift, -5)
+        self.assertEqual(protocol.trim_plan(clips, 100, 50).shift, 10)
+
+    def test_locked_and_effects_stay(self):
+        C = self.C
+        clips = [C(50, 100, channel=1), C(100, 200, channel=1, locked=True), C(100, 200, channel=3, follows=True)]
+        # Only the end of the first moves, and only left: the locked clip is in the way
+        self.assertEqual(protocol.trim_plan(clips, 100, -4), protocol.TrimPlan([], [0], -4, 96))
+        self.assertIsNone(protocol.trim_plan(clips, 100, 4))
+        self.assertIsNone(protocol.trim_plan(clips, 200, 4), "nothing unlocked ends there")
+
+    def test_an_effect_stops_at_its_own_neighbors(self):
+        C = self.C
+        # A transform on V2 (channel 3, following it) with a title 5
+        # frames before it on channel 3
+        clips = self.gap() + [C(120, 200, channel=3, follows=True), C(100, 115, channel=3)]
+        self.assertEqual(protocol.trim_plan(clips, 120, -100).shift, -5)
+        # A neighbor touching the effect rolls with it instead: it ends at
+        # the playhead too, and stops one frame from its own start
+        clips[5] = C(100, 120, channel=3)
+        self.assertEqual(protocol.trim_plan(clips, 120, -100), protocol.TrimPlan([1, 3], [5], -19, 101))
+
+    def test_no_limit_without_footage(self):
+        C = self.C
+        clips = [C(10, 20, channel=4)]  # a color strip
+        self.assertEqual(protocol.trim_plan(clips, 10, -500), protocol.TrimPlan([0], [], -500, -490))
+        self.assertEqual(protocol.trim_plan(clips, 20, 500).shift, 500)
+
+    def test_steps_add_up_and_cap(self):
+        steps = protocol.edit_steps([{"type": "trim", "frames": -1}, {"type": "trim", "frames": -2}, {"type": "scrub", "frames": 1}, {"type": "trim", "frames": 1}])
+        self.assertEqual(steps, [("trim", -3), ("scrub", 1), ("trim", 1)])
+        self.assertEqual(protocol.edit_steps([{"type": "trim", "frames": 1}, {"type": "trim", "frames": -1}]), [])
+        bad = [{"type": "trim"}, {"type": "trim", "frames": True}, {"type": "trim", "frames": 1.5}, {"type": "trim", "frames": 0}]
+        self.assertEqual(protocol.edit_steps(bad), [])
+        flood = [{"type": "trim", "frames": 1}] * (protocol.MAX_TRIMS_PER_TICK + 10)
+        self.assertEqual(protocol.edit_steps(flood), [("trim", protocol.MAX_TRIMS_PER_TICK)])
+
+
 class SelectionTest(unittest.TestCase):
     def spans(self):
         S = protocol.Span
