@@ -272,3 +272,54 @@ func TestRenamedModifierStaysHeld(t *testing.T) {
 		t.Fatalf("knob = %d, want 1 with renamed modifier held", got)
 	}
 }
+
+func ccShiftProfile() config.Profile {
+	p := scrubProfile()
+	p.Modifiers = []config.Modifier{{Name: "Shift", Control: config.Control{Type: "cc", Channel: 1, Number: 64}}}
+	p.Bindings[1].Modifier = "Shift"
+	return p
+}
+
+var shiftDown = midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 64, Value: 127}
+var shiftUp = midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 64, Value: 0}
+
+func TestCCModifierReleasedUnderOtherProfile(t *testing.T) {
+	e := New(ccShiftProfile())
+	e.Handle(shiftDown)
+	other := scrubProfile()
+	other.Modifiers = nil
+	e.SetProfile(other)
+	e.Handle(shiftUp)
+	e.SetProfile(ccShiftProfile())
+	if h := e.Held(); len(h) != 0 {
+		t.Fatalf("held = %v", h)
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("knob = %d, want 10", got)
+	}
+}
+
+func TestUnsavedCCModifierReleasedAfterLearn(t *testing.T) {
+	p := scrubProfile()
+	p.Modifiers = nil
+	e := New(p)
+	e.Learn(LearnBinding, ccShiftProfile().Modifiers)
+	e.Handle(shiftDown)
+	if _, l := e.Handle(knob(1)); l == nil || len(l.Held) != 1 {
+		t.Fatalf("learned %+v", l)
+	}
+	e.Handle(shiftUp)
+	e.SetProfile(ccShiftProfile())
+	if h := e.Held(); len(h) != 0 {
+		t.Fatalf("held = %v after release and save", h)
+	}
+}
+
+func TestReleaseAll(t *testing.T) {
+	e := New(scrubProfile())
+	e.Handle(fnDown)
+	e.ReleaseAll()
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("knob = %d after ReleaseAll, want 10", got)
+	}
+}

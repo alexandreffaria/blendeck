@@ -82,14 +82,24 @@ func newRunID() string {
 // Run is this process's run id.
 func (a *App) RunID() string { return a.run }
 
-// Run handles controller messages until ctx ends.
+// Run handles controller messages until ctx ends. When the device goes away,
+// held buttons are released: their note-offs will never come.
 func (a *App) Run(ctx context.Context, messages <-chan midi.Message) {
+	check := time.NewTicker(250 * time.Millisecond)
+	defer check.Stop()
+	wasConnected := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case m := <-messages:
 			a.Handle(m)
+		case <-check.C:
+			connected := a.conn.Status().State == "connected"
+			if wasConnected && !connected {
+				a.engine.ReleaseAll()
+			}
+			wasConnected = connected
 		}
 	}
 }

@@ -79,6 +79,14 @@ func (e *Engine) SetProfile(p config.Profile) {
 	e.profile = p
 }
 
+// ReleaseAll forgets every held button, for when the device goes away and
+// its releases can never arrive.
+func (e *Engine) ReleaseAll() {
+	e.mu.Lock()
+	e.down = map[config.Control]bool{}
+	e.mu.Unlock()
+}
+
 // Held lists the modifiers currently held down.
 func (e *Engine) Held() []string {
 	e.mu.Lock()
@@ -210,7 +218,10 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 
 	// Button state is tracked before anything else, learn included, so a
 	// release is never lost (Fn stuck held) and a press is never missed
-	if m.Kind == midi.NoteOn || m.Kind == midi.NoteOff || (isMod && ctl.Type == "cc") {
+	// A cc button counts as a button only while it is a modifier, but its
+	// release always clears it, even if it stopped being one meanwhile
+	ccButton := ctl.Type == "cc" && (isMod || (e.down[ctl] && !pressed(m)))
+	if m.Kind == midi.NoteOn || m.Kind == midi.NoteOff || ccButton {
 		if pressed(m) {
 			e.down[ctl] = true
 		} else {
