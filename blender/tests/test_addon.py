@@ -1,6 +1,7 @@
 """Runs the add-on's connection code against a fake bpy and real loopback
 sockets, so the parts that talk to the bridge are tested without Blender."""
 
+import contextlib
 import json
 import os
 import socket
@@ -35,6 +36,50 @@ class _Scene:
         self.frame_current = f
 
 
+class _Zoom:
+    """Fake view2d.zoom_in/zoom_out: records (direction, region name) for
+    each call, using the region the add-on put in temp_override."""
+
+    def __init__(self):
+        self.calls = []
+        self.override = None
+        self.fail_in = set()  # region names whose zoom raises like a failed poll
+
+    @contextlib.contextmanager
+    def temp_override(self, **kw):
+        self.override = kw
+        try:
+            yield
+        finally:
+            self.override = None
+
+    def op(self, direction):
+        def call():
+            region = self.override["region"]
+            if region.name in self.fail_in:
+                raise RuntimeError("Operator bpy.ops.view2d.zoom_in.poll() failed, context is incorrect")
+            self.calls.append((direction, region.name))
+            return {"FINISHED"}
+
+        return call
+
+
+ZOOM = _Zoom()
+
+
+def _region(name, type="WINDOW", width=800, height=300):
+    return types.SimpleNamespace(name=name, type=type, width=width, height=height)
+
+
+def _area(type, view_type, regions):
+    return types.SimpleNamespace(
+        type=type,
+        spaces=types.SimpleNamespace(active=types.SimpleNamespace(view_type=view_type)),
+        regions=regions,
+        tag_redraw=lambda: None,
+    )
+
+
 def _install_fake_bpy():
     bpy = types.ModuleType("bpy")
     prefs = _Prefs()
@@ -44,7 +89,9 @@ def _install_fake_bpy():
         scene=scene,
         sequencer_scene=None,
         window_manager=types.SimpleNamespace(windows=[]),
+        temp_override=ZOOM.temp_override,
     )
+    bpy.ops = types.SimpleNamespace(view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out")))
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
     bpy.props = types.SimpleNamespace(BoolProperty=lambda **k: None, StringProperty=lambda **k: None, IntProperty=lambda **k: None)
@@ -119,7 +166,62 @@ class AddonTest(unittest.TestCase):
         SCENE.frame_current = 10
 
     def tearDown(self):
+        addon.bpy.context.window_manager.windows = []
         addon._close("reset")
+        ZOOM.calls.clear()
+        ZOOM.fail_in.clear()
+
+    def _screen(self):
+        """One window with: a strips timeline, a strips+preview editor, a
+        preview-only editor, a 3D view, and an editor whose strips region
+        is collapsed to nothing."""
+        areas = [
+            _area("SEQUENCE_EDITOR", "SEQUENCER", [_region("header", "HEADER"), _region("strips")]),
+            _area("SEQUENCE_EDITOR", "SEQUENCER_PREVIEW", [_region("preview", "PREVIEW"), _region("both")]),
+            _area("SEQUENCE_EDITOR", "PREVIEW", [_region("preview-only", "PREVIEW"), _region("hidden-a", width=1, height=1)]),
+            _area("VIEW_3D", "", [_region("3d")]),
+            _area("SEQUENCE_EDITOR", "SEQUENCER", [_region("collapsed", height=0)]),
+        ]
+        win = types.SimpleNamespace(screen=types.SimpleNamespace(areas=areas))
+        addon.bpy.context.window_manager.windows = [win]
+
+    def test_zoom_every_timeline(self):
+        self._screen()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        def net(region):
+            return ZOOM.calls.count(("in", region)) - ZOOM.calls.count(("out", region))
+
+        # In and out in one read cancel down to 2 in (a split read gives
+        # the same net zoom); scrub alongside still applies
+        conn.sendall(b'{"type":"zoom","clicks":3}\n{"type":"zoom","clicks":-1}\n{"type":"scrub","frames":5}\n')
+        self.assertTrue(tick_until(lambda: net("strips") == 2 and net("both") == 2))
+        self.assertEqual({r for _, r in ZOOM.calls}, {"strips", "both"})
+        self.assertEqual(SCENE.frame_current, 15)
+        ZOOM.calls.clear()
+        conn.sendall(b'{"type":"zoom","clicks":-2}\n')
+        self.assertTrue(tick_until(lambda: len(ZOOM.calls) == 4))
+        self.assertEqual(set(ZOOM.calls), {("out", "strips"), ("out", "both")})
+        conn.close()
+        bridge.close()
+
+    def test_zoom_capped_per_tick(self):
+        self._screen()
+        addon._zoom(addon.protocol.total_zoom([{"type": "zoom", "clicks": 10**6}]))
+        self.assertEqual(ZOOM.calls.count(("in", "strips")), addon.protocol.MAX_ZOOM_PER_TICK)
+
+    def test_zoom_failure_skips_that_editor(self):
+        self._screen()
+        ZOOM.fail_in.add("strips")
+        addon._zoom(2)  # must not raise
+        self.assertEqual(ZOOM.calls, [("in", "both"), ("in", "both")])
+
+    def test_zoom_without_windows(self):
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
+        addon._zoom(1)
+        self.assertEqual(ZOOM.calls, [])
 
     def test_closed_port_never_blocks(self):
         PREFS.port = free_port()
