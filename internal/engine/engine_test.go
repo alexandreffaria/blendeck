@@ -880,3 +880,162 @@ func TestFnCutButtonStillCuts(t *testing.T) {
 		t.Fatal("Fn + cut button didn't cut")
 	}
 }
+
+// The owner's play / pause button: note 67 on channel 1, pressed with
+// velocity 64.
+var playDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 67, Value: 64}
+var playUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 67, Value: 64}
+
+// playProfile is rippleProfile with the play / pause button learned as
+// note 67.
+func playProfile() config.Profile {
+	p := rippleProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "play-pause" {
+			p.Bindings[i].Control.Number = 67
+		}
+	}
+	return p
+}
+
+// toggles reports whether m sends a play / pause, and fails on any other
+// command.
+func toggles(t *testing.T, e *Engine, m midi.Message) bool {
+	t.Helper()
+	hit, _ := e.Handle(m)
+	if hit.Command == nil {
+		return false
+	}
+	if *hit.Command != (Command{Type: "play_pause"}) {
+		t.Fatalf("command = %+v, want a play / pause", hit.Command)
+	}
+	return true
+}
+
+// One toggle per press: the release must not toggle it back.
+func TestPlayPauseOncePerPress(t *testing.T) {
+	e := New(playProfile())
+	hit, _ := e.Handle(playDown)
+	if hit.Binding != "play-pause" || hit.Command == nil || hit.Command.Type != "play_pause" {
+		t.Fatalf("press: %+v", hit)
+	}
+	hit, _ = e.Handle(playUp)
+	if hit.Binding != "play-pause" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	if toggles(t, e, midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 67}) {
+		t.Fatal("velocity-0 release toggled")
+	}
+	// Play, pause, play: one toggle each
+	for i := 0; i < 3; i++ {
+		if !toggles(t, e, playDown) {
+			t.Fatalf("press %d didn't toggle", i+2)
+		}
+		if toggles(t, e, playUp) {
+			t.Fatalf("release %d toggled", i+2)
+		}
+	}
+}
+
+// With Fn held and no Fn binding for the button, the plain one still
+// toggles, and releasing Fn in between changes nothing.
+func TestPlayPauseWithFnHeld(t *testing.T) {
+	e := New(playProfile())
+	e.Handle(fnDown)
+	if !toggles(t, e, playDown) {
+		t.Fatal("Fn + press didn't toggle")
+	}
+	if toggles(t, e, playUp) {
+		t.Fatal("Fn + release toggled")
+	}
+	e.Handle(fnUp)
+	if !toggles(t, e, playDown) {
+		t.Fatal("press after Fn release didn't toggle")
+	}
+}
+
+// An Fn binding on the same button wins while Fn is held, and only then.
+func TestPlayPauseFnBindingWins(t *testing.T) {
+	p := playProfile()
+	p.Bindings = append(p.Bindings, config.Binding{ID: "play-fn", Name: "Play / pause (Fn)", Control: config.Control{Type: "note", Channel: 1, Number: 67}, Modifier: "Fn", Action: config.ActionPlayPause})
+	e := New(p)
+	if hit, _ := e.Handle(playDown); hit.Binding != "play-pause" {
+		t.Fatalf("plain press matched %q", hit.Binding)
+	}
+	e.Handle(fnDown)
+	if hit, _ := e.Handle(playDown); hit.Binding != "play-fn" || hit.Command == nil {
+		t.Fatalf("Fn press: %+v", hit)
+	}
+	e.Handle(fnUp)
+	if hit, _ := e.Handle(playDown); hit.Binding != "play-pause" {
+		t.Fatalf("press after Fn release matched %q", hit.Binding)
+	}
+}
+
+func TestPlayPauseNotLearnedIgnored(t *testing.T) {
+	e := New(rippleProfile()) // play / pause still at -1
+	hit, _ := e.Handle(playDown)
+	if hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned play / pause matched: %+v", hit)
+	}
+}
+
+// A cc used as a button toggles at 64 and up, and not on its release.
+func TestPlayPauseOnCCButton(t *testing.T) {
+	p := playProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "play-pause" {
+			p.Bindings[i].Control = config.Control{Type: "cc", Channel: 1, Number: 21}
+		}
+	}
+	e := New(p)
+	cc := func(v int) midi.Message {
+		return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 21, Value: v}
+	}
+	if !toggles(t, e, cc(127)) || !toggles(t, e, cc(64)) {
+		t.Fatal("cc press didn't toggle")
+	}
+	if toggles(t, e, cc(0)) || toggles(t, e, cc(63)) {
+		t.Fatal("cc release toggled")
+	}
+}
+
+// The other buttons and the knob still do their own thing, and only note
+// 67 on channel 1 toggles.
+func TestPlayPauseApartFromOthers(t *testing.T) {
+	e := New(playProfile())
+	if !cuts(t, e, cutDown) {
+		t.Fatal("cut button didn't cut")
+	}
+	if !ripples(t, e, rippleDown) {
+		t.Fatal("ripple delete button didn't delete")
+	}
+	if got := frames(t, e, knob(1)); got != 10 {
+		t.Fatalf("scrub = %d", got)
+	}
+	if toggles(t, e, midi.Message{Kind: midi.NoteOn, Channel: 2, Number: 67, Value: 64}) {
+		t.Fatal("note 67 on channel 2 toggled")
+	}
+	if toggles(t, e, midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 68, Value: 64}) {
+		t.Fatal("note 68 toggled")
+	}
+}
+
+func TestPlayPauseDuringLearnIsCaptured(t *testing.T) {
+	e := New(playProfile())
+	e.Learn(LearnBinding, nil)
+	hit, l := e.Handle(playDown)
+	if hit.Command != nil || l == nil || l.Control != (config.Control{Type: "note", Channel: 1, Number: 67}) {
+		t.Fatalf("hit %+v learned %+v", hit, l)
+	}
+	if toggles(t, e, playUp) {
+		t.Fatal("the release after learning toggled")
+	}
+}
+
+func TestPlayPauseCommandJSON(t *testing.T) {
+	data, _ := json.Marshal(Command{Type: "play_pause"})
+	if string(data) != `{"type":"play_pause"}` {
+		t.Fatalf("got %s", data)
+	}
+}

@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.6.1"
+ADDON_VERSION = "0.7.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -440,7 +440,7 @@ def _ripple_delete(scene):
                 print("Blendeck: ripple delete couldn't move a strip:", e)
         if plan.playhead is not None:
             try:
-                scene.frame_set(plan.playhead)
+                _seek(scene, plan.playhead)
             except Exception as e:
                 print("Blendeck: ripple delete left the playhead:", e)
     if removed:
@@ -474,6 +474,93 @@ def _follow(scene):
     if changed:
         _redraw()
     return changed
+
+
+def _playing():
+    """Whether Blender is playing back, in any window. Never raises."""
+    try:
+        wm = bpy.context.window_manager
+        for win in (wm.windows if wm else ()):
+            screen = win.screen
+            if screen is not None and getattr(screen, "is_animation_playing", False):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _seek(scene, frame):
+    """Moves the playhead to frame. While Blender plays with Sync to Audio
+    (the video editor's default), frame_set alone is undone by the next
+    playback step, which follows the sound: assigning frame_current moves
+    the sound too. frame_set then runs the frame-change handlers right
+    away, so selection has followed before the next edit in the same
+    read."""
+    if _playing():
+        scene.frame_current = frame
+    scene.frame_set(frame)
+
+
+def _window_scene(win):
+    """The scene a window's video editors show: its workspace's sequencer
+    scene in Blender 5, else the window's scene."""
+    return getattr(getattr(win, "workspace", None), "sequencer_scene", None) or getattr(win, "scene", None)
+
+
+def _play_context(scene):
+    """Where to start playback from a timer, which has no window:
+    (override, editor found, window found). Playing from a video editor
+    plays the scene it shows; from anywhere else, Blender plays the
+    window's scene, which in Blender 5 can be another one. So: a video
+    editor in a window showing scene (its strips region if it has one),
+    else such a window by itself."""
+    wm = bpy.context.window_manager
+    window = None
+    for win in (wm.windows if wm else ()):
+        screen = win.screen
+        if screen is None:
+            continue
+        if window is None and getattr(win, "scene", None) == scene:
+            window = {"window": win, "screen": screen}
+        if _window_scene(win) != scene:
+            continue
+        for area in screen.areas:
+            if area.type == "SEQUENCE_EDITOR":
+                ctx = {"window": win, "screen": screen, "area": area}
+                for region in area.regions:
+                    if region.type == "WINDOW":
+                        ctx["region"] = region
+                        break
+                return ctx, True, window is not None
+    return window, False, window is not None
+
+
+def _play_pause(scene):
+    """Starts or pauses playback, like Space in the video editor: it
+    plays the scene the edits go to, and a pause leaves the playhead where
+    it stopped. Playback makes no undo steps. Never raises. Returns what it
+    did ("play", "play_window", "pause") or None."""
+    try:
+        playing = _playing()
+        ctx, editor, window = (None, False, False) if playing else _play_context(scene)
+        what = protocol.play_pause_plan(playing, editor, window)
+        if what is None:
+            print("Blendeck: play skipped: no video editor or window shows", scene.name)
+            return None
+        if what == "pause":
+            ctx, why = _undo_context()
+            if why is not None:
+                print("Blendeck: pause skipped:", why)
+                return None
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.screen.animation_cancel(restore_frame=False)
+        else:
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.screen.animation_play()
+    except Exception as e:
+        print("Blendeck: play / pause skipped:", e)
+        return None
+    return what
 
 
 def _rendering():
@@ -525,9 +612,12 @@ def _apply(messages, prefs):
             if _ripple_delete(scene) and prefs.follow_selection:
                 _follow(scene)  # the playhead may not have moved
             continue
+        if kind == "play_pause":
+            _play_pause(scene)
+            continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
-            scene.frame_set(target)
+            _seek(scene, target)
     if link.sock is None:
         return  # the read just found the bridge gone
     state = (scene.name, scene.frame_current, scene.frame_start, scene.frame_end, scene.render.fps / scene.render.fps_base)

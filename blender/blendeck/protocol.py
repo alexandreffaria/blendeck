@@ -21,6 +21,9 @@ MAX_UNDOS_PER_TICK = 4
 # do something (the second deletes what slid under the playhead), so they
 # are never merged.
 MAX_RIPPLES_PER_TICK = 8
+# Play / pause presses applied per tick at most. Each press toggles, so two
+# in a row with nothing between cancel out and are dropped together.
+MAX_TOGGLES_PER_TICK = 8
 
 
 class LineBuffer:
@@ -83,20 +86,23 @@ def total_zoom(messages):
 
 
 def edit_steps(messages):
-    """The scrubs, cuts, undos and ripple deletes in messages, in order:
-    ("scrub", frames), ("cut", None), ("undo", None) and
-    ("ripple_delete", None). Order matters, since a cut or delete lands where
-    the playhead is at that moment and an undo takes back what came before
-    it. Scrubs in a row are added up, cuts in a row with no scrub between
+    """The scrubs, cuts, undos, ripple deletes and play / pause presses in
+    messages, in order: ("scrub", frames), ("cut", None), ("undo", None),
+    ("ripple_delete", None) and ("play_pause", None). Order matters, since
+    a cut or delete lands where the playhead is at that moment and an undo
+    takes back what came before it. Scrubs in a row are added up, cuts in a row with no scrub between
     become one (a second cut at the same frame does nothing), and cuts past
     MAX_CUTS_PER_TICK are dropped; scrubs after them still count. Every undo
     is kept, one per press, never merged, up to MAX_UNDOS_PER_TICK, and so is
-    every ripple delete, up to MAX_RIPPLES_PER_TICK. Malformed commands are
-    ignored."""
+    every ripple delete, up to MAX_RIPPLES_PER_TICK. Play / pause presses in
+    a row with nothing between are a toggle each, so a pair cancels out: an
+    even run leaves nothing, an odd one a single toggle. At most
+    MAX_TOGGLES_PER_TICK presses count. Malformed commands are ignored."""
     steps = []
     cuts = 0
     undos = 0
     ripples = 0
+    toggles = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -122,7 +128,32 @@ def edit_steps(messages):
                 continue
             ripples += 1
             steps.append(("ripple_delete", None))
+        elif kind == "play_pause":
+            if toggles >= MAX_TOGGLES_PER_TICK:
+                continue
+            toggles += 1
+            if steps and steps[-1][0] == "play_pause":
+                steps.pop()  # play then pause at once: nothing
+            else:
+                steps.append(("play_pause", None))
     return steps
+
+
+def play_pause_plan(playing, editor, window):
+    """What the play / pause button does, like Space: "pause" if anything
+    is playing (the playhead stays where it stopped), else "play" from a
+    video editor showing the scene the edits go to (editor: one was found),
+    since that plays the scene it shows, which in Blender 5 can differ from
+    the window's. With no such editor, "play_window" if a window shows that
+    scene itself (window), else None: playing from anywhere else would play
+    another scene."""
+    if playing:
+        return "pause"
+    if editor:
+        return "play"
+    if window:
+        return "play_window"
+    return None
 
 
 def undo_blocked(modal_operators, interface_locked):

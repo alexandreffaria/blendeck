@@ -206,6 +206,53 @@ func TestPutConfigRippleDeleteBinding(t *testing.T) {
 	}
 }
 
+func TestTestEndpointPlayPause(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", `{"play_pause":true}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"play_pause":true,"cut":true}`, `{"play_pause":true,"undo":true}`, `{"play_pause":true,"ripple_delete":true}`, `{"play_pause":true,"frames":1}`, `{"play_pause":true,"zoom":1}`, `{"play_pause":false}`, `{"play_pause":1}`, `{"play_pause":"yes"}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"play_pause":true}`); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain play / pause: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"play_pause":true}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host play / pause: %d", rec.Code)
+	}
+}
+
+// The page saves a play / pause binding learned on the owner's button as
+// it sends it: no step, no encoder.
+func TestPutConfigPlayPauseBinding(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+	var st stateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for i, b := range st.Config.Profiles[0].Bindings {
+		if b.Action == config.ActionPlayPause {
+			st.Config.Profiles[0].Bindings[i].Control = config.Control{Type: "note", Channel: 1, Number: 67}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no play / pause binding in the default config")
+	}
+	body, _ := json.Marshal(st.Config)
+	if strings.Contains(string(body), `"action":"playback.toggle","step"`) {
+		t.Fatalf("play / pause binding carries a step: %s", body)
+	}
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestIndexServed(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
