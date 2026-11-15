@@ -124,6 +124,14 @@ class ZoomTest(unittest.TestCase):
         self.assertIsNone(protocol.zoom_plan(0))
 
 
+class CenterPanTest(unittest.TestCase):
+    def test_centers(self):
+        self.assertEqual(protocol.center_pan(400, 800), 0)
+        self.assertEqual(protocol.center_pan(600, 800), 200)
+        self.assertEqual(protocol.center_pan(-100, 800), -500)
+        self.assertEqual(protocol.center_pan(1300, 801), 900)
+
+
 class ZoomAnchorTest(unittest.TestCase):
     def test_on_screen_stays_put(self):
         self.assertEqual(protocol.zoom_anchor(0, 800), (0, 0))

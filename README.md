@@ -32,6 +32,10 @@ moves, the strips under it are selected and the rest deselected, so the cut
 and ripple delete buttons act on them. Select some of them by hand to cut or
 delete only those. Turn it off in the add-on's preferences or its panel.
 
+**The timeline recenters when playback stops**: whatever stops it (play /
+pause, the end of the play range, Space or undo in Blender), every timeline
+slides so the playhead is in the middle, at the same zoom.
+
 ## Setup (Windows)
 
 1. Close the Loupedeck software if it's running; only one program can open

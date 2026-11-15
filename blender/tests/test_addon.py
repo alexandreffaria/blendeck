@@ -1303,6 +1303,76 @@ class AddonTest(unittest.TestCase):
             conn.close()
             bridge.close()
 
+    def _strips_of(self, win):
+        return [a for a in win.screen.areas if a.type == "SEQUENCE_EDITOR"][0].regions[1]
+
+    def test_pause_recenters_on_playhead(self):
+        win = self._play_window()
+        region = self._strips_of(win)
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        read_lines(conn)
+        try:
+            conn.sendall(b'{"type":"play_pause"}\n')
+            self.assertTrue(tick_until(lambda: addon._playing()))
+            SCENE.frame_current = 400  # played on past the right edge of 0..250
+            conn.sendall(b'{"type":"play_pause"}\n')
+            self.assertTrue(tick_until(lambda: not addon._playing()))
+            v = region.view2d
+            self.assertLessEqual(abs(v.view_to_region(400, 0)[0] - 400), 2, "playhead centered")
+            self.assertAlmostEqual(v.xmax - v.xmin, 250, delta=0.01, msg="zoom kept")
+            pans = ZOOM.calls.count(("pan", "strips"))
+            self.assertEqual(pans, 1)
+            for _ in range(5):
+                addon.tick()
+            self.assertEqual(ZOOM.calls.count(("pan", "strips")), pans, "only once per stop")
+        finally:
+            conn.close()
+            bridge.close()
+
+    def test_stop_from_blender_recenters(self):
+        win = self._play_window()
+        region = self._strips_of(win)
+        PLAYER._set(True)
+        addon._watch_stop()
+        SCENE.frame_current = 300
+        self.assertEqual(ZOOM.calls, [], "no recenter while playing")
+        PLAYER._set(False)  # Space in Blender
+        addon._watch_stop()
+        self.assertLessEqual(abs(region.view2d.view_to_region(300, 0)[0] - 400), 2)
+
+    def test_shuttle_reaching_the_end_recenters(self):
+        win = self._play_window()
+        region = self._strips_of(win)
+        addon.shuttle.speed = 200
+        addon._watch_stop()
+        SCENE.frame_current = 250
+        addon._shuttle_stop()
+        addon._watch_stop()
+        self.assertLessEqual(abs(region.view2d.view_to_region(250, 0)[0] - 400), 2)
+
+    def test_no_recenter_without_a_stop(self):
+        self._play_window()
+        for _ in range(3):
+            addon._watch_stop()
+        self.assertEqual(ZOOM.calls, [])
+
+    def test_recenter_failure_skips_that_editor(self):
+        win = self._play_window()
+        broken = self._strips_of(win)
+        broken.view2d = None  # this editor can't be read
+        other = self._play_window()
+        region = self._strips_of(other)
+        PLAYER._set(True)
+        addon._watch_stop()
+        SCENE.frame_current = 300
+        PLAYER._set(False)
+        addon._watch_stop()  # must not raise
+        self.assertFalse(addon.stopped.running)
+        self.assertLessEqual(abs(region.view2d.view_to_region(300, 0)[0] - 400), 2, "the other editor still recentered")
+
     def _clock(self):
         """Puts the add-on on a clock the test moves: returns a function
         that advances it by seconds."""
