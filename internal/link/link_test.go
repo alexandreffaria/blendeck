@@ -75,13 +75,22 @@ func TestRoundTrip(t *testing.T) {
 	if !l.Send(engine.Command{Type: "scrub", Frames: -10}) {
 		t.Fatal("Send found no receiver")
 	}
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	r := bufio.NewReader(conn)
+	line, err := r.ReadBytes('\n')
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got engine.Command
 	if err := json.Unmarshal(line, &got); err != nil || got != (engine.Command{Type: "scrub", Frames: -10}) {
 		t.Fatalf("got %q (%v)", line, err)
+	}
+
+	if !l.Send(engine.Command{Type: "zoom", Clicks: -3}) {
+		t.Fatal("Send found no receiver for zoom")
+	}
+	line, err = r.ReadBytes('\n')
+	if err != nil || string(line) != `{"type":"zoom","clicks":-3}`+"\n" {
+		t.Fatalf("zoom line %q (%v)", line, err)
 	}
 
 	conn.Close()

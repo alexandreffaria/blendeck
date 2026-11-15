@@ -150,19 +150,36 @@ func (s *Server) handleLearn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Snapshot())
 }
 
+// handleTest sends Blender a command as if a knob had turned:
+// {"frames":N} scrubs N frames, {"zoom":N} zooms N steps (positive is in).
 func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Frames int `json:"frames"`
+		Zoom   int `json:"zoom"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.Frames == 0 || req.Frames > config.MaxStep || req.Frames < -config.MaxStep {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("frames must be between -%d and %d, not 0", config.MaxStep, config.MaxStep))
+	var cmd engine.Command
+	switch {
+	case req.Frames != 0 && req.Zoom != 0:
+		writeError(w, http.StatusBadRequest, "send frames or zoom, not both")
 		return
+	case req.Zoom != 0:
+		if req.Zoom > config.MaxZoomStep || req.Zoom < -config.MaxZoomStep {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("zoom must be between -%d and %d, not 0", config.MaxZoomStep, config.MaxZoomStep))
+			return
+		}
+		cmd = engine.Command{Type: "zoom", Clicks: req.Zoom}
+	default:
+		if req.Frames == 0 || req.Frames > config.MaxStep || req.Frames < -config.MaxStep {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("frames must be between -%d and %d, not 0", config.MaxStep, config.MaxStep))
+			return
+		}
+		cmd = engine.Command{Type: "scrub", Frames: req.Frames}
 	}
-	delivered := s.app.Test(engine.Command{Type: "scrub", Frames: req.Frames})
+	delivered := s.app.Test(cmd)
 	writeJSON(w, http.StatusOK, map[string]bool{"delivered": delivered})
 }
 

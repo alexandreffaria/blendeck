@@ -62,6 +62,58 @@ class ScrubTest(unittest.TestCase):
         self.assertEqual(protocol.encode({"type": "hello"}), b'{"type":"hello"}\n')
 
 
+class ZoomTest(unittest.TestCase):
+    def test_total(self):
+        msgs = [
+            {"type": "zoom", "clicks": 3},
+            {"type": "zoom", "clicks": -1},
+            {"type": "zoom", "clicks": "9"},
+            {"type": "zoom", "clicks": True},
+            {"type": "zoom", "clicks": 1.5},
+            {"type": "zoom"},
+            {"type": "scrub", "frames": 10, "clicks": 100},
+        ]
+        self.assertEqual(protocol.total_zoom(msgs), 2)
+
+    def test_scrub_ignores_zoom(self):
+        self.assertEqual(protocol.total_scrub([{"type": "zoom", "clicks": 5, "frames": 5}]), 0)
+
+    def test_total_is_capped(self):
+        cap = protocol.MAX_ZOOM_PER_TICK
+        self.assertEqual(protocol.total_zoom([{"type": "zoom", "clicks": 10**9}]), cap)
+        self.assertEqual(protocol.total_zoom([{"type": "zoom", "clicks": -(10**9)}]), -cap)
+        self.assertEqual(protocol.total_zoom([{"type": "zoom", "clicks": 20}] * 5), cap)
+
+    def test_in_and_out_cancel(self):
+        self.assertEqual(protocol.total_zoom([{"type": "zoom", "clicks": 4}, {"type": "zoom", "clicks": -4}]), 0)
+        self.assertEqual(protocol.total_zoom([]), 0)
+
+    def test_plan(self):
+        self.assertEqual(protocol.zoom_plan(3), ("in", 3))
+        self.assertEqual(protocol.zoom_plan(-2), ("out", 2))
+        self.assertIsNone(protocol.zoom_plan(0))
+
+
+class ZoomAnchorTest(unittest.TestCase):
+    def test_on_screen_stays_put(self):
+        self.assertEqual(protocol.zoom_anchor(0, 800), (0, 0))
+        self.assertEqual(protocol.zoom_anchor(150, 800), (0, 150))
+        self.assertEqual(protocol.zoom_anchor(800, 800), (0, 800))
+
+    def test_off_screen_centers_first(self):
+        # Right of the view: pan right by the distance past the middle
+        self.assertEqual(protocol.zoom_anchor(1300, 800), (900, 400))
+        # Left of the view: pan left
+        self.assertEqual(protocol.zoom_anchor(-50, 800), (-450, 400))
+        self.assertEqual(protocol.zoom_anchor(-1, 801), (-401, 400))
+
+    def test_correction(self):
+        self.assertEqual(protocol.zoom_correction(170, 150), 20)
+        self.assertEqual(protocol.zoom_correction(130, 150), -20)
+        self.assertEqual(protocol.zoom_correction(150, 150), 0)
+        self.assertEqual(protocol.zoom_correction(150.6, 150), 1)
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

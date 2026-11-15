@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -321,5 +322,131 @@ func TestReleaseAll(t *testing.T) {
 	e.ReleaseAll()
 	if got := frames(t, e, knob(1)); got != 10 {
 		t.Fatalf("knob = %d after ReleaseAll, want 10", got)
+	}
+}
+
+func zoomKnob(v int) midi.Message {
+	return midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 6, Value: v}
+}
+
+// zoomProfile has the scrub knob on CC 5 and the zoom knob on CC 6, both
+// with an Fn version.
+func zoomProfile() config.Profile {
+	p := scrubProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].Action == config.ActionZoom {
+			p.Bindings[i].Control.Number = 6
+		}
+	}
+	return p
+}
+
+// zoomed returns the zoom clicks m sends, or 0 when it sends no zoom.
+func zoomed(t *testing.T, e *Engine, m midi.Message) int {
+	t.Helper()
+	hit, _ := e.Handle(m)
+	if hit.Command == nil {
+		return 0
+	}
+	if hit.Command.Type != "zoom" || hit.Command.Frames != 0 {
+		t.Fatalf("command = %+v, want a zoom", hit.Command)
+	}
+	return hit.Command.Clicks
+}
+
+// Like the scrub knob: a plain click is coarse (4 steps), Fn makes it fine (1).
+func TestZoomFourAndFnOne(t *testing.T) {
+	e := New(zoomProfile())
+	if got := zoomed(t, e, zoomKnob(1)); got != 4 {
+		t.Fatalf("one click right = %d, want 4 (zoom in)", got)
+	}
+	if got := zoomed(t, e, zoomKnob(127)); got != -4 {
+		t.Fatalf("one click left = %d, want -4 (zoom out)", got)
+	}
+	if got := zoomed(t, e, zoomKnob(3)); got != 12 {
+		t.Fatalf("three clicks at once = %d, want 12", got)
+	}
+	e.Handle(fnDown)
+	if got := zoomed(t, e, zoomKnob(1)); got != 1 {
+		t.Fatalf("fn + right = %d, want 1", got)
+	}
+	if got := zoomed(t, e, zoomKnob(127)); got != -1 {
+		t.Fatalf("fn + left = %d, want -1", got)
+	}
+	e.Handle(fnUp)
+	if got := zoomed(t, e, zoomKnob(1)); got != 4 {
+		t.Fatalf("after fn release = %d, want 4", got)
+	}
+}
+
+// The scrub and zoom knobs don't leak into each other, with or without Fn.
+func TestZoomAndScrubKnobsApart(t *testing.T) {
+	e := New(zoomProfile())
+	hit, _ := e.Handle(knob(1))
+	if hit.Binding != "scrub" || hit.Command == nil || hit.Command.Type != "scrub" || hit.Command.Clicks != 0 {
+		t.Fatalf("scrub knob: %+v", hit)
+	}
+	hit, _ = e.Handle(zoomKnob(1))
+	if hit.Binding != "zoom" || hit.Command == nil || hit.Command.Type != "zoom" {
+		t.Fatalf("zoom knob: %+v", hit)
+	}
+	e.Handle(fnDown)
+	if hit, _ = e.Handle(zoomKnob(1)); hit.Binding != "zoom-fine" {
+		t.Fatalf("fn + zoom knob: %+v", hit)
+	}
+	if hit, _ = e.Handle(knob(1)); hit.Binding != "scrub-fine" {
+		t.Fatalf("fn + scrub knob: %+v", hit)
+	}
+}
+
+func TestZoomWithoutFineBindingFallsBack(t *testing.T) {
+	p := zoomProfile()
+	var kept []config.Binding
+	for _, b := range p.Bindings {
+		if b.ID != "zoom-fine" {
+			kept = append(kept, b)
+		}
+	}
+	p.Bindings = kept
+	e := New(p)
+	e.Handle(fnDown)
+	if got := zoomed(t, e, zoomKnob(1)); got != 4 {
+		t.Fatalf("got %d, want 4 from the plain binding", got)
+	}
+}
+
+func TestZoomNotLearnedIgnored(t *testing.T) {
+	e := New(scrubProfile()) // zoom bindings still at number -1
+	hit, _ := e.Handle(zoomKnob(1))
+	if hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned zoom matched: %+v", hit)
+	}
+}
+
+func TestZoomZeroDeltaSendsNothing(t *testing.T) {
+	e := New(zoomProfile())
+	hit, _ := e.Handle(zoomKnob(0))
+	if hit.Command != nil || hit.Binding != "zoom" {
+		t.Fatalf("hit = %+v", hit)
+	}
+}
+
+func TestZoomOffsetEncoder(t *testing.T) {
+	p := zoomProfile()
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "zoom" {
+			p.Bindings[i].Encoder = config.EncoderOffset
+		}
+	}
+	e := New(p)
+	if got := zoomed(t, e, zoomKnob(63)); got != -4 {
+		t.Fatalf("offset 63 = %d, want -4", got)
+	}
+}
+
+func TestZoomCommandJSON(t *testing.T) {
+	data, _ := json.Marshal(Command{Type: "zoom", Clicks: -2})
+	if string(data) != `{"type":"zoom","clicks":-2}` {
+		t.Fatalf("got %s", data)
 	}
 }

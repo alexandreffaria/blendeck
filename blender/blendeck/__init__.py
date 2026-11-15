@@ -13,7 +13,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.1.3"
+ADDON_VERSION = "0.2.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -173,7 +173,80 @@ def _read():
     return messages
 
 
+def _timelines():
+    """(window, area, region) for every video editor showing a timeline: the
+    WINDOW region, which is the strips view. A Preview-only editor's WINDOW
+    region is hidden (no size) and is skipped."""
+    wm = bpy.context.window_manager
+    if not wm:
+        return
+    for win in wm.windows:
+        screen = win.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != "SEQUENCE_EDITOR":
+                continue
+            space = area.spaces.active
+            if getattr(space, "view_type", "SEQUENCER") not in ("SEQUENCER", "SEQUENCER_PREVIEW"):
+                continue
+            for region in area.regions:
+                if region.type == "WINDOW" and region.width > 1 and region.height > 1:
+                    yield win, area, region
+                    break
+
+
+def _playhead_x(region, frame):
+    """Where frame is drawn in region, in pixels from its left edge (may be
+    outside 0..width when the playhead is off screen)."""
+    v2d = region.view2d
+    _, y = v2d.region_to_view(0, region.height // 2)
+    x, _ = v2d.view_to_region(frame, y, clip=False)
+    return x
+
+
+def _zoom_one(region, op, times):
+    """Zooms one timeline times steps around its playhead: the playhead keeps
+    its spot on screen, or is centered first if it is off screen. Runs inside
+    that editor's temp_override."""
+    scene = _scene()
+    if scene is None:
+        for _ in range(times):
+            op()
+        return
+    frame = scene.frame_current
+    pre, target = protocol.zoom_anchor(_playhead_x(region, frame), region.width)
+    if pre:
+        bpy.ops.view2d.pan(deltax=pre, deltay=0)
+    # view2d.zoom_in/out zoom around the view's middle; one pan afterwards
+    # puts the playhead back where it was
+    for _ in range(times):
+        op()
+    shift = protocol.zoom_correction(_playhead_x(region, frame), target)
+    if shift:
+        bpy.ops.view2d.pan(deltax=shift, deltay=0)
+
+
+def _zoom(clicks):
+    """Zooms every timeline in (clicks > 0) or out, one view2d zoom step per
+    click, around the playhead. In the video editor that zooms time only.
+    An editor that fails is skipped, never raised: one bad editor must not
+    cost the connection."""
+    plan = protocol.zoom_plan(clicks)
+    if plan is None:
+        return
+    direction, times = plan
+    op = bpy.ops.view2d.zoom_in if direction == "in" else bpy.ops.view2d.zoom_out
+    for win, area, region in list(_timelines()):
+        try:
+            with bpy.context.temp_override(window=win, area=area, region=region):
+                _zoom_one(region, op, times)
+        except Exception as e:
+            print("Blendeck: zoom skipped:", e)
+
+
 def _apply(messages, prefs):
+    _zoom(protocol.total_zoom(messages))
     scene = _scene()
     if scene is None:
         return

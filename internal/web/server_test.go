@@ -91,6 +91,27 @@ func TestTestEndpoint(t *testing.T) {
 	}
 }
 
+func TestTestEndpointZoom(t *testing.T) {
+	h := newServer(t)
+	for _, body := range []string{`{"zoom":1}`, `{"zoom":-1}`, `{"zoom":20}`, `{"zoom":-20}`} {
+		rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{`{"zoom":21}`, `{"zoom":-21}`, `{"zoom":1,"frames":1}`, `{}`, `{"zoom":1.5}`, `{"zoom":"1"}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", body, rec.Code)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"zoom":1}`); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain zoom: %d", rec.Code)
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"zoom":1}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host zoom: %d", rec.Code)
+	}
+}
+
 func TestIndexServed(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")

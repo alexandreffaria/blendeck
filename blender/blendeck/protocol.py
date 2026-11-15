@@ -5,6 +5,9 @@ import ipaddress
 import json
 
 MAX_LINE = 64 * 1024
+# Zoom steps applied per tick at most, so a burst of commands can't keep
+# Blender's UI busy zooming. Each step is one zoom operator call per editor.
+MAX_ZOOM_PER_TICK = 40
 
 
 class LineBuffer:
@@ -51,6 +54,46 @@ def total_scrub(messages):
         if isinstance(frames, int) and not isinstance(frames, bool):
             total += frames
     return total
+
+
+def total_zoom(messages):
+    """Adds up the clicks of every zoom command (positive zooms in), ignoring
+    malformed ones, and caps the result at MAX_ZOOM_PER_TICK either way."""
+    total = 0
+    for m in messages:
+        if m.get("type") != "zoom":
+            continue
+        clicks = m.get("clicks")
+        if isinstance(clicks, int) and not isinstance(clicks, bool):
+            total += clicks
+    return max(-MAX_ZOOM_PER_TICK, min(MAX_ZOOM_PER_TICK, total))
+
+
+def zoom_plan(clicks):
+    """What to run for a zoom of clicks steps: ("in" or "out", times), or
+    None for nothing."""
+    if clicks > 0:
+        return ("in", clicks)
+    if clicks < 0:
+        return ("out", -clicks)
+    return None
+
+
+def zoom_anchor(x, width):
+    """Before zooming around the playhead drawn at x pixels in a region width
+    pixels wide: (pan, target). pan is how far to pan first, in pixels (a
+    positive pan moves the view right, so the playhead moves left); target is
+    where the playhead should sit after the zoom. On screen, it stays where it
+    is; off screen, the view first centers on it."""
+    if 0 <= x <= width:
+        return 0, x
+    center = width // 2
+    return int(round(x - center)), center
+
+
+def zoom_correction(x, target):
+    """The pan, in pixels, that moves the playhead from x back to target."""
+    return int(round(x - target))
 
 
 def scrub_target(frame, delta, start, end, clamp):

@@ -37,6 +37,11 @@ func TestValidateRejects(t *testing.T) {
 			m := Modifier{"Fn", Control{"note", 1, 1}}
 			c.Profiles[0].Modifiers = []Modifier{m, m}
 		},
+		"zoom step zero":   func(c *Config) { zoom(c).Step = 0 },
+		"zoom step huge":   func(c *Config) { zoom(c).Step = MaxZoomStep + 1 },
+		"zoom on button":   func(c *Config) { zoom(c).Control.Type = "note" },
+		"zoom pitchbend":   func(c *Config) { zoom(c).Control = Control{"pitch_bend", 1, 0} },
+		"zoom no encoder":  func(c *Config) { zoom(c).Encoder = "" },
 		"too many mods":    func(c *Config) { c.Profiles[0].Modifiers = make([]Modifier, MaxModifiers+1) },
 		"too many profile": func(c *Config) { c.Profiles = make([]Profile, MaxProfiles+1) },
 	}
@@ -46,6 +51,36 @@ func TestValidateRejects(t *testing.T) {
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+// zoom returns the default profile's plain zoom binding.
+func zoom(c *Config) *Binding {
+	for i := range c.Profiles[0].Bindings {
+		if c.Profiles[0].Bindings[i].ID == "zoom" {
+			return &c.Profiles[0].Bindings[i]
+		}
+	}
+	panic("no zoom binding in the default config")
+}
+
+func TestZoomBindings(t *testing.T) {
+	c := Default()
+	z := zoom(&c)
+	if z.Action != ActionZoom || z.Control.Learned() || z.Step != 4 {
+		t.Fatalf("default zoom binding = %+v", z)
+	}
+	for _, step := range []int{1, MaxZoomStep} {
+		z.Step = step
+		z.Control.Number = 42
+		if err := c.Validate(); err != nil {
+			t.Fatalf("step %d: %v", step, err)
+		}
+	}
+	// A zoom step is far bigger than a frame: a scrub-sized step is refused
+	z.Step = 10 * MaxZoomStep
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "zoom steps per click") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
