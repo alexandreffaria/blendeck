@@ -94,8 +94,8 @@ func Default() Config {
 			Bindings: []Binding{
 				{ID: "scrub", Name: "Scrub timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionScrub, Step: 10},
 				{ID: "scrub-fine", Name: "Scrub timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionScrub, Step: 1},
-				{ID: "zoom", Name: "Zoom timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
-				{ID: "zoom-fast", Name: "Zoom timeline (fast)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 4},
+				{ID: "zoom", Name: "Zoom timeline", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionZoom, Step: 4},
+				{ID: "zoom-fine", Name: "Zoom timeline (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionZoom, Step: 1},
 			},
 		}},
 	}

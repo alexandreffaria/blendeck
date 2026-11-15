@@ -354,27 +354,28 @@ func zoomed(t *testing.T, e *Engine, m midi.Message) int {
 	return hit.Command.Clicks
 }
 
-func TestZoomOneAndFnFour(t *testing.T) {
+// Like the scrub knob: a plain click is coarse (4 steps), Fn makes it fine (1).
+func TestZoomFourAndFnOne(t *testing.T) {
 	e := New(zoomProfile())
-	if got := zoomed(t, e, zoomKnob(1)); got != 1 {
-		t.Fatalf("one click right = %d, want 1 (zoom in)", got)
-	}
-	if got := zoomed(t, e, zoomKnob(127)); got != -1 {
-		t.Fatalf("one click left = %d, want -1 (zoom out)", got)
-	}
-	if got := zoomed(t, e, zoomKnob(3)); got != 3 {
-		t.Fatalf("three clicks at once = %d, want 3", got)
-	}
-	e.Handle(fnDown)
 	if got := zoomed(t, e, zoomKnob(1)); got != 4 {
-		t.Fatalf("fn + right = %d, want 4", got)
+		t.Fatalf("one click right = %d, want 4 (zoom in)", got)
 	}
 	if got := zoomed(t, e, zoomKnob(127)); got != -4 {
-		t.Fatalf("fn + left = %d, want -4", got)
+		t.Fatalf("one click left = %d, want -4 (zoom out)", got)
+	}
+	if got := zoomed(t, e, zoomKnob(3)); got != 12 {
+		t.Fatalf("three clicks at once = %d, want 12", got)
+	}
+	e.Handle(fnDown)
+	if got := zoomed(t, e, zoomKnob(1)); got != 1 {
+		t.Fatalf("fn + right = %d, want 1", got)
+	}
+	if got := zoomed(t, e, zoomKnob(127)); got != -1 {
+		t.Fatalf("fn + left = %d, want -1", got)
 	}
 	e.Handle(fnUp)
-	if got := zoomed(t, e, zoomKnob(1)); got != 1 {
-		t.Fatalf("after fn release = %d, want 1", got)
+	if got := zoomed(t, e, zoomKnob(1)); got != 4 {
+		t.Fatalf("after fn release = %d, want 4", got)
 	}
 }
 
@@ -390,7 +391,7 @@ func TestZoomAndScrubKnobsApart(t *testing.T) {
 		t.Fatalf("zoom knob: %+v", hit)
 	}
 	e.Handle(fnDown)
-	if hit, _ = e.Handle(zoomKnob(1)); hit.Binding != "zoom-fast" {
+	if hit, _ = e.Handle(zoomKnob(1)); hit.Binding != "zoom-fine" {
 		t.Fatalf("fn + zoom knob: %+v", hit)
 	}
 	if hit, _ = e.Handle(knob(1)); hit.Binding != "scrub-fine" {
@@ -398,19 +399,19 @@ func TestZoomAndScrubKnobsApart(t *testing.T) {
 	}
 }
 
-func TestZoomWithoutFastBindingFallsBack(t *testing.T) {
+func TestZoomWithoutFineBindingFallsBack(t *testing.T) {
 	p := zoomProfile()
 	var kept []config.Binding
 	for _, b := range p.Bindings {
-		if b.ID != "zoom-fast" {
+		if b.ID != "zoom-fine" {
 			kept = append(kept, b)
 		}
 	}
 	p.Bindings = kept
 	e := New(p)
 	e.Handle(fnDown)
-	if got := zoomed(t, e, zoomKnob(1)); got != 1 {
-		t.Fatalf("got %d, want 1", got)
+	if got := zoomed(t, e, zoomKnob(1)); got != 4 {
+		t.Fatalf("got %d, want 4 from the plain binding", got)
 	}
 }
 
@@ -438,8 +439,8 @@ func TestZoomOffsetEncoder(t *testing.T) {
 		}
 	}
 	e := New(p)
-	if got := zoomed(t, e, zoomKnob(63)); got != -1 {
-		t.Fatalf("offset 63 = %d, want -1", got)
+	if got := zoomed(t, e, zoomKnob(63)); got != -4 {
+		t.Fatalf("offset 63 = %d, want -4", got)
 	}
 }
 

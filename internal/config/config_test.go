@@ -67,7 +67,7 @@ func zoom(c *Config) *Binding {
 func TestZoomBindings(t *testing.T) {
 	c := Default()
 	z := zoom(&c)
-	if z.Action != ActionZoom || z.Control.Learned() || z.Step != 1 {
+	if z.Action != ActionZoom || z.Control.Learned() || z.Step != 4 {
 		t.Fatalf("default zoom binding = %+v", z)
 	}
 	for _, step := range []int{1, MaxZoomStep} {

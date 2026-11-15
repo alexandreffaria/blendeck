@@ -94,6 +94,26 @@ class ZoomTest(unittest.TestCase):
         self.assertIsNone(protocol.zoom_plan(0))
 
 
+class ZoomAnchorTest(unittest.TestCase):
+    def test_on_screen_stays_put(self):
+        self.assertEqual(protocol.zoom_anchor(0, 800), (0, 0))
+        self.assertEqual(protocol.zoom_anchor(150, 800), (0, 150))
+        self.assertEqual(protocol.zoom_anchor(800, 800), (0, 800))
+
+    def test_off_screen_centers_first(self):
+        # Right of the view: pan right by the distance past the middle
+        self.assertEqual(protocol.zoom_anchor(1300, 800), (900, 400))
+        # Left of the view: pan left
+        self.assertEqual(protocol.zoom_anchor(-50, 800), (-450, 400))
+        self.assertEqual(protocol.zoom_anchor(-1, 801), (-401, 400))
+
+    def test_correction(self):
+        self.assertEqual(protocol.zoom_correction(170, 150), 20)
+        self.assertEqual(protocol.zoom_correction(130, 150), -20)
+        self.assertEqual(protocol.zoom_correction(150, 150), 0)
+        self.assertEqual(protocol.zoom_correction(150.6, 150), 1)
+
+
 class ManifestTest(unittest.TestCase):
     def test_manifest_matches_addon(self):
         import re

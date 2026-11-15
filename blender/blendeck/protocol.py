@@ -79,6 +79,23 @@ def zoom_plan(clicks):
     return None
 
 
+def zoom_anchor(x, width):
+    """Before zooming around the playhead drawn at x pixels in a region width
+    pixels wide: (pan, target). pan is how far to pan first, in pixels (a
+    positive pan moves the view right, so the playhead moves left); target is
+    where the playhead should sit after the zoom. On screen, it stays where it
+    is; off screen, the view first centers on it."""
+    if 0 <= x <= width:
+        return 0, x
+    center = width // 2
+    return int(round(x - center)), center
+
+
+def zoom_correction(x, target):
+    """The pan, in pixels, that moves the playhead from x back to target."""
+    return int(round(x - target))
+
+
 def scrub_target(frame, delta, start, end, clamp):
     """Where the playhead lands after moving delta frames. With clamp, it
     stops at the scene's start and end frames, but a playhead already outside

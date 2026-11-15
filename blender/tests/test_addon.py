@@ -59,16 +59,53 @@ class _Zoom:
             if region.name in self.fail_in:
                 raise RuntimeError("Operator bpy.ops.view2d.zoom_in.poll() failed, context is incorrect")
             self.calls.append((direction, region.name))
+            region.view2d.zoom(direction)
             return {"FINISHED"}
 
         return call
+
+    def pan(self, deltax=0, deltay=0):
+        region = self.override["region"]
+        self.calls.append(("pan", region.name))
+        region.view2d.pan(deltax)
+        return {"FINISHED"}
+
+
+class _View2D:
+    """Time axis of a strips region, as Blender 5.2 behaves: zoom_in takes
+    3.75% off each side around the middle (zoom_out undoes it), and pan moves
+    the view by deltax region pixels."""
+
+    def __init__(self, width, xmin=0.0, xmax=250.0):
+        self.width, self.xmin, self.xmax = width, xmin, xmax
+
+    def zoom(self, direction):
+        size = self.xmax - self.xmin
+        new = size * 0.925 if direction == "in" else size / 0.925
+        mid = (self.xmin + self.xmax) / 2
+        self.xmin, self.xmax = mid - new / 2, mid + new / 2
+
+    def pan(self, deltax):
+        dx = deltax * (self.xmax - self.xmin) / self.width
+        self.xmin, self.xmax = self.xmin + dx, self.xmax + dx
+
+    def region_to_view(self, x, y):
+        return self.xmin + x * (self.xmax - self.xmin) / self.width, 0.0
+
+    def view_to_region(self, x, y, clip=True):
+        return int((x - self.xmin) * self.width / (self.xmax - self.xmin)), 0
 
 
 ZOOM = _Zoom()
 
 
+def zooms():
+    """The zoom calls made so far, without the pans that anchor them."""
+    return [c for c in ZOOM.calls if c[0] != "pan"]
+
+
 def _region(name, type="WINDOW", width=800, height=300):
-    return types.SimpleNamespace(name=name, type=type, width=width, height=height)
+    return types.SimpleNamespace(name=name, type=type, width=width, height=height, view2d=_View2D(max(width, 1)))
 
 
 def _area(type, view_type, regions):
@@ -91,7 +128,7 @@ def _install_fake_bpy():
         window_manager=types.SimpleNamespace(windows=[]),
         temp_override=ZOOM.temp_override,
     )
-    bpy.ops = types.SimpleNamespace(view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out")))
+    bpy.ops = types.SimpleNamespace(view2d=types.SimpleNamespace(zoom_in=ZOOM.op("in"), zoom_out=ZOOM.op("out"), pan=ZOOM.pan))
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
     bpy.types = types.SimpleNamespace(AddonPreferences=object, Panel=object)
     bpy.props = types.SimpleNamespace(BoolProperty=lambda **k: None, StringProperty=lambda **k: None, IntProperty=lambda **k: None)
@@ -182,7 +219,7 @@ class AddonTest(unittest.TestCase):
             _area("VIEW_3D", "", [_region("3d")]),
             _area("SEQUENCE_EDITOR", "SEQUENCER", [_region("collapsed", height=0)]),
         ]
-        win = types.SimpleNamespace(screen=types.SimpleNamespace(areas=areas))
+        win = types.SimpleNamespace(screen=types.SimpleNamespace(areas=areas), scene=None)
         addon.bpy.context.window_manager.windows = [win]
 
     def test_zoom_every_timeline(self):
@@ -192,31 +229,70 @@ class AddonTest(unittest.TestCase):
         conn = bridge.accept()
         tick_until(lambda: addon.link.sock is not None)
         def net(region):
-            return ZOOM.calls.count(("in", region)) - ZOOM.calls.count(("out", region))
+            return zooms().count(("in", region)) - zooms().count(("out", region))
 
         # In and out in one read cancel down to 2 in (a split read gives
         # the same net zoom); scrub alongside still applies
         conn.sendall(b'{"type":"zoom","clicks":3}\n{"type":"zoom","clicks":-1}\n{"type":"scrub","frames":5}\n')
         self.assertTrue(tick_until(lambda: net("strips") == 2 and net("both") == 2))
-        self.assertEqual({r for _, r in ZOOM.calls}, {"strips", "both"})
+        self.assertEqual({r for _, r in zooms()}, {"strips", "both"})
         self.assertEqual(SCENE.frame_current, 15)
         ZOOM.calls.clear()
         conn.sendall(b'{"type":"zoom","clicks":-2}\n')
-        self.assertTrue(tick_until(lambda: len(ZOOM.calls) == 4))
-        self.assertEqual(set(ZOOM.calls), {("out", "strips"), ("out", "both")})
+        self.assertTrue(tick_until(lambda: len(zooms()) == 4))
+        self.assertEqual(set(zooms()), {("out", "strips"), ("out", "both")})
         conn.close()
         bridge.close()
 
     def test_zoom_capped_per_tick(self):
         self._screen()
         addon._zoom(addon.protocol.total_zoom([{"type": "zoom", "clicks": 10**6}]))
-        self.assertEqual(ZOOM.calls.count(("in", "strips")), addon.protocol.MAX_ZOOM_PER_TICK)
+        self.assertEqual(zooms().count(("in", "strips")), addon.protocol.MAX_ZOOM_PER_TICK)
 
     def test_zoom_failure_skips_that_editor(self):
         self._screen()
         ZOOM.fail_in.add("strips")
         addon._zoom(2)  # must not raise
-        self.assertEqual(ZOOM.calls, [("in", "both"), ("in", "both")])
+        self.assertEqual(zooms(), [("in", "both"), ("in", "both")])
+
+    def test_zoom_any_error_skips_that_editor(self):
+        self._screen()
+        strips = addon.bpy.context.window_manager.windows[0].screen.areas[0].regions[1]
+        strips.view2d = None  # a region gone stale: AttributeError, not RuntimeError
+        addon._zoom(1)
+        self.assertEqual(zooms(), [("in", "both")])
+
+    def _strips(self):
+        self._screen()
+        return addon.bpy.context.window_manager.windows[0].screen.areas[0].regions[1]
+
+    def test_zoom_keeps_playhead_in_place(self):
+        region = self._strips()
+        SCENE.frame_current = 50  # 0..250 over 800 px: drawn at x=160
+        before = region.view2d.view_to_region(50, 0)[0]
+        addon._zoom(4)
+        v = region.view2d
+        self.assertLess(v.xmax - v.xmin, 250 * 0.75, "it zoomed in")
+        self.assertLessEqual(abs(v.view_to_region(50, 0)[0] - before), 1)
+        addon._zoom(-4)
+        self.assertLessEqual(abs(v.view_to_region(50, 0)[0] - before), 1)
+        self.assertAlmostEqual(v.xmax - v.xmin, 250, delta=0.01)
+
+    def test_zoom_centers_playhead_off_screen(self):
+        region = self._strips()
+        SCENE.frame_current = 400  # past the right edge of 0..250
+        addon._zoom(1)
+        x = region.view2d.view_to_region(400, 0)[0]
+        self.assertLessEqual(abs(x - 400), 2, "playhead centered in the 800 px region")
+
+    def test_zoom_without_scene_still_zooms(self):
+        self._screen()
+        addon.bpy.context.scene = None
+        try:
+            addon._zoom(1)
+        finally:
+            addon.bpy.context.scene = SCENE
+        self.assertEqual(sorted(zooms()), [("in", "both"), ("in", "strips")])
 
     def test_zoom_without_windows(self):
         addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=None)]
