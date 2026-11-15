@@ -387,53 +387,57 @@ class ShuttleTest(unittest.TestCase):
     def test_speed_steps(self):
         sp = protocol.shuttle_speed
         # Stopped: normal speed that way
-        self.assertEqual(sp(0, 1), 10)
-        self.assertEqual(sp(0, -1), -10)
-        # Already going that way: 10% faster each press
-        self.assertEqual(sp(10, 1), 11)
-        self.assertEqual(sp(-10, -1), -11)
-        self.assertEqual(sp(-15, -1), -16)
-        # The other way, faster than 1x: ease off 10% a press, down to 1x
-        self.assertEqual(sp(25, -1), 24)
-        self.assertEqual(sp(-25, 1), -24)
-        self.assertEqual(sp(11, -1), 10)
-        self.assertEqual(sp(-11, 1), -10)
+        self.assertEqual(sp(0, 1), 100)
+        self.assertEqual(sp(0, -1), -100)
+        # Already going that way: 0.25x faster each press
+        self.assertEqual(sp(100, 1), 125)
+        self.assertEqual(sp(-100, -1), -125)
+        self.assertEqual(sp(-150, -1), -175)
+        # The other way, faster than 1x: ease off 0.25x a press, down to 1x
+        self.assertEqual(sp(250, -1), 225)
+        self.assertEqual(sp(-250, 1), -225)
+        self.assertEqual(sp(125, -1), 100)
+        self.assertEqual(sp(-125, 1), -100)
         # The other way at 1x: normal speed in the new direction
-        self.assertEqual(sp(10, -1), -10)
-        self.assertEqual(sp(-10, 1), 10)
-        # From 2x forward: 10 presses down to 1x, the 11th reverses
-        s = 20
-        for _ in range(10):
-            s = sp(s, -1)
-        self.assertEqual(s, 10)
-        self.assertEqual(sp(s, -1), -10)
-        # Capped at 4x
-        s = 10
-        for _ in range(100):
+        self.assertEqual(sp(100, -1), -100)
+        self.assertEqual(sp(-100, 1), 100)
+        # From 1x: 16 presses to 5x, 28 to 8x, the top
+        s = 100
+        for _ in range(16):
             s = sp(s, 1)
-        self.assertEqual(s, protocol.MAX_SHUTTLE_SPEED)
-        self.assertEqual(sp(-protocol.MAX_SHUTTLE_SPEED, -1), -protocol.MAX_SHUTTLE_SPEED)
+        self.assertEqual(s, 500)
+        for _ in range(12):
+            s = sp(s, 1)
+        self.assertEqual(s, 800)
+        self.assertEqual(protocol.MAX_SHUTTLE_SPEED, 800)
+        self.assertEqual(sp(s, 1), 800)
+        self.assertEqual(sp(-800, -1), -800)
+        # From 8x forward: 28 presses down to 1x, the 29th reverses
+        for _ in range(28):
+            s = sp(s, -1)
+        self.assertEqual(s, 100)
+        self.assertEqual(sp(s, -1), -100)
 
     def test_frame_follows_the_clock(self):
         f = protocol.shuttle_frame
         # 24 fps: 1.5x for 2 s is 72 frames, backwards 2x for 1 s is 48 back
-        self.assertEqual(f(100, 2.0, 24, 15, 1, 1000), (172, False))
-        self.assertEqual(f(100, 1.0, 24, -20, 1, 1000), (52, False))
-        self.assertEqual(f(100, 0.0, 24, 11, 1, 1000), (100, False))
+        self.assertEqual(f(100, 2.0, 24, 150, 1, 1000), (172, False))
+        self.assertEqual(f(100, 1.0, 24, -200, 1, 1000), (52, False))
+        self.assertEqual(f(100, 0.0, 24, 110, 1, 1000), (100, False))
         # Fractions round down, both ways
-        self.assertEqual(f(100, 0.01, 24, 10, 1, 1000), (100, False))
-        self.assertEqual(f(100, 0.01, 24, -10, 1, 1000), (99, False))
+        self.assertEqual(f(100, 0.01, 24, 100, 1, 1000), (100, False))
+        self.assertEqual(f(100, 0.01, 24, -100, 1, 1000), (99, False))
 
     def test_frame_stops_at_the_ends(self):
         f = protocol.shuttle_frame
-        self.assertEqual(f(990, 10.0, 24, 30, 1, 1000), (1000, True))
-        self.assertEqual(f(10, 10.0, 24, -30, 1, 1000), (1, True))
+        self.assertEqual(f(990, 10.0, 24, 300, 1, 1000), (1000, True))
+        self.assertEqual(f(10, 10.0, 24, -300, 1, 1000), (1, True))
         # At the start going forward, or at the end going backwards, is fine
-        self.assertEqual(f(1, 0.0, 24, 10, 1, 1000), (1, False))
-        self.assertEqual(f(1000, 0.0, 24, -10, 1, 1000), (1000, False))
+        self.assertEqual(f(1, 0.0, 24, 100, 1, 1000), (1, False))
+        self.assertEqual(f(1000, 0.0, 24, -100, 1, 1000), (1000, False))
         # Outside the range: runs on to where it started
-        self.assertEqual(f(1200, 1.0, 24, 10, 1, 1000), (1200, True))
-        self.assertEqual(f(1200, 1.0, 24, -10, 1, 1000), (1176, False))
+        self.assertEqual(f(1200, 1.0, 24, 100, 1, 1000), (1200, True))
+        self.assertEqual(f(1200, 1.0, 24, -100, 1, 1000), (1176, False))
 
     def test_steps_keep_order_never_merged(self):
         msgs = [self.F, self.F, {"type": "scrub", "frames": 3}, self.B, {"type": "play_pause"}, self.F]
@@ -444,6 +448,48 @@ class ShuttleTest(unittest.TestCase):
         self.assertEqual(len(steps), protocol.MAX_SHUTTLES_PER_TICK)
         bad = [{"type": "shuttle"}, {"type": "shuttle", "clicks": 2}, {"type": "shuttle", "clicks": 0}, {"type": "shuttle", "clicks": True}, {"type": "shuttle", "clicks": "1"}, {"type": "shuttle", "clicks": 1.0}]
         self.assertEqual(protocol.edit_steps(bad), [])
+
+
+class AudioPlanTest(unittest.TestCase):
+    # 24 fps; strips are (key, start, end, content_start, sound_offset)
+    def test_which_speeds_have_sound(self):
+        self.assertTrue(protocol.shuttle_has_audio(100))  # the add-on's own 1x
+        self.assertTrue(protocol.shuttle_has_audio(125))
+        self.assertTrue(protocol.shuttle_has_audio(500))
+        self.assertFalse(protocol.shuttle_has_audio(525))
+        self.assertFalse(protocol.shuttle_has_audio(0))
+        self.assertFalse(protocol.shuttle_has_audio(-100))
+
+    def test_from_inside_a_strip(self):
+        # Strip on frames 100-340, its sound starting at frame 40, 1 s cut
+        # off the front of the file: the playhead on 160 is 5 + 1 s in
+        strips = [("a", 100, 340, 40, 1.0)]
+        plan = protocol.audio_plan(strips, 160, 0.0, 24, 200, set(), 0)
+        self.assertEqual(plan, [("a", 6.0, 13.5, 0.0)])
+
+    def test_waits_for_a_strip_ahead(self):
+        # At 2x, 48 frames a second: frame 172 is heard in 0.25 s
+        strips = [("a", 172, 200, 172, 0.0)]
+        self.assertEqual(protocol.audio_plan(strips, 160, 0.0, 24, 200, set(), 0), [("a", 0.0, 28 / 24, 0.25)])
+
+    def test_only_what_is_heard_soon(self):
+        # 2 s ahead at 2x is 96 frames: up to 256 from 160
+        strips = [("past", 0, 160, 0, 0.0), ("soon", 250, 300, 250, 0.0), ("later", 256, 300, 256, 0.0)]
+        plan = protocol.audio_plan(strips, 100, 1.25, 24, 200, set(), 0)  # 60 frames on: 160
+        self.assertEqual([p[0] for p in plan], ["soon"])
+
+    def test_skips_started_and_caps(self):
+        strips = [(i, 100 + i, 400, 100, 0.0) for i in range(40)]
+        plan = protocol.audio_plan(strips, 100, 0.0, 24, 100, {0, 1}, 0)
+        self.assertEqual(len(plan), protocol.MAX_AUDIO_SOUNDS)
+        self.assertEqual(plan[0][0], 2)
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 24, 100, set(), protocol.MAX_AUDIO_SOUNDS), [])
+
+    def test_silent_speeds_plan_nothing(self):
+        strips = [("a", 0, 1000, 0, 0.0)]
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 24, 525, set(), 0), [])
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 24, -200, set(), 0), [])
+        self.assertEqual(protocol.audio_plan(strips, 100, 0.0, 0, 200, set(), 0), [])
 
 
 class ManifestTest(unittest.TestCase):
