@@ -1,7 +1,7 @@
 ---
 id: "202611154i5v"
 title: Where should the timeline zoom toward?
-status: open
+status: resolved
 kind: choice
 priority: normal
 created: 2026-11-15T05:25:41Z
@@ -31,6 +31,9 @@ options:
     cons:
       - Differs from Blender's keyboard zoom
       - Needs extra work in the add-on
+resolution:
+  choice: playhead
+  resolved_at: 2026-11-15T05:39:31Z
 ---
 
 ## Context
