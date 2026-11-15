@@ -157,3 +157,19 @@ in about 16 clicks. Default bindings: "Zoom timeline" step 4, "Zoom timeline
 Zooming keeps the playhead at its spot on screen, so the frame you scrubbed
 to stays in view. If the playhead is off screen, the view first centers on
 it, then zooms. (Blender's own zoom keys zoom around the view's middle.)
+
+## Saving a file never saved opens Save As (20261115d8e0)
+
+The save button on a file that has no name yet opens Blender's Save As
+window, as Ctrl+S does, in the first Blender window; you pick the name and
+folder. A press while that window is open does nothing more. The Blendeck
+panel says the window is open, then "Saved at ..." or that Save As was
+cancelled.
+
+## Every stop recenters the timeline (20261115guk2)
+
+Whatever stops playback recenters the timeline on the playhead, keeping the
+zoom: the play / pause button, undo, the shuttle reaching an end, Space or
+the pause button in Blender, a render or a scene switch. The playhead is
+always in view after playback, at the cost of the view also moving on stops
+nobody meant.

@@ -477,28 +477,37 @@ def _note(text):
             print("Blendeck: panel not redrawn:", e)
 
 
-UNSAVED = "Not saved yet: use File > Save As once"
+SAVE_AS = "Save As window open: pick a name and folder"
+SAVE_AS_OP = "WM_OT_save_as_mainfile"  # how the open window shows in modal_operators
 
 
 def _save():
     """Saves the .blend file in place, like Ctrl+S on a file saved before.
-    A file never saved is left alone: the panel asks for one Save As first.
-    Refused, like undo, while a modal operator runs or the interface is
-    locked (a render). Never raises. Returns True if it saved."""
+    A file never saved opens Blender's Save As window instead, as Ctrl+S
+    does, in the first window. Refused, like undo, while a modal operator
+    runs (a Save As window already open counts) or the interface is locked
+    (a render). Never raises. Returns True if it saved."""
     try:
-        if not bpy.data.filepath:
-            _note(UNSAVED)
-            return False
         wm = bpy.context.window_manager
         modal = []
         for win in (wm.windows if wm else ()):
             modal.extend(op.bl_idname for op in getattr(win, "modal_operators", ()))
+        if SAVE_AS_OP in modal:
+            # A press while it is open leaves it to you. Only a window for
+            # a file never saved gets the note _save_as_done follows up.
+            _note(SAVE_AS if not bpy.data.filepath else "Not saved: the Save As window is open")
+            return False
         why = protocol.undo_blocked(modal, bool(getattr(wm, "is_interface_locked", False)))
         if why is None:
             ctx, why = _undo_context()
         if why is not None:
             print("Blendeck: save skipped:", why)
             _note("Not saved: " + why)
+            return False
+        if not bpy.data.filepath:
+            with bpy.context.temp_override(**ctx):
+                bpy.ops.wm.save_as_mainfile("INVOKE_DEFAULT")
+            _note(SAVE_AS)
             return False
         with bpy.context.temp_override(**ctx):
             done = "FINISHED" in bpy.ops.wm.save_mainfile()
@@ -508,6 +517,24 @@ def _save():
         return False
     _note(("Saved at " + time.strftime("%H:%M:%S")) if done else "Not saved")
     return done
+
+
+def _save_as_done():
+    """Once the Save As window a press opened has closed, the panel says
+    whether it saved. Never raises."""
+    try:
+        if link.note != SAVE_AS:
+            return
+        if bpy.data.filepath:
+            _note("Saved at " + time.strftime("%H:%M:%S"))
+            return
+        wm = bpy.context.window_manager
+        for win in (wm.windows if wm else ()):
+            if any(op.bl_idname == SAVE_AS_OP for op in getattr(win, "modal_operators", ())):
+                return  # still open
+        _note("Not saved: Save As was cancelled")
+    except Exception as e:
+        print("Blendeck: save note skipped:", e)
 
 
 def _span(strip):
@@ -1149,6 +1176,8 @@ def _tick():
         # and with the move knob's undo step pushed. It needs no scene.
         _move_undo()
         _save()
+    else:
+        _save_as_done()  # from the next tick on, once the window is listed
     _watch_stop(not protocol.wants_view_all(messages))
     _move_undo(time.monotonic())
     return TICK

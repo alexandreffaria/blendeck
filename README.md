@@ -25,7 +25,7 @@ and keeps profiles.
 | A fourth knob you pick | Moves the selected strips and every strip after them, on all channels, a frame per click (right or left), like G in the video editor. They stop against the next strip instead of going over it; locked strips stay put. The playhead stays, and one turn of the knob is one Ctrl+Z | Moves the selected strips and every strip before them instead |
 | A fifth knob you pick | Slides the timeline view 5% of its width per click: right shows later frames, left earlier ones. Only the view moves: the playhead, the strips and playback stay as they are, so you can look ahead while it plays | The same |
 | A seventh button you pick | Zooms and slides every timeline to show the whole edit, like Home over the strips: every strip in view. Only the view changes; the playhead and playback stay as they are | The same |
-| An eighth button you pick | Saves the .blend file in place, like Ctrl+S, after any edit sent with it. A file never saved isn't saved: the Blendeck panel in the video editor's sidebar says to use File › Save As once. Nothing while you drag a strip or render; the panel shows when it last saved or why it didn't | The same |
+| An eighth button you pick | Saves the .blend file in place, like Ctrl+S, after any edit sent with it. A file never saved opens Blender's Save As window, as Ctrl+S does, in the first Blender window; you pick the name and folder. Nothing while you drag a strip or render; the panel shows when it last saved or why it didn't | The same |
 
 More come one at a time.
 

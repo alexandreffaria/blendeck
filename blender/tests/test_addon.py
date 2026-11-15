@@ -282,6 +282,27 @@ class _Saver:
 SAVER = _Saver()
 
 
+class _SaveAs:
+    """Fake bpy.ops.wm.save_as_mainfile("INVOKE_DEFAULT"), as Blender 5.2
+    behaves from a timer (checked in a real 5.2): with a window in the
+    context it opens the file window and returns RUNNING_MODAL, and the
+    window shows in the first window's modal_operators."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, how="EXEC_DEFAULT"):
+        kw = ZOOM.override or {}
+        if not kw.get("window"):
+            raise RuntimeError("Operator bpy.ops.wm.save_as_mainfile.poll() failed, context is incorrect")
+        self.calls.append(how)
+        kw["window"].modal_operators = [types.SimpleNamespace(bl_idname="WM_OT_save_as_mainfile")]
+        return {"RUNNING_MODAL"}
+
+
+SAVE_AS = _SaveAs()
+
+
 class _Player:
     """Fake bpy.ops.screen.animation_play and animation_cancel, as Blender
     5.2 behaves (checked in a real 5.2 from a timer): playing from a video
@@ -389,7 +410,7 @@ def _install_fake_bpy():
         ed=types.SimpleNamespace(undo_push=lambda message="": UNDO.append(message) or {"FINISHED"}, undo=ED_UNDO),
         screen=types.SimpleNamespace(animation_play=PLAYER.play, animation_cancel=PLAYER.cancel),
         sequencer=types.SimpleNamespace(view_all=ZOOM.view_all),
-        wm=types.SimpleNamespace(save_mainfile=SAVER),
+        wm=types.SimpleNamespace(save_mainfile=SAVER, save_as_mainfile=SAVE_AS),
     )
     bpy.data = types.SimpleNamespace(filepath="")
     bpy.app = types.SimpleNamespace(version_string="5.2.2")
@@ -483,6 +504,7 @@ class AddonTest(unittest.TestCase):
         SAVER.calls.clear()
         SAVER.frames.clear()
         SAVER.fail = False
+        SAVE_AS.calls.clear()
         addon.bpy.data.filepath = ""
         addon.link.note = ""
         addon._shuttle_stop()
@@ -654,11 +676,69 @@ class AddonTest(unittest.TestCase):
         conn.close()
         bridge.close()
 
-    def test_save_untitled_leaves_note(self):
+    def test_save_untitled_opens_save_as(self):
         self._undo_scene()
         self.assertFalse(addon._save())
         self.assertEqual(SAVER.calls, [])
-        self.assertEqual(addon.link.note, addon.UNSAVED)
+        self.assertEqual(SAVE_AS.calls, ["INVOKE_DEFAULT"])
+        self.assertEqual(addon.link.note, addon.SAVE_AS)
+        # Still open: the note stays, and another press opens no second one
+        addon._save_as_done()
+        self.assertEqual(addon.link.note, addon.SAVE_AS)
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVE_AS.calls, ["INVOKE_DEFAULT"])
+        self.assertEqual(addon.link.note, addon.SAVE_AS)
+
+    def test_save_as_then_saved(self):
+        self._undo_scene()
+        addon._save()
+        win = addon.bpy.context.window_manager.windows[0]
+        win.modal_operators = []
+        addon.bpy.data.filepath = "C:/edits/new.blend"
+        addon._save_as_done()
+        self.assertTrue(addon.link.note.startswith("Saved at "))
+
+    def test_save_while_own_save_as_open_on_saved_file(self):
+        # You opened Save As yourself on a file saved before, then pressed save
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        win = addon.bpy.context.window_manager.windows[0]
+        win.modal_operators = [types.SimpleNamespace(bl_idname="WM_OT_save_as_mainfile")]
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVER.calls, [])
+        self.assertEqual(addon.link.note, "Not saved: the Save As window is open")
+        # Cancelling it then doesn't claim a save
+        win.modal_operators = []
+        addon._save_as_done()
+        self.assertEqual(addon.link.note, "Not saved: the Save As window is open")
+
+    def test_save_as_cancelled(self):
+        self._undo_scene()
+        addon._save()
+        addon.bpy.context.window_manager.windows[0].modal_operators = []
+        addon._save_as_done()
+        self.assertEqual(addon.link.note, "Not saved: Save As was cancelled")
+
+    def test_save_untitled_on_press(self):
+        self._undo_scene()
+        bridge = Bridge()
+        PREFS.port = bridge.port
+        conn = bridge.accept()
+        tick_until(lambda: addon.link.sock is not None)
+        conn.sendall(b'{"type":"save"}\n')
+        self.assertTrue(tick_until(lambda: SAVE_AS.calls))
+        for _ in range(3):
+            addon.tick()
+        self.assertEqual(SAVE_AS.calls, ["INVOKE_DEFAULT"])
+        self.assertEqual(addon.link.note, addon.SAVE_AS)
+        conn.close()
+        bridge.close()
+
+    def test_save_untitled_refused_while_rendering(self):
+        self._undo_scene()
+        addon.bpy.context.window_manager.is_interface_locked = True
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVE_AS.calls, [])
 
     def test_save_refused_during_modal_operator(self):
         self._undo_scene()
