@@ -15,7 +15,7 @@ and keeps profiles.
 | --- | --- | --- |
 | Any knob you pick | Moves the playhead 10 frames per click | 1 frame per click |
 | Another knob you pick | Zooms the timeline 4 steps per click (about 27%), around the playhead | 1 step per click (7.5%) |
-| A button you pick | Cuts every strip under the playhead (soft cut, like K), once per press; Ctrl+Z undoes it | Ripple delete, once you learn "Ripple delete (Fn + cut button)" on it |
+| A button you pick | Cuts every strip under the playhead (soft cut, like K), once per press; Ctrl+Z undoes it | The same |
 | Another button you pick | Undoes once per press, like Ctrl+Z, anywhere in Blender. Nothing while you drag a strip or another operator is running | The same |
 | A third button you pick | Ripple delete: deletes the strips under the playhead (the selected ones among them, if any) and closes the gap on every channel; the playhead goes to the join. Locked strips are never deleted; if a strip stays under the playhead or a locked strip would have to move, the gap stays open. Ctrl+Z undoes it | The same |
 
@@ -35,9 +35,8 @@ More come one at a time.
    while holding Fn, and **Save**. Do the same for "Zoom timeline" and
    "Zoom timeline (fine)" with the knob you want for zoom, and **Learn** on
    "Cut at playhead" and press the button you want for cutting, and on
-   "Undo" and press the button you want for undo. **Learn** on "Ripple
-   delete" and press the button you want for it; **Learn** on "Ripple
-   delete (Fn + cut button)" while holding Fn and press the cut button.
+   "Undo" and press the button you want for undo, and on "Ripple delete"
+   and press the button you want for it.
 
 The add-on's panel is in the video editor's sidebar (N), tab Blendeck. Its
 preferences have the bridge's address and "Stop at scene start and end".

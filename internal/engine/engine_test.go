@@ -747,7 +747,7 @@ var rippleDown = midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 54, Value: 
 var rippleUp = midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 54, Value: 64}
 
 // rippleProfile is cutProfile with the ripple delete button learned as
-// note 54 (its Fn + cut button binding stays unlearned).
+// note 54.
 func rippleProfile() config.Profile {
 	p := cutProfile()
 	for i := range p.Bindings {
@@ -871,29 +871,12 @@ func TestRippleDeleteCommandJSON(t *testing.T) {
 	}
 }
 
-// Fn + the cut button ripple deletes once the default Fn binding is learned
-// on note 53; without Fn it still cuts (decision 20261115d0tu).
-func TestFnCutButtonRippleDeletes(t *testing.T) {
-	p := rippleProfile()
-	for i := range p.Bindings {
-		if p.Bindings[i].ID == "ripple-delete-fn" {
-			p.Bindings[i].Control.Number = 53
-		}
-	}
-	e := New(p)
-	if !cuts(t, e, cutDown) {
-		t.Fatal("plain press didn't cut")
-	}
-	e.Handle(cutUp)
+// Fn + the cut button only cuts: ripple delete has no Fn variant
+// (decision 202611156qj4).
+func TestFnCutButtonStillCuts(t *testing.T) {
+	e := New(rippleProfile())
 	e.Handle(fnDown)
-	if !ripples(t, e, cutDown) {
-		t.Fatal("Fn + cut button didn't ripple delete")
-	}
-	if ripples(t, e, cutUp) {
-		t.Fatal("Fn + release ripple deleted")
-	}
-	e.Handle(fnUp)
 	if !cuts(t, e, cutDown) {
-		t.Fatal("press after Fn release didn't cut")
+		t.Fatal("Fn + cut button didn't cut")
 	}
 }

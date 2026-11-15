@@ -109,8 +109,6 @@ func Default() Config {
 				{ID: "cut", Name: "Cut at playhead", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionCut},
 				{ID: "undo", Name: "Undo", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionUndo},
 				{ID: "ripple-delete", Name: "Ripple delete", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionRippleDelete},
-				// Learned on the cut button while holding Fn (decision 20261115d0tu)
-				{ID: "ripple-delete-fn", Name: "Ripple delete (Fn + cut button)", Control: Control{Type: "note", Channel: 1, Number: -1}, Modifier: "Fn", Action: ActionRippleDelete},
 			},
 		}},
 	}

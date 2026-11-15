@@ -123,24 +123,21 @@ func TestRippleDeleteBinding(t *testing.T) {
 	}
 }
 
-// Fn + the cut button ripple deletes (decision 20261115d0tu): an unlearned
-// binding with Fn, learned on the cut button.
-func TestRippleDeleteFnBinding(t *testing.T) {
+// No Fn variant of ripple delete (decision 202611156qj4): the only ripple
+// delete binding has no modifier.
+func TestNoFnRippleDeleteBinding(t *testing.T) {
 	c := Default()
-	var f *Binding
-	for i := range c.Profiles[0].Bindings {
-		if c.Profiles[0].Bindings[i].ID == "ripple-delete-fn" {
-			f = &c.Profiles[0].Bindings[i]
+	n := 0
+	for _, b := range c.Profiles[0].Bindings {
+		if b.Action == ActionRippleDelete {
+			n++
+			if b.Modifier != "" {
+				t.Fatalf("ripple delete binding with a modifier: %+v", b)
+			}
 		}
 	}
-	if f == nil || f.Action != ActionRippleDelete || f.Modifier != "Fn" || f.Control.Learned() || f.Control.Type != "note" {
-		t.Fatalf("default Fn ripple delete binding = %+v", f)
-	}
-	// Learned on the owner's cut button, next to the plain cut on it
-	f.Control = Control{"note", 1, 53}
-	cut(&c).Control = Control{"note", 1, 53}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
+	if n != 1 {
+		t.Fatalf("%d ripple delete bindings, want 1", n)
 	}
 }
 
