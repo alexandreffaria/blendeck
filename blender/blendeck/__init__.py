@@ -493,7 +493,9 @@ def _save():
         for win in (wm.windows if wm else ()):
             modal.extend(op.bl_idname for op in getattr(win, "modal_operators", ()))
         if SAVE_AS_OP in modal:
-            _note(SAVE_AS)  # a press while it is open leaves it to you
+            # A press while it is open leaves it to you. Only a window for
+            # a file never saved gets the note _save_as_done follows up.
+            _note(SAVE_AS if not bpy.data.filepath else "Not saved: the Save As window is open")
             return False
         why = protocol.undo_blocked(modal, bool(getattr(wm, "is_interface_locked", False)))
         if why is None:

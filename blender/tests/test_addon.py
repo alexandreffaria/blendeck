@@ -698,6 +698,20 @@ class AddonTest(unittest.TestCase):
         addon._save_as_done()
         self.assertTrue(addon.link.note.startswith("Saved at "))
 
+    def test_save_while_own_save_as_open_on_saved_file(self):
+        # You opened Save As yourself on a file saved before, then pressed save
+        self._undo_scene()
+        addon.bpy.data.filepath = "C:/edits/trip.blend"
+        win = addon.bpy.context.window_manager.windows[0]
+        win.modal_operators = [types.SimpleNamespace(bl_idname="WM_OT_save_as_mainfile")]
+        self.assertFalse(addon._save())
+        self.assertEqual(SAVER.calls, [])
+        self.assertEqual(addon.link.note, "Not saved: the Save As window is open")
+        # Cancelling it then doesn't claim a save
+        win.modal_operators = []
+        addon._save_as_done()
+        self.assertEqual(addon.link.note, "Not saved: the Save As window is open")
+
     def test_save_as_cancelled(self):
         self._undo_scene()
         addon._save()
