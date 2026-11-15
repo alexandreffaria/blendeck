@@ -373,3 +373,21 @@ func TestIndexHasUndo(t *testing.T) {
 		}
 	}
 }
+
+func TestTestEndpointJump(t *testing.T) {
+	h := newServer(t)
+	for _, body := range []string{`{"jump":1}`, `{"jump":-1}`} {
+		rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"delivered":false`) {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{`{"jump":2}`, `{"jump":-5}`, `{"jump":0}`, `{"jump":1,"shuttle":1}`, `{"jump":-1,"frames":1}`, `{"jump":true}`, `{"jump":"1"}`, `{"jump":1.5}`} {
+		if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := do(h, "POST", "/api/test", "evil.example:7870", "application/json", `{"jump":1}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign host jump: %d", rec.Code)
+	}
+}
