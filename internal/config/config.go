@@ -65,6 +65,14 @@ const (
 	// ActionJumpCut is ActionJumpEdit stopping at every cut, sound strips
 	// included. It has an encoder and no step.
 	ActionJumpCut = "timeline.jump_cut"
+	// ActionMoveAfter moves the selected strips and every strip after them,
+	// on all channels, Step frames per encoder click (right clockwise), like
+	// G in Blender; they stop against a strip that stays instead of going
+	// over it.
+	ActionMoveAfter = "timeline.move_after"
+	// ActionMoveBefore is ActionMoveAfter for the selected strips and every
+	// strip before them.
+	ActionMoveBefore = "timeline.move_before"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -131,6 +139,8 @@ func Default() Config {
 				{ID: "forward", Name: "Play forward / faster", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionForward},
 				{ID: "jump-edit", Name: "Jump between video edits", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionJumpEdit},
 				{ID: "jump-cut", Name: "Jump between all cuts", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionJumpCut},
+				{ID: "move-after", Name: "Move selected and later strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 1},
+				{ID: "move-before", Name: "Move selected and earlier strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionMoveBefore, Step: 1},
 			},
 		}},
 	}
@@ -208,6 +218,16 @@ func (c *Config) Validate() error {
 			case ActionScrub:
 				if b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: scrubbing needs a knob (cc)", b.Name)
+				}
+				if b.Step < 1 || b.Step > MaxStep {
+					return fmt.Errorf("binding %q: frames per click must be 1 to %d", b.Name, MaxStep)
+				}
+				if err := validEncoder(b); err != nil {
+					return err
+				}
+			case ActionMoveAfter, ActionMoveBefore:
+				if b.Control.Type != "cc" {
+					return fmt.Errorf("binding %q: moving strips needs a knob (cc)", b.Name)
 				}
 				if b.Step < 1 || b.Step > MaxStep {
 					return fmt.Errorf("binding %q: frames per click must be 1 to %d", b.Name, MaxStep)

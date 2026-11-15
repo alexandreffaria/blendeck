@@ -37,6 +37,10 @@ MAX_SHUTTLES_PER_TICK = 8
 # Cuts the jump knob moves over per tick at most, either way. A fast spin
 # sends a few clicks a tick; more than this is a flood.
 MAX_JUMPS_PER_TICK = 32
+# Move knob commands applied per tick at most. Moves of one kind in a row
+# are added up, so this only bounds a flood that keeps switching between
+# the knob with and without Fn.
+MAX_MOVES_PER_TICK = 32
 # Playback the add-on drives has sound going forward up to MAX_AUDIO_SPEED
 # (5x), at its normal pitch (decision 202611150o5i); faster, and backwards
 # (decision 2026111598qg), it is silent. Sound is
@@ -124,7 +128,10 @@ def edit_steps(messages):
     and jumps between all cuts, sound included ("sound": true), are
     ("jump_sound", clicks): jumps of one kind in a row are added up, and at
     most MAX_JUMPS_PER_TICK clicks count either way in one read, both kinds
-    together. Malformed commands are ignored."""
+    together. Moves of the selected strips and those after them are
+    ("move", frames), of the selected strips and those before them
+    ("move_before", frames): moves of one kind in a row are added up, at
+    most MAX_MOVES_PER_TICK commands count. Malformed commands are ignored."""
     steps = []
     cuts = 0
     undos = 0
@@ -132,6 +139,7 @@ def edit_steps(messages):
     toggles = 0
     shuttles = 0
     jumps = 0
+    moves = 0
     for m in messages:
         kind = m.get("type")
         if kind == "scrub":
@@ -188,6 +196,19 @@ def edit_steps(messages):
                     steps.pop()  # right then left: back where it was
             else:
                 steps.append((step, clicks))
+        elif kind == "move":
+            frames = m.get("frames")
+            before = m.get("before", False)
+            if type(frames) is not int or frames == 0 or type(before) is not bool or moves >= MAX_MOVES_PER_TICK:
+                continue
+            moves += 1
+            step = "move_before" if before else "move"
+            if steps and steps[-1][0] == step:
+                steps[-1] = (step, steps[-1][1] + frames)
+                if steps[-1][1] == 0:
+                    steps.pop()  # right then left: back where it was
+            else:
+                steps.append((step, frames))
     return steps
 
 
@@ -338,10 +359,11 @@ def follow_selection(spans, frame):
     return [not s.locked and s.start <= frame < s.end for s in spans]
 
 
-# A strip as ripple_plan sees it: start..end (end exclusive), whether it is
-# locked (itself or its channel), whether it is selected, and the indexes of
-# the strips it is an effect of (an effect is removed with its inputs).
-Span = namedtuple("Span", "start end locked selected inputs", defaults=(False, False, ()))
+# A strip as ripple_plan and move_plan see it: start..end (end exclusive),
+# whether it is locked (itself or its channel), whether it is selected, the
+# indexes of the strips it is an effect of (an effect is removed with its
+# inputs, and moves with them) and its channel.
+Span = namedtuple("Span", "start end locked selected inputs channel", defaults=(False, False, (), 0))
 
 # What a ripple delete does. delete: indexes to remove, each before any of
 # its inputs. shift: frames to move later strips left (0 leaves the gap
@@ -406,6 +428,80 @@ def ripple_plan(spans, frame):
     if hi <= lo or any(spans[i].locked for i in move):
         return RipplePlan(order, 0, [], None)
     return RipplePlan(order, hi - lo, move, lo)
+
+
+# What a move does. move: indexes of the strips to move, in the order to
+# move them so none lands on one that hasn't moved yet. shift: frames,
+# right when positive.
+MovePlan = namedtuple("MovePlan", "move shift")
+
+
+def move_plan(spans, frames, before=False):
+    """Plans the move knob over spans (a list of Span): frames to the right,
+    or left when negative, like G in Blender. Returns None when nothing
+    moves.
+
+    What moves: the selected unlocked strips and, on every channel, every
+    strip that starts at or after the earliest of them starts, so picture,
+    sound and titles after it stay in sync; with before, every strip that
+    ends at or before the latest of them ends instead. Effects move with
+    their inputs and inputs with their effects; a group of those with a
+    locked strip in it stays, and so does every locked strip.
+
+    Moving strips stop against strips that stay on their channel, as far as
+    the gap between them allows, so nothing goes over another strip; when
+    there is no gap left, nothing moves."""
+    n = len(spans)
+    chosen = [i for i, s in enumerate(spans) if s.selected and not s.locked]
+    if not chosen or frames == 0:
+        return None
+    if before:
+        edge = max(spans[i].end for i in chosen)
+        wanted = set(chosen) | {i for i, s in enumerate(spans) if s.end <= edge}
+    else:
+        edge = min(spans[i].start for i in chosen)
+        wanted = set(chosen) | {i for i, s in enumerate(spans) if s.start >= edge}
+    # Strips tied by effects move together, or not at all
+    links = [set() for _ in range(n)]
+    for i, s in enumerate(spans):
+        for j in s.inputs:
+            if 0 <= j < n and j != i:
+                links[i].add(j)
+                links[j].add(i)
+    move = set()
+    seen = set()
+    for i in sorted(wanted):
+        if i in seen:
+            continue
+        group = set()
+        stack = [i]
+        while stack:
+            k = stack.pop()
+            if k in group:
+                continue
+            group.add(k)
+            stack.extend(links[k])
+        seen |= group
+        if not any(spans[k].locked for k in group):
+            move |= group
+    if not move:
+        return None
+    shift = frames
+    stay = {}  # channel: the strips that stay on it
+    for i in range(n):
+        if i not in move:
+            stay.setdefault(spans[i].channel, []).append(spans[i])
+    for i in move:
+        m = spans[i]
+        for o in stay.get(m.channel, ()):
+            if shift > 0 and o.start >= m.end:
+                shift = min(shift, o.start - m.end)
+            elif shift < 0 and o.end <= m.start:
+                shift = max(shift, o.end - m.start)
+    if shift == 0:
+        return None
+    order = sorted(move, key=lambda i: (spans[i].start, i), reverse=shift > 0)
+    return MovePlan(order, shift)
 
 
 def _effects_first(delete, spans):

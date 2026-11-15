@@ -311,6 +311,102 @@ class RippleDeleteTest(unittest.TestCase):
         self.assertEqual(self.plan([S(1, 100, inputs=(5, 0, -1))], 10).delete, [0])
 
 
+class MoveTest(unittest.TestCase):
+    S = protocol.Span
+
+    def plan(self, spans, frames, before=False):
+        return protocol.move_plan(spans, frames, before)
+
+    def track(self):
+        """Video (1) and audio (2) cut at 50 and 100 with a 20-frame gap
+        before the last clips, a title (3) at 150; V2 and A2 selected."""
+        S = self.S
+        return [
+            S(1, 50, channel=1), S(50, 100, selected=True, channel=1), S(120, 200, channel=1),
+            S(1, 50, channel=2), S(50, 100, selected=True, channel=2), S(120, 200, channel=2),
+            S(150, 180, channel=3),
+        ]
+
+    def test_after_moves_selected_and_later_right_freely(self):
+        p = self.plan(self.track(), 30)
+        self.assertEqual(sorted(p.move), [1, 2, 4, 5, 6])
+        self.assertEqual(p.shift, 30)
+        # Rightmost first, so none lands on one that hasn't moved
+        starts = [self.track()[i].start for i in p.move]
+        self.assertEqual(starts, sorted(starts, reverse=True))
+
+    def test_after_stops_against_the_strip_before(self):
+        # V1 and A1 end where V2 and A2 start: no gap, nothing moves
+        self.assertIsNone(self.plan(self.track(), -1))
+
+    def test_after_closes_a_gap_then_stops(self):
+        spans = self.track()
+        spans[1] = spans[1]._replace(selected=False)
+        spans[4] = spans[4]._replace(selected=False)
+        spans[2] = spans[2]._replace(selected=True)  # V3, 20 frames after V2
+        p = self.plan(spans, -50)
+        self.assertEqual(sorted(p.move), [2, 5, 6])
+        self.assertEqual(p.shift, -20, "stops against V2 and A2")
+        starts = [spans[i].start for i in p.move]
+        self.assertEqual(starts, sorted(starts), "leftmost first going left")
+
+    def test_before_moves_selected_and_earlier(self):
+        spans = self.track()
+        p = self.plan(spans, 50, before=True)
+        self.assertEqual(sorted(p.move), [0, 1, 3, 4])
+        self.assertEqual(p.shift, 20, "stops against V3 and A3")
+        self.assertEqual(self.plan(spans, -40, before=True).shift, -40, "nothing before them on the left")
+
+    def test_other_channels_dont_block(self):
+        S = self.S
+        spans = [S(10, 20, selected=True, channel=1), S(25, 30, channel=2), S(5, 40, channel=3)]
+        # The title on 3 starts before the selection: it stays, on its own channel
+        p = self.plan(spans, 100)
+        self.assertEqual(sorted(p.move), [0, 1])
+        self.assertEqual(p.shift, 100)
+
+    def test_nothing_selected_or_no_frames(self):
+        spans = [s._replace(selected=False) for s in self.track()]
+        self.assertIsNone(self.plan(spans, 5))
+        self.assertIsNone(self.plan(self.track(), 0))
+        self.assertIsNone(self.plan([], 5))
+
+    def test_locked_strips_stay_and_block(self):
+        spans = self.track()
+        spans[6] = spans[6]._replace(locked=True)  # the title stays
+        p = self.plan(spans, 30)
+        self.assertEqual(sorted(p.move), [1, 2, 4, 5])
+        spans = self.track()
+        spans[2] = spans[2]._replace(locked=True)  # V3 stays, 20 frames after V2
+        self.assertEqual(self.plan(spans, 30).shift, 20)
+        spans = [s._replace(locked=s.selected) for s in self.track()]
+        self.assertIsNone(self.plan(spans, 5), "a locked selected strip doesn't count as selected")
+
+    def test_effects_move_with_their_inputs(self):
+        S = self.S
+        # 0 selected; 2 is an effect of 0 and 1, so 1 (before it) comes along
+        spans = [S(50, 100, selected=True, channel=1), S(10, 60, channel=2), S(50, 60, inputs=(0, 1), channel=3), S(0, 5, channel=2)]
+        p = self.plan(spans, -100)
+        self.assertEqual(sorted(p.move), [0, 1, 2])
+        self.assertEqual(p.shift, -5, "1 stops against 3 on channel 2")
+        spans[3] = spans[3]._replace(locked=True, start=0, end=5)
+        spans[1] = spans[1]._replace(locked=True)
+        self.assertIsNone(self.plan(spans, 10), "the group has a locked strip: it stays")
+
+    def test_edit_steps(self):
+        steps = protocol.edit_steps([
+            {"type": "move", "frames": 1}, {"type": "move", "frames": 2},
+            {"type": "move", "frames": -1, "before": True},
+            {"type": "scrub", "frames": 3},
+            {"type": "move", "frames": 1}, {"type": "move", "frames": -1},
+            {"type": "move", "frames": 0}, {"type": "move", "frames": True}, {"type": "move", "frames": 1.5},
+            {"type": "move", "frames": 1, "before": 1}, {"type": "move"},
+        ])
+        self.assertEqual(steps, [("move", 3), ("move_before", -1), ("scrub", 3)])
+        flood = [{"type": "move", "frames": 1, "before": i % 2 == 0} for i in range(100)]
+        self.assertEqual(len(protocol.edit_steps(flood)), protocol.MAX_MOVES_PER_TICK)
+
+
 class SelectionTest(unittest.TestCase):
     def spans(self):
         S = protocol.Span
