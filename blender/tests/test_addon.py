@@ -1432,6 +1432,64 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.frame_current, 80)
         self.assertEqual(addon.shuttle.speed, 0)
 
+    def _cache_window(self, scene, marker):
+        """Gives scene a custom property cache_window, as the Cache Window
+        extension publishes it while it holds the preview range."""
+        props = {"cache_window": marker}
+        scene.get = props.get
+        self.addCleanup(delattr, scene, "get")
+
+    def test_passes_over_a_range_cache_window_borrowed(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        scene.use_preview_range = True
+        # Cache Window's window around the playhead (on 100)
+        scene.frame_preview_start, scene.frame_preview_end = 60, 140
+        self.addCleanup(delattr, scene, "use_preview_range")
+        self._cache_window(scene, {"start": 60, "end": 140, "user_start": 1, "user_end": 250})
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(60.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, 1, "the scene's start, not the window's")
+        self.assertEqual(addon.shuttle.speed, 0)
+
+    def test_keeps_the_users_range_with_cache_window_idle(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        scene.use_preview_range = True
+        scene.frame_preview_start, scene.frame_preview_end = 80, 200
+        self.addCleanup(delattr, scene, "use_preview_range")
+        self._cache_window(scene, None)
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(60.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, 80)
+
+    def test_a_marker_that_doesnt_match_is_the_users_range(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        scene.use_preview_range = True
+        scene.frame_preview_start, scene.frame_preview_end = 80, 200
+        self.addCleanup(delattr, scene, "use_preview_range")
+        # Left over from before the user set their own range
+        self._cache_window(scene, {"start": 380, "end": 420, "user_start": 1, "user_end": 1000})
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(60.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, 80)
+
+    def test_a_marker_that_cant_be_read_is_the_users_range(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        scene.use_preview_range = True
+        scene.frame_preview_start, scene.frame_preview_end = 80, 200
+        self.addCleanup(delattr, scene, "use_preview_range")
+        self._cache_window(scene, {"start": "soon"})
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(60.0)
+        addon._apply([], PREFS)
+        self.assertEqual(scene.frame_current, 80)
+
     def test_a_render_stops_shuttling(self):
         advance = self._clock()
         scene = self._shuttle_scene()
