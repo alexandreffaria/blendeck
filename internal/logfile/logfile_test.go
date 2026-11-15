@@ -85,3 +85,25 @@ func TestWriteAfterClose(t *testing.T) {
 		t.Fatal("write after close succeeded")
 	}
 }
+
+func TestKeepsLoggingWhenTheOldCopyCantBeReplaced(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.log")
+	// A non-empty folder where the old copy goes: it can't be removed or
+	// replaced, so rotation falls back to starting the file over.
+	if err := os.MkdirAll(filepath.Join(path+".1", "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Open(path, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	for _, s := range []string{"aaaa\n", "bbbb\n", "cccc\n"} {
+		if _, err := l.Write([]byte(s)); err != nil {
+			t.Fatalf("write %q: %v", s, err)
+		}
+	}
+	if got := read(t, path); got != "cccc\n" {
+		t.Fatalf("log = %q", got)
+	}
+}

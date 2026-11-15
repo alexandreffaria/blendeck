@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // Icon is the mascot (scripts/mkicon draws it).
@@ -35,12 +36,18 @@ type Options struct {
 	OpenPage func()
 	// Autostart is the "Start with Windows" item; nil leaves it out.
 	Autostart Toggle
+	// OnEndSession is called when Windows is signing out or shutting down
+	// and will end the process once it returns: stop cleanly in it (it may
+	// block for a few seconds).
+	OnEndSession func()
 }
 
 // Tray is the icon. Make it with New, then Run it.
 type Tray struct {
 	opts  Options
 	state // the platform's own, touched only on the tray's thread
+
+	lastOpen time.Time // tray thread only
 
 	mu     sync.Mutex
 	closed bool
@@ -58,6 +65,9 @@ func New(opts Options) *Tray {
 	if opts.OpenPage == nil {
 		opts.OpenPage = func() {}
 	}
+	if opts.OnEndSession == nil {
+		opts.OnEndSession = func() {}
+	}
 	return &Tray{opts: opts}
 }
 
@@ -70,6 +80,16 @@ func (t *Tray) Close() {
 	if t.hwnd != 0 {
 		postClose(t.hwnd)
 	}
+}
+
+// clickOpen opens the page for a click on the icon. A double click sends
+// two clicks; the second, within a second of the first, is ignored.
+func (t *Tray) clickOpen(now time.Time) {
+	if !t.lastOpen.IsZero() && now.Sub(t.lastOpen) < time.Second {
+		return
+	}
+	t.lastOpen = now
+	t.opts.OpenPage()
 }
 
 // Menu item ids.

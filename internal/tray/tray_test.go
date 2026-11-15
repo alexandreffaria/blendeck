@@ -3,6 +3,7 @@ package tray
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -64,4 +65,19 @@ func TestCloseBeforeRun(t *testing.T) {
 	tr := New(Options{})
 	tr.Close()
 	tr.Close()
+}
+
+func TestDoubleClickOpensThePageOnce(t *testing.T) {
+	opened := 0
+	tr := New(Options{OpenPage: func() { opened++ }})
+	t0 := time.Now()
+	tr.clickOpen(t0)
+	tr.clickOpen(t0.Add(300 * time.Millisecond)) // the double click's second up
+	if opened != 1 {
+		t.Fatalf("a double click opened the page %d times", opened)
+	}
+	tr.clickOpen(t0.Add(2 * time.Second))
+	if opened != 2 {
+		t.Fatalf("a later click didn't open it (%d)", opened)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -45,6 +46,7 @@ var (
 const (
 	wmDestroy     = 0x0002
 	wmClose       = 0x0010
+	wmEndSession  = 0x0016
 	wmNull        = 0x0000
 	wmContextMenu = 0x007b
 	wmTimer       = 0x0113
@@ -239,7 +241,7 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmTrayIcon:
 		switch uint32(lParam) & 0xffff {
 		case wmLButtonUp:
-			t.opts.OpenPage()
+			t.clickOpen(time.Now())
 		case wmRButtonUp, wmContextMenu:
 			t.showMenu()
 		}
@@ -247,6 +249,13 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmTimer:
 		if t.setTip(t.opts.Tooltip()) {
 			t.notify(nimModify)
+		}
+		return 0
+	case wmEndSession:
+		// Signing out or shutting down: the process ends when this returns,
+		// so close the device, link and page now.
+		if wParam != 0 {
+			t.opts.OnEndSession()
 		}
 		return 0
 	case wmClose:

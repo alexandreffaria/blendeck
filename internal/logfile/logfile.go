@@ -24,8 +24,7 @@ func Open(path string, max int64) (*File, error) {
 		return nil, err
 	}
 	if l.size >= max {
-		if err := l.rotate(); err != nil {
-			l.f.Close()
+		if err := l.rotate(); err != nil && l.f == nil {
 			return nil, err
 		}
 	}
@@ -49,16 +48,23 @@ func (l *File) open() error {
 	return nil
 }
 
+// rotate moves the file to .1 and starts a new one. If it can't move it
+// (another program has one of them open?) it starts the file over instead;
+// if it can't do that either it reopens the file as it was, so logging goes
+// on past the cap and the next write tries again. l.f is nil afterwards only
+// when the file can't be opened at all.
 func (l *File) rotate() error {
 	l.f.Close()
+	l.f = nil
 	_ = os.Remove(l.path + ".1")
-	if err := os.Rename(l.path, l.path+".1"); err != nil {
-		// Can't move it (another program has it open?): start it over instead.
-		if err := os.Truncate(l.path, 0); err != nil {
-			return err
-		}
+	var err error
+	if os.Rename(l.path, l.path+".1") != nil {
+		err = os.Truncate(l.path, 0)
 	}
-	return l.open()
+	if oerr := l.open(); oerr != nil {
+		return oerr
+	}
+	return err
 }
 
 // Write appends p, rotating first if p would take the file past the cap.
@@ -69,8 +75,7 @@ func (l *File) Write(p []byte) (int, error) {
 		return 0, os.ErrClosed
 	}
 	if l.size > 0 && l.size+int64(len(p)) > l.max {
-		if err := l.rotate(); err != nil {
-			l.f = nil
+		if err := l.rotate(); err != nil && l.f == nil {
 			return 0, err
 		}
 	}
