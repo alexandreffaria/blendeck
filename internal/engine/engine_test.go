@@ -1400,8 +1400,24 @@ func TestPanClicks(t *testing.T) {
 	if hit, _ := e.Handle(knob(1)); hit.Binding != "pan" || hit.Command == nil || *hit.Command != (Command{Type: "pan", Clicks: 5}) {
 		t.Fatalf("Fn held: %+v", hit)
 	}
+	e.Handle(midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 110})
+	if hit, _ := e.Handle(knob(127)); hit.Binding != "pan" || hit.Command == nil || *hit.Command != (Command{Type: "pan", Clicks: -5}) {
+		t.Fatalf("Fn released: %+v", hit)
+	}
 	b, err := json.Marshal(Command{Type: "pan", Clicks: -5})
 	if err != nil || string(b) != `{"type":"pan","clicks":-5}` {
 		t.Fatalf("%s %v", b, err)
+	}
+}
+
+// The default pan binding is not learned yet: no knob may reach it.
+func TestPanNotLearnedIgnored(t *testing.T) {
+	c := config.Default()
+	e := New(c.Profiles[0])
+	for _, n := range []int{-1, 0, 35} {
+		hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: n & 0x7F, Value: 1})
+		if hit.Binding != "" || hit.Command != nil {
+			t.Fatalf("cc %d reached an unlearned binding: %+v", n, hit)
+		}
 	}
 }
