@@ -2815,17 +2815,20 @@ class MeterTest(unittest.TestCase):
         addon._measure(list(messages), self.perf[0], wall, moved)
 
     def test_wait_and_picture(self):
+        addon.meter.last_report = self.perf[0]  # one just went
         # Taken by the bridge at 4.990 s, applied at 5.000 s: waited 10 ms
         self.tick([{"type": "scrub", "frames": 1, "t": 4990}], moved=True)
-        self.assertEqual(self.sent, [], "the picture isn't in yet")
         self.perf[0] += 0.170
         addon._on_preview_draw()  # drawn 170 ms after the tick began
         self.perf[0] += 0.008
         self.tick()
+        self.assertEqual(self.sent, [], "not a second since the last report")
+        self.perf[0] += 1.0
+        self.tick()
         self.assertEqual(len(self.sent), 1)
         r = self.sent[0]
         self.assertEqual((r["type"], r["samples"], r["wait_max"], r["picture_max"], r["total_max"]), ("latency", 1, 10.0, 170.0, 180.0))
-        self.assertEqual(r["tick_max"], 178.0, "Blender was busy between the two ticks")
+        self.assertEqual(r["tick_max"], 1000.0, "the longest gap between two ticks")
 
     def test_reports_about_once_a_second(self):
         for i in range(30):
@@ -2834,6 +2837,31 @@ class MeterTest(unittest.TestCase):
         self.assertEqual(len(self.sent), 4)
         self.assertEqual(self.sent[1]["samples"], 8)
         self.assertEqual(self.sent[1]["wait_med"], 3.0)
+
+    def test_reports_while_the_knob_keeps_turning(self):
+        # Slow footage: every tick has a scrub in it and a picture still to
+        # come, for 5 s. The reports must not wait for the knob to stop.
+        for i in range(40):
+            self.tick([{"type": "scrub", "frames": -1, "t": 5000 - 20}], moved=True)
+            self.perf[0] += 0.117
+            addon._on_preview_draw()
+            self.perf[0] += 0.008
+        self.assertEqual(len(self.sent), 5)
+        for r in self.sent[1:]:
+            self.assertEqual(r["samples"], 8)
+            self.assertEqual((r["wait_max"], r["picture_med"], r["total_max"], r["tick_max"]), (20.0, 117.0, 137.0, 125.0))
+        self.assertLessEqual(len(addon.meter.waits), 8, "samples don't pile up across reports")
+
+    def test_the_stall_before_a_command_is_reported(self):
+        for _ in range(300):  # idle for 3 s
+            self.tick()
+            self.perf[0] += 0.01
+        self.perf[0] += 0.29  # Blender busy for 300 ms, commands waiting
+        self.tick([{"type": "zoom", "clicks": 1, "t": 5000 - 250}])
+        self.perf[0] += 0.01
+        self.tick()
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual((self.sent[0]["wait_max"], self.sent[0]["tick_max"]), (250.0, 300.0))
 
     def test_idle_says_nothing(self):
         for _ in range(500):

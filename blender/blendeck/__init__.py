@@ -139,6 +139,21 @@ def _measure(messages, started, wall, moved):
                 meter.pending = None
             elif now - applied > PICTURE_WAIT:
                 meter.pending = None  # no preview on screen, or nothing changed in it
+        meter.dropped += protocol.presses_dropped(messages)
+        # Before this tick's own command is noted: a knob that keeps turning
+        # has a picture awaited at the end of every tick, but none here, so
+        # the reports don't wait for it to stop. A command and its picture
+        # always go out together.
+        if now - meter.last_report >= REPORT and meter.pending is None:
+            report = protocol.latency_report(meter.waits, meter.pictures, meter.totals, meter.tick * 1000, meter.dropped)
+            if report is not None:
+                _send(report)
+                meter.last_report = now
+                meter.waits, meter.pictures, meter.totals = [], [], []
+                meter.tick = 0.0
+                meter.dropped = 0
+            elif not messages:
+                meter.tick = 0.0  # idle: a gap from before the next command isn't its wait
         oldest = protocol.oldest_stamp(messages)
         if oldest is not None:
             waited = wall * 1000 - oldest
@@ -146,17 +161,10 @@ def _measure(messages, started, wall, moved):
                 _keep(meter.waits, waited)
                 if moved and meter.pending is None:
                     meter.pending = (started, waited)
-        meter.dropped += protocol.presses_dropped(messages)
-        if now - meter.last_report >= REPORT and meter.pending is None:
-            report = protocol.latency_report(meter.waits, meter.pictures, meter.totals, meter.tick * 1000, meter.dropped)
-            if report is not None:
-                _send(report)
-                meter.last_report = now
-            last_tick = meter.last_tick
-            _meter_reset()
-            meter.last_tick = last_tick
     except Exception as e:
         print("Blendeck: latency meter:", e)
+
+
 CONNECT_TIMEOUT = 1.0
 MAX_OUT = 64 * 1024
 
