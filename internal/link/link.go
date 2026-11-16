@@ -103,9 +103,12 @@ type Latency struct {
 	TotalMax   float64 `json:"total_max"`
 	TickMax    float64 `json:"tick_max"`
 	Dropped    int     `json:"dropped"`
-	// Slow says the add-on found the slowest picture slow; Causes are the
-	// reasons it could name, from slowCauses.
+	// Slow says the add-on found a picture slow in the last slowKept; SlowMS
+	// is how long that picture took and Causes the reasons the add-on could
+	// name, from knownSlowCauses. A later report with no picture in it (a zoom)
+	// doesn't end it; one with a picture that wasn't slow does.
 	Slow        bool     `json:"slow,omitempty"`
+	SlowMS      float64  `json:"slow_ms,omitempty"`
 	Causes      []string `json:"causes,omitempty"`
 	WorstMinute float64  `json:"worst_minute"`
 	AgeMS       int64    `json:"age_ms"`
@@ -117,17 +120,20 @@ const (
 	latencyKept = 60
 	// maxLatencyMS bounds what an add-on can report: ten minutes.
 	maxLatencyMS = 600_000
+	// slowKept is how long a slow picture is still said. The add-on read its
+	// reasons when it happened; they may have been fixed since.
+	slowKept = 30 * time.Second
 )
 
-// slowCauses are the reasons for a slow picture an add-on may name; anything
+// knownSlowCauses are the reasons for a slow picture an add-on may name; anything
 // else it sends is left out.
-var slowCauses = []string{"proxies_off", "prefetch_on", "cache_window"}
+var knownSlowCauses = []string{"proxies_off", "prefetch_on", "cache_window"}
 
 // knownCauses keeps the causes in got that the bridge knows, once each, in
-// slowCauses' order: at most len(slowCauses), whatever the add-on sent.
+// that order: at most len(knownSlowCauses), whatever the add-on sent.
 func knownCauses(got []string) []string {
 	var out []string
-	for _, c := range slowCauses {
+	for _, c := range knownSlowCauses {
 		for _, g := range got {
 			if g == c {
 				out = append(out, c)
@@ -212,6 +218,11 @@ type Link struct {
 	latency   *Latency
 	latencyAt time.Time
 	recent    []latencyAt
+	// slowMS, slowCauses and slowAt are the last slow picture, kept apart
+	// from latency so a report without pictures doesn't erase it
+	slowMS     float64
+	slowCauses []string
+	slowAt     time.Time
 }
 
 // New makes a Link. Call Serve to start accepting.
@@ -230,7 +241,10 @@ func (l *Link) State() State {
 	if l.latency != nil && s.Connected {
 		now := time.Now()
 		lat := *l.latency
-		lat.Causes = append([]string(nil), lat.Causes...)
+		if !l.slowAt.IsZero() && now.Sub(l.slowAt) <= slowKept {
+			lat.Slow, lat.SlowMS = true, l.slowMS
+			lat.Causes = append([]string(nil), l.slowCauses...)
+		}
 		lat.AgeMS = now.Sub(l.latencyAt).Milliseconds()
 		for _, r := range l.recent {
 			if now.Sub(r.at) <= time.Minute && r.worst > lat.WorstMinute {
@@ -266,14 +280,17 @@ func (l *Link) setLatency(m incoming) {
 		TotalMax:   ms(m.TotalMax),
 		TickMax:    ms(m.TickMax),
 		Dropped:    max(0, min(m.Dropped, 1_000_000)),
-		Slow:       m.Slow,
-	}
-	if m.Slow {
-		lat.Causes = knownCauses(m.Causes)
 	}
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	switch {
+	case m.Slow:
+		l.slowMS, l.slowCauses, l.slowAt = lat.PictureMax, knownCauses(m.Causes), now
+	case lat.PictureMax > 0:
+		// A picture was timed and it wasn't slow: over
+		l.slowMS, l.slowCauses, l.slowAt = 0, nil, time.Time{}
+	}
 	l.latency, l.latencyAt = lat, now
 	if len(l.recent) >= latencyKept {
 		l.recent = append(l.recent[:0], l.recent[1:]...)
@@ -443,6 +460,7 @@ func (l *Link) remove(c *client) {
 	if len(l.clients) == 0 {
 		l.state = State{}
 		l.latency, l.recent = nil, nil
+		l.slowMS, l.slowCauses, l.slowAt = 0, nil, time.Time{}
 	}
 	l.mu.Unlock()
 	_ = c.conn.Close()

@@ -25,6 +25,10 @@ PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
 MOVE_UNDO_DELAY = 0.5
 REPORT = 1.0  # seconds between latency reports while commands arrive
 PICTURE_WAIT = 1.0  # a picture not drawn this long after a command isn't coming
+# Seconds the panel keeps saying a picture was slow. Its reasons were read
+# when it happened: without an end, the note would go on naming a setting
+# the user has since changed, for as long as they don't move the playhead.
+SLOW_KEEP = 30.0
 
 
 class _Link:
@@ -63,6 +67,7 @@ class _Meter:
     drawn = 0.0
     handle = None
     slow = []  # what the panel says after a slow picture (see protocol.slow_note)
+    slow_at = 0.0  # when the slow picture it is about was reported
 
 
 meter = _Meter()
@@ -140,6 +145,7 @@ def _slow_check(report):
         if note:
             report["slow"] = True
             report["causes"] = causes
+            meter.slow_at = _perf()
         if note != meter.slow:
             meter.slow = note
             _redraw()
@@ -171,6 +177,9 @@ def _measure(messages, started, wall, moved):
     there is something to say, the numbers go to the bridge. Never raises."""
     try:
         now = _perf()
+        if meter.slow and now - meter.slow_at > SLOW_KEEP:
+            meter.slow = []
+            _redraw()
         if meter.last_tick:
             meter.tick = max(meter.tick, started - meter.last_tick)
         meter.last_tick = started

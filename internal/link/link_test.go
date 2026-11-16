@@ -456,8 +456,8 @@ func TestLatencyReport(t *testing.T) {
 }
 
 // A slow picture and its reasons reach the state; reasons the bridge doesn't
-// know, repeats and a flood of them don't, and neither do reasons on a
-// report that isn't slow.
+// know, repeats and a flood of them don't. A report with no picture in it
+// leaves the warning, one with a fast picture ends it, and so does time.
 func TestSlowPictureCauses(t *testing.T) {
 	l, addr := start(t)
 	conn := dialHello(t, addr)
@@ -465,8 +465,8 @@ func TestSlowPictureCauses(t *testing.T) {
 
 	fmt.Fprintln(conn, `{"type":"latency","samples":1,"picture_max":430,"total_max":440,"slow":true,"causes":["cache_window","proxies_off"]}`)
 	eventually(t, "slow report", func() bool { lat := l.State().Latency; return lat != nil && lat.Slow })
-	if got := l.State().Latency.Causes; !reflect.DeepEqual(got, []string{"proxies_off", "cache_window"}) {
-		t.Fatalf("causes = %q", got)
+	if lat := l.State().Latency; lat.SlowMS != 430 || !reflect.DeepEqual(lat.Causes, []string{"proxies_off", "cache_window"}) {
+		t.Fatalf("latency = %+v", lat)
 	}
 
 	many := strings.Repeat(`"prefetch_on","<b>x</b>","nonsense",`, 1000)
@@ -476,9 +476,33 @@ func TestSlowPictureCauses(t *testing.T) {
 		t.Fatalf("causes = %q", got)
 	}
 
-	fmt.Fprintln(conn, `{"type":"latency","samples":3,"picture_max":12,"causes":["prefetch_on"]}`)
-	eventually(t, "fast report", func() bool { return l.State().Latency.Samples == 3 })
-	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
+	// A zoom: no picture was timed, so the page keeps what it said
+	fmt.Fprintln(conn, `{"type":"latency","samples":3,"wait_max":5}`)
+	eventually(t, "report without pictures", func() bool { return l.State().Latency.Samples == 3 })
+	if lat := l.State().Latency; !lat.Slow || lat.SlowMS != 300 || lat.PictureMax != 0 || !reflect.DeepEqual(lat.Causes, []string{"prefetch_on"}) {
 		t.Fatalf("latency = %+v", lat)
+	}
+
+	// The state hands out its own copy of the reasons
+	l.State().Latency.Causes[0] = "changed"
+	if got := l.State().Latency.Causes[0]; got != "prefetch_on" {
+		t.Fatalf("causes shared with the caller: %q", got)
+	}
+
+	// A fast picture: over, and reasons on a report that isn't slow are ignored
+	fmt.Fprintln(conn, `{"type":"latency","samples":4,"picture_max":12,"causes":["prefetch_on"]}`)
+	eventually(t, "fast report", func() bool { return l.State().Latency.Samples == 4 })
+	if lat := l.State().Latency; lat.Slow || lat.SlowMS != 0 || lat.Causes != nil {
+		t.Fatalf("latency = %+v", lat)
+	}
+
+	// Slow again, then nothing more: it stops being said after slowKept
+	fmt.Fprintln(conn, `{"type":"latency","samples":5,"picture_max":500,"slow":true}`)
+	eventually(t, "slow again", func() bool { return l.State().Latency.Slow })
+	l.mu.Lock()
+	l.slowAt = l.slowAt.Add(-slowKept - time.Second)
+	l.mu.Unlock()
+	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
+		t.Fatalf("still slow after slowKept: %+v", lat)
 	}
 }

@@ -2943,13 +2943,14 @@ class SlowPictureTest(unittest.TestCase):
         addon.meter.slow = []
         self.addCleanup(addon._meter_reset)
         self.addCleanup(setattr, addon.meter, "slow", [])
-        # A preview that doesn't use proxies, prefetch on, Cache Window's range
+        # A preview that doesn't use proxies, and prefetch on
         wm = addon.bpy.context.window_manager
         old_windows = wm.windows
         self.addCleanup(setattr, wm, "windows", old_windows)
         self.space = types.SimpleNamespace(view_type="SEQUENCER_PREVIEW", use_proxies=False)
         area = types.SimpleNamespace(type="SEQUENCE_EDITOR", spaces=types.SimpleNamespace(active=self.space), regions=[], tag_redraw=lambda: None)
-        wm.windows = [types.SimpleNamespace(screen=types.SimpleNamespace(areas=[area]), scene=SCENE)]
+        self.areas = [area]
+        wm.windows = [types.SimpleNamespace(screen=types.SimpleNamespace(areas=self.areas), scene=SCENE)]
         self.ed = types.SimpleNamespace(use_prefetch=True)
         old_ed = getattr(SCENE, "sequence_editor", None)
         self.addCleanup(setattr, SCENE, "sequence_editor", old_ed)
@@ -3000,6 +3001,61 @@ class SlowPictureTest(unittest.TestCase):
         report = self.move(0.430)
         self.assertTrue(report["slow"])
         addon._slow_check({})  # a report it can't read: printed, not raised
+
+    def test_cache_window_holding_the_range_is_named(self):
+        self.space.use_proxies = True
+        self.ed.use_prefetch = False
+        old = (SCENE.frame_preview_start, SCENE.frame_preview_end) if hasattr(SCENE, "frame_preview_start") else None
+        SCENE.frame_preview_start, SCENE.frame_preview_end = 906, 1343
+        SCENE.get = lambda key, default=None: {"start": 906, "end": 1343} if key == "cache_window" else default
+        self.addCleanup(delattr, SCENE, "get")
+        if old is None:
+            self.addCleanup(delattr, SCENE, "frame_preview_end")
+            self.addCleanup(delattr, SCENE, "frame_preview_start")
+        else:
+            self.addCleanup(setattr, SCENE, "frame_preview_end", old[1])
+            self.addCleanup(setattr, SCENE, "frame_preview_start", old[0])
+        self.assertEqual(self.move(0.430)["causes"], ["cache_window"])
+        # A marker left behind that no longer matches the range isn't Cache Window holding it
+        SCENE.frame_preview_end = 2000
+        self.assertEqual(self.move(0.430)["causes"], [])
+
+    def test_only_editors_showing_a_preview_count_for_proxies(self):
+        self.ed.use_prefetch = False
+        self.space.view_type = "SEQUENCER"  # a timeline only: it draws no picture
+        self.assertEqual(self.move(0.430)["causes"], [])
+        self.space.view_type = "PREVIEW"
+        self.assertEqual(self.move(0.430)["causes"], ["proxies_off"])
+
+    def test_other_editors_are_not_read(self):
+        self.ed.use_prefetch = False
+        self.space.use_proxies = True
+        # A 3D viewport whose space happens to look like a preview without proxies
+        other = types.SimpleNamespace(view_type="PREVIEW", use_proxies=False)
+        self.areas.append(types.SimpleNamespace(type="VIEW_3D", spaces=types.SimpleNamespace(active=other), regions=[], tag_redraw=lambda: None))
+        self.assertEqual(self.move(0.430)["causes"], [])
+
+    def test_the_note_ends_by_itself(self):
+        # The reasons were read when it was slow; the user may have fixed
+        # them and not moved since
+        redraws = []
+        self.areas[0].tag_redraw = lambda: redraws.append(1)
+        self.move(0.430)
+        self.assertTrue(addon.meter.slow)
+        self.perf[0] += addon.SLOW_KEEP - 2
+        addon._measure([], self.perf[0], 5.0, False)
+        self.assertTrue(addon.meter.slow)
+        del redraws[:]
+        self.perf[0] += 3
+        addon._measure([], self.perf[0], 5.0, False)
+        self.assertEqual(addon.meter.slow, [])
+        self.assertTrue(redraws, "the panel is redrawn without the note")
+
+    def test_a_new_note_redraws_the_panel(self):
+        redraws = []
+        self.areas[0].tag_redraw = lambda: redraws.append(1)
+        self.move(0.430)
+        self.assertTrue(redraws)
 
     def test_closing_the_link_clears_the_note(self):
         self.move(0.430)

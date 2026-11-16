@@ -664,8 +664,8 @@ function renderLatency(lat) {
   slow.hidden = !(lat && lat.slow);
   if (!lat) return;
   if (lat.slow) {
-    const why = (lat.causes || []).map((c) => SLOW_CAUSES[c]).filter(Boolean);
-    slow.textContent = `Slow picture in Blender: ${Math.round(lat.picture_max)} ms.${why.length ? ' ' + why.join('. ') + '.' : ''}`;
+    const why = (lat.causes || []).filter((c) => Object.hasOwn(SLOW_CAUSES, c)).map((c) => SLOW_CAUSES[c]);
+    slow.textContent = `Slow picture in Blender: ${Math.round(lat.slow_ms)} ms.${why.length ? ' ' + why.join('. ') + '.' : ''}`;
   }
   const ms = (v) => `${Math.round(v)} ms`;
   const el = $('latency');
