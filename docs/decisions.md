@@ -3,6 +3,15 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Where two clips meet, the trim knob rolls; Fn shrinks one side (202611150cft)
+
+Turned on its own at a join, the trim knob rolls the cut: one clip gets
+longer and the other shorter by the same amount, as first built. With Fn
+held it only shortens the clip turned into: right moves only clip starts,
+left only ends, so it opens a gap and never changes the neighbor. Away
+from a join, Fn only ever shortens: a lone handle turned outwards stays
+put. The owner wanted both behaviours on one knob.
+
 ## Presses made while Blender is busy all count, in order (202611163di7)
 
 When Blender freezes (a save, a big undo, a proxy build) and cut, ripple
