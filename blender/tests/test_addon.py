@@ -2228,34 +2228,39 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.frame_current, 100 + 30)
         self.assertEqual(plays, [])
 
-    def test_scrub_plays_a_frame_of_sound(self):
+    def test_scrub_plays_the_frames_it_moved_over(self):
         # With and without Fn: every click that moves the playhead plays
-        # one frame of each sound strip under it, and stops the last one
+        # the frames it moved over, landing frame included, and stops the
+        # last click's sound
         plays = self._fake_aud()
         PREFS.scrub_audio = True
         PREFS.clamp = False
+        self.addCleanup(setattr, PREFS, "clamp", True)
         scene = self._shuttle_scene()  # 24 fps, playhead on 100
         scene.sequence_editor = types.SimpleNamespace(
             strips=[
                 self._sound("voice", 50, 400, 20, offset=1.0),
-                self._sound("music", 150, 400, 150),
+                self._sound("music", 145, 400, 145),
                 self._sound("off", 50, 400, 50, mute=True),
             ],
             channels=None,
         )
-        self.addCleanup(setattr, PREFS, "clamp", True)
-        addon._apply([{"type": "scrub", "frames": 10}], PREFS)  # to 110
+        addon._apply([{"type": "scrub", "frames": 10}], PREFS)  # 100 to 110: frames 101-110
         self.assertEqual([p[0] for p in plays], ["C:/edit/voice.wav"])
-        self.assertEqual(plays[0][1], [("limit", 90 / 24 + 1.0, 91 / 24 + 1.0), ("volume", 0.5)])
-        addon._apply([{"type": "scrub", "frames": 1}, {"type": "scrub", "frames": 39}], PREFS)  # to 150
+        self.assertEqual(plays[0][1], [("limit", 81 / 24 + 1.0, 91 / 24 + 1.0), ("volume", 0.5)])
+        addon._apply([{"type": "scrub", "frames": 1}], PREFS)  # Fn: just frame 111
         self.assertEqual(plays[0][2].status, 0, "the last click's sound stopped")
-        self.assertEqual([p[0] for p in plays[1:]], ["C:/edit/voice.wav", "C:/edit/music.wav"])
-        self.assertEqual(plays[2][1][0], ("limit", 0.0, 1 / 24))
+        self.assertEqual(plays[1][1][0], ("limit", 91 / 24 + 1.0, 92 / 24 + 1.0))
+        scene.frame_current = 150
+        addon._apply([{"type": "scrub", "frames": -10}], PREFS)  # backwards: frames 140-149
+        self.assertEqual([p[0] for p in plays[2:]], ["C:/edit/voice.wav", "C:/edit/music.wav"])
+        self.assertEqual(plays[2][1][0], ("limit", 120 / 24 + 1.0, 130 / 24 + 1.0))
+        self.assertEqual(plays[3][1], [("limit", 0.0, 5 / 24), ("volume", 0.5), ("delay", 5 / 24)])
         # Not moving (the clamp at a range end) plays nothing
         PREFS.clamp = True
         scene.frame_current = scene.frame_end
         addon._apply([{"type": "scrub", "frames": 10}], PREFS)
-        self.assertEqual(len(plays), 3)
+        self.assertEqual(len(plays), 4)
 
     def test_scrub_is_silent_while_playing_or_turned_off(self):
         plays = self._fake_aud()

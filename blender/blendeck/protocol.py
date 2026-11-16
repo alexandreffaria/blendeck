@@ -54,9 +54,10 @@ MAX_TRIMS_PER_TICK = 32
 MAX_AUDIO_SPEED = 500
 AUDIO_AHEAD = 2.0
 MAX_AUDIO_SOUNDS = 32
-# A scrub knob click that moves the playhead plays SCRUB_FRAMES frames of
-# the sound under it, like Blender's own audio scrubbing.
-SCRUB_FRAMES = 1
+# A scrub knob click plays the frames it moved over, landing frame included
+# (decision 20261115kntq); clicks added up in one read play at most the
+# last MAX_SCRUB_SECONDS of the move, nearest the landing frame.
+MAX_SCRUB_SECONDS = 0.5
 
 
 class LineBuffer:
@@ -361,22 +362,42 @@ def audio_plan(strips, origin, elapsed, fps, speed, started, playing, ahead=AUDI
     return plan
 
 
-def scrub_sounds(strips, frame, fps, frames=SCRUB_FRAMES):
-    """What a scrub that lands on frame plays: (key, from_s, to_s) for every
-    strip under the playhead (strips as for audio_plan), from frame for
-    frames frames or to the strip's end, at most MAX_AUDIO_SOUNDS."""
-    if fps <= 0 or frames <= 0:
+def scrub_frames(frm, to, fps):
+    """The timeline frames [lo, hi) a scrub from frame frm to frame to
+    plays, forward in time: the frames it moved over, landing frame
+    included and the one it left not, so going forward the sound ends on
+    the playhead and going backwards it starts there. A 1-frame move
+    plays just the landing frame. A move longer than MAX_SCRUB_SECONDS is
+    cut to the part nearest the landing frame. None if it didn't move."""
+    if to == frm or fps <= 0:
+        return None
+    most = max(1, int(MAX_SCRUB_SECONDS * fps))
+    if to > frm:
+        return max(frm + 1, to + 1 - most), to + 1
+    return to, min(frm, to + most)
+
+
+def scrub_sounds(strips, frm, to, fps):
+    """What a scrub from frame frm to frame to plays: (key, from_s, to_s,
+    delay) for every strip (as for audio_plan) heard in the frames
+    scrub_frames gives: its sound from from_s to to_s seconds, after delay
+    seconds, so strips one after another sound one after another. At most
+    MAX_AUDIO_SOUNDS."""
+    span = scrub_frames(frm, to, fps)
+    if span is None:
         return []
+    lo, hi = span
     plan = []
     for key, start, end, content_start, sound_offset in sorted(strips, key=lambda s: s[1]):
         if len(plan) >= MAX_AUDIO_SOUNDS:
             break
-        if not start <= frame < end:
+        a, b = max(lo, start), min(hi, end)
+        if a >= b:
             continue
-        from_s = max(0.0, (frame - content_start) / fps + sound_offset)
-        to_s = (min(end, frame + frames) - content_start) / fps + sound_offset
+        from_s = max(0.0, (a - content_start) / fps + sound_offset)
+        to_s = (b - content_start) / fps + sound_offset
         if to_s > from_s:
-            plan.append((key, from_s, to_s))
+            plan.append((key, from_s, to_s, (a - lo) / fps))
     return plan
 
 
