@@ -3,6 +3,13 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## The scrub knob stops playback (asked for directly, 2026-11-15)
+
+Turning the scrub knob while it plays, at any speed, pauses playback, and
+the playhead stays on the frame the knob leaves it on. It used to play on
+from there. The owner asked for it in chat, so there is no card. The jump
+knob, cut and ripple delete still leave playback running.
+
 ## Where two clips meet, the trim knob rolls; Fn shrinks one side (202611150cft)
 
 Turned on its own at a join, the trim knob rolls the cut: one clip gets

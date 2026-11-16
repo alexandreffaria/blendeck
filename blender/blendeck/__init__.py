@@ -14,7 +14,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.15.0"
+ADDON_VERSION = "0.15.1"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -1055,6 +1055,20 @@ def _cancel_native():
         bpy.ops.screen.animation_cancel(restore_frame=False)
 
 
+def _stop_playback():
+    """Stops playback where it is, Blender's own or the add-on's, for the
+    scrub knob: it takes the playhead over, so the frame it lands on is
+    where playback stopped. Nothing while nothing plays. Never raises; if
+    Blender's own can't be paused, it says why and plays on."""
+    try:
+        if shuttle.speed:
+            _shuttle_stop()
+        if _playing():
+            _cancel_native()
+    except Exception as e:
+        print("Blendeck: playback not stopped:", e)
+
+
 def _shuttle(scene, direction):
     """A press of the forward (direction 1) or backwards (-1) button: play
     that way at normal speed, 0.25x faster if it already plays that way, or
@@ -1109,7 +1123,7 @@ def _play_range(scene):
 
 def _shuttle_tick(scene):
     """Moves the playhead for playback the add-on drives, once per timer
-    tick. It picks up from wherever something else (the scrub knob, an
+    tick. It picks up from wherever something else (the jump knob, an
     edit, the mouse) put the playhead, and stops at the ends of the play
     range (see _play_range), when the edited scene changes, when Blender's
     own playback starts, or when a render starts. Frames
@@ -1242,8 +1256,9 @@ def _scrub_sound(scene, frm):
     Blender's own audio scrubbing: the frames it moved over (see
     protocol.scrub_frames) of every sound strip heard there, at the
     strip's volume. What the previous click started is
-    stopped first. Silent while anything plays, since playback has its own
-    sound. Never raises; a failure is printed once until it changes."""
+    stopped first. Silent while anything plays (playback the scrub
+    couldn't stop), since playback has its own sound. Never raises; a
+    failure is printed once until it changes."""
     _scrub_stop()
     if _playing() or shuttle.speed:
         return
@@ -1355,6 +1370,9 @@ def _apply(messages, prefs):
         if kind in ("jump", "jump_sound"):
             _jump(scene, frames, kind == "jump_sound")  # for a jump, frames is how many cuts
             continue
+        # The scrub knob takes the playhead over: playback stops, and the
+        # frame the knob leaves it on is where it stopped
+        _stop_playback()
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
             was = scene.frame_current

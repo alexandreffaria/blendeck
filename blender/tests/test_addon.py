@@ -1573,9 +1573,9 @@ class AddonTest(unittest.TestCase):
         addon.bpy.context.scene = scene
         return scene
 
-    def test_scrub_while_playing_moves_the_sound_too(self):
-        # With Sync to Audio, frame_set alone is undone by the next playback
-        # step: frame_current is assigned first, which moves the sound
+    def test_scrub_while_playing_stops_it_there(self):
+        # The scrub knob takes the playhead over: playback pauses, and the
+        # playhead stays on the frame the knob left it on
         scene = self._seek_scene()
         self._play_window(sequencer_scene=scene)
         addon.bpy.context.sequencer_scene = scene
@@ -1585,8 +1585,37 @@ class AddonTest(unittest.TestCase):
             addon._apply([{"type": "scrub", "frames": 30}], PREFS)
         finally:
             PREFS.clamp = True
+        self.assertEqual(PLAYER.calls, [("cancel", False)])
+        self.assertFalse(addon._playing())
+        self.assertEqual(scene.log, [("frame_set", 130)])
+
+    def test_scrub_against_the_end_still_stops_playback(self):
+        # A click that can't move the playhead (the clamp at the last
+        # frame) still means the knob took over
+        self._play_window()
+        SCENE.frame_current = SCENE.frame_end
+        PLAYER._set(True)
+        addon._apply([{"type": "scrub", "frames": 10}], PREFS)
+        self.assertFalse(addon._playing())
+        self.assertEqual(SCENE.frame_current, SCENE.frame_end)
+
+    def test_scrub_while_playing_that_cant_pause_moves_the_sound_too(self):
+        # If Blender's playback can't be paused it plays on, and the scrub
+        # still lands. With Sync to Audio, frame_set alone is undone by the
+        # next playback step: frame_current is assigned first, which moves
+        # the sound
+        scene = self._seek_scene()
+        self._play_window(sequencer_scene=scene)
+        addon.bpy.context.sequencer_scene = scene
+        PLAYER._set(True)
+        PLAYER.fail = True
+        PREFS.clamp = False
+        try:
+            addon._apply([{"type": "scrub", "frames": 30}], PREFS)
+        finally:
+            PREFS.clamp = True
         self.assertEqual(scene.log, [("assign", 130), ("frame_set", 130)])
-        self.assertTrue(addon._playing(), "scrubbing doesn't stop playback")
+        self.assertTrue(addon._playing())
 
     def test_scrub_while_paused_unchanged(self):
         scene = self._seek_scene()
@@ -1600,14 +1629,15 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.log, [("frame_set", 70)])
 
     def test_scrub_while_playing_selection_follows_before_cut(self):
-        # Play, scrub and cut in one read: the frame-change handler still
-        # runs at once, so the cut takes the strips under the new playhead
+        # Play, scrub and cut in one read: the scrub pauses, the
+        # frame-change handler still runs at once, so the cut takes the
+        # strips under the new playhead
         ed = self._editor()
         self._play_window()
         PREFS.follow_selection = True
         FRAME_HANDLERS.append(addon.on_frame_change)
         addon._apply([{"type": "play_pause"}, {"type": "scrub", "frames": 20}, {"type": "cut"}], PREFS)
-        self.assertTrue(addon._playing())
+        self.assertFalse(addon._playing())
         self.assertEqual(SCENE.frame_current, 70)
         self.assertEqual(sorted(n for n, f, _ in ed.log), ["A", "C", "D"])
 
@@ -1927,16 +1957,20 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(scene.frame_current, before)
         self.assertEqual(addon.shuttle.speed, 0)
 
-    def test_scrub_while_shuttling_carries_on_from_there(self):
+    def test_scrub_while_shuttling_stops_it_there(self):
         advance = self._clock()
         scene = self._shuttle_scene()
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
-        addon._apply([{"type": "scrub", "frames": 300}], PREFS)
-        self.assertEqual(scene.frame_current, 400)
+        advance(1.0)
+        addon._apply([{"type": "scrub", "frames": 300}], PREFS)  # from 76, where it got to
+        self.assertEqual(scene.frame_current, 376)
+        self.assertEqual(addon.shuttle.speed, 0)
         advance(1.0)
         addon._apply([], PREFS)
-        self.assertEqual(scene.frame_current, 376)
-        self.assertEqual(addon.shuttle.speed, -100)
+        self.assertEqual(scene.frame_current, 376, "the playhead stays where the knob left it")
+        # The next play is Blender's own, at normal speed
+        addon._apply([{"type": "play_pause"}], PREFS)
+        self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
 
     def test_selection_follows_while_shuttling(self):
         advance = self._clock()
@@ -2266,7 +2300,7 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "scrub", "frames": 10}], PREFS)
         self.assertEqual(len(plays), 4)
 
-    def test_scrub_is_silent_while_playing_or_turned_off(self):
+    def test_scrub_is_silent_turned_off_or_over_playback_it_cant_stop(self):
         plays = self._fake_aud()
         self._clock()
         scene = self._shuttle_scene()
@@ -2274,13 +2308,25 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "scrub", "frames": 10}], PREFS)  # turned off
         self.assertEqual(plays, [])
         PREFS.scrub_audio = True
+        PLAYER._set(True)  # Blender's own playback
+        PLAYER.fail = True  # that can't be paused: it has its own sound
+        addon._apply([{"type": "scrub", "frames": 10}], PREFS)
+        self.assertEqual(plays, [])
+
+    def test_the_scrub_that_stops_playback_is_heard(self):
+        # Playback stops first, so the click sounds like any other scrub
+        plays = self._fake_aud()
+        self._clock()
+        scene = self._shuttle_scene()
+        scene.sequence_editor = types.SimpleNamespace(strips=[self._sound("voice", 1, 1000, 1)], channels=None)
+        PREFS.scrub_audio = True
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)  # backwards: the add-on drives it
         addon._apply([{"type": "scrub", "frames": 10}], PREFS)
-        self.assertEqual(plays, [])
-        addon._shuttle_stop()
+        self.assertEqual(len(plays), 1)
         PLAYER._set(True)  # Blender's own playback
         addon._apply([{"type": "scrub", "frames": 10}], PREFS)
-        self.assertEqual(plays, [])
+        self.assertEqual(len(plays), 2)
+        self.assertFalse(addon._playing())
 
     def test_scrub_without_a_sound_device_still_moves(self):
         plays = self._fake_aud()

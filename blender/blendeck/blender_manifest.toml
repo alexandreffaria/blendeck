@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blendeck"
-version = "0.15.0"
+version = "0.15.1"
 name = "Blendeck"
 tagline = "Drive the video editor from a MIDI controller like the Loupedeck+"
 maintainer = "Blendeck contributors"
