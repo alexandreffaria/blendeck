@@ -903,5 +903,43 @@ class JumpTest(unittest.TestCase):
         self.assertEqual(protocol.edit_steps([J(cap), {"type": "cut"}, J(1)]), [("jump", cap), ("cut", None)])
 
 
+class LatencyTest(unittest.TestCase):
+    def test_oldest_stamp(self):
+        msgs = [{"type": "scrub", "frames": 1, "t": 5000}, {"type": "cut", "t": 4000}, {"type": "undo"}]
+        self.assertEqual(protocol.oldest_stamp(msgs), 4000)
+        self.assertIsNone(protocol.oldest_stamp([]))
+        self.assertIsNone(protocol.oldest_stamp([{"type": "cut"}]))
+
+    def test_oldest_stamp_ignores_nonsense(self):
+        bad = [{"t": "soon"}, {"t": True}, {"t": -5}, {"t": 0}, {"t": None}, {"t": [1]}, {"t": float("nan")}]
+        self.assertIsNone(protocol.oldest_stamp(bad))
+        self.assertEqual(protocol.oldest_stamp(bad + [{"t": 7.5}]), 7.5)
+
+    def test_moves_picture(self):
+        for kind in ("cut", "undo", "ripple_delete", "move", "trim"):
+            self.assertTrue(protocol.moves_picture([{"type": "zoom", "clicks": 1}, {"type": kind}]), kind)
+        self.assertFalse(protocol.moves_picture([{"type": "zoom", "clicks": 1}, {"type": "pan", "clicks": 1}, {}]))
+
+    def test_report(self):
+        report = protocol.latency_report([4.04, 9, 2], [11, 170.26], [15, 179], 171.449, 0)
+        self.assertEqual(
+            report,
+            {
+                "type": "latency", "samples": 3, "wait_med": 4.0, "wait_max": 9, "picture_med": 170.3,
+                "picture_max": 170.3, "total_med": 179, "total_max": 179, "tick_max": 171.4, "dropped": 0,
+            },
+        )
+        protocol.encode(report)  # goes over the wire as it is
+
+    def test_report_without_pictures(self):
+        # No preview on screen: the waits are still worth reporting
+        report = protocol.latency_report([3], [], [], 12, 0)
+        self.assertEqual((report["samples"], report["picture_max"], report["total_max"]), (1, 0.0, 0.0))
+
+    def test_nothing_to_report(self):
+        self.assertIsNone(protocol.latency_report([], [], [], 500, 0))
+        self.assertEqual(protocol.latency_report([], [], [], 0, 3)["dropped"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

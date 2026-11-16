@@ -77,6 +77,11 @@ bridge drops it and the add-on reconnects by itself a second later.
 
 ## The page
 
+- **Control to picture**: next to the playhead, how long the last second of
+  commands took from the bridge to Blender's preview having drawn them, and
+  the worst of the last minute. Hover it for the parts: waiting for Blender,
+  drawing the picture, and how long Blender was busy. If moving backwards is
+  slow, the footage needs proxies.
 - **Monitor**: every MIDI message, live, with what it did. Use it to see
   what a control sends.
 - **Bindings**: control → action, with frames (scrub, moving strips, trimming), zoom steps (zoom) or percent of the view (pan) per click and the knob's

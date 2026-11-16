@@ -145,6 +145,64 @@ def pan_pixels(width, percent):
     return int(round(width * percent / 100.0))
 
 
+# Latency samples kept between two reports at most, and the oldest a
+# command may be and still count: older than that is a clock that was set,
+# not a wait.
+MAX_LATENCY_SAMPLES = 256
+MAX_WAIT_MS = 60_000
+
+
+def oldest_stamp(messages):
+    """The earliest "t" (when the bridge took the command, in milliseconds
+    since 1970) among messages, or None when none carries a usable one."""
+    oldest = None
+    for m in messages:
+        t = m.get("t")
+        if type(t) not in (int, float) or not t > 0:
+            continue
+        if oldest is None or t < oldest:
+            oldest = t
+    return oldest
+
+
+def moves_picture(messages):
+    """Whether messages hold an edit that redraws the preview even when the
+    playhead stays: a cut, an undo, a ripple delete, a move or a trim."""
+    return any(m.get("type") in ("cut", "undo", "ripple_delete", "move", "trim") for m in messages)
+
+
+def _med_max(values):
+    if not values:
+        return 0.0, 0.0
+    ordered = sorted(values)
+    return round(ordered[len(ordered) // 2], 1), round(ordered[-1], 1)
+
+
+def latency_report(waits, pictures, totals, tick, dropped):
+    """The message that tells the bridge how long commands took since the
+    last report, all in milliseconds, or None when there is nothing to say.
+    waits: from the bridge taking a command to the add-on applying it.
+    pictures: from there to the preview having drawn. totals: both. tick:
+    the longest gap between two ticks. dropped: presses left out of a read."""
+    if not waits and not dropped:
+        return None
+    wait_med, wait_max = _med_max(waits)
+    picture_med, picture_max = _med_max(pictures)
+    total_med, total_max = _med_max(totals)
+    return {
+        "type": "latency",
+        "samples": len(waits),
+        "wait_med": wait_med,
+        "wait_max": wait_max,
+        "picture_med": picture_med,
+        "picture_max": picture_max,
+        "total_med": total_med,
+        "total_max": total_max,
+        "tick_max": round(tick, 1),
+        "dropped": dropped,
+    }
+
+
 def edit_steps(messages):
     """The scrubs, cuts, undos, ripple deletes and play / pause presses in
     messages, in order: ("scrub", frames), ("cut", None), ("undo", None),
