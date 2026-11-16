@@ -18,7 +18,9 @@
 // in milliseconds: wait is from the bridge to the add-on applying the
 // command, picture from there to the preview having drawn, total both,
 // tick the longest gap between two of the add-on's ticks (Blender busy),
-// and dropped the presses the add-on left out (see State.Latency).
+// and dropped the presses the add-on left out (see State.Latency). When the
+// slowest picture was slow it adds "slow":true and "causes", the reasons it
+// found: any of "proxies_off", "prefetch_on" and "cache_window".
 //
 // A connection counts as an add-on only once its first line is a hello, sent
 // within HelloTimeout. That keeps stray connections (a web page's request to
@@ -92,17 +94,21 @@ type State struct {
 // of a read. WorstMinute is the largest TotalMax of the last minute and
 // AgeMS how old this report is, both filled in by State.
 type Latency struct {
-	Samples     int     `json:"samples"`
-	WaitMed     float64 `json:"wait_med"`
-	WaitMax     float64 `json:"wait_max"`
-	PictureMed  float64 `json:"picture_med"`
-	PictureMax  float64 `json:"picture_max"`
-	TotalMed    float64 `json:"total_med"`
-	TotalMax    float64 `json:"total_max"`
-	TickMax     float64 `json:"tick_max"`
-	Dropped     int     `json:"dropped"`
-	WorstMinute float64 `json:"worst_minute"`
-	AgeMS       int64   `json:"age_ms"`
+	Samples    int     `json:"samples"`
+	WaitMed    float64 `json:"wait_med"`
+	WaitMax    float64 `json:"wait_max"`
+	PictureMed float64 `json:"picture_med"`
+	PictureMax float64 `json:"picture_max"`
+	TotalMed   float64 `json:"total_med"`
+	TotalMax   float64 `json:"total_max"`
+	TickMax    float64 `json:"tick_max"`
+	Dropped    int     `json:"dropped"`
+	// Slow says the add-on found the slowest picture slow; Causes are the
+	// reasons it could name, from slowCauses.
+	Slow        bool     `json:"slow,omitempty"`
+	Causes      []string `json:"causes,omitempty"`
+	WorstMinute float64  `json:"worst_minute"`
+	AgeMS       int64    `json:"age_ms"`
 }
 
 const (
@@ -112,6 +118,25 @@ const (
 	// maxLatencyMS bounds what an add-on can report: ten minutes.
 	maxLatencyMS = 600_000
 )
+
+// slowCauses are the reasons for a slow picture an add-on may name; anything
+// else it sends is left out.
+var slowCauses = []string{"proxies_off", "prefetch_on", "cache_window"}
+
+// knownCauses keeps the causes in got that the bridge knows, once each, in
+// slowCauses' order: at most len(slowCauses), whatever the add-on sent.
+func knownCauses(got []string) []string {
+	var out []string
+	for _, c := range slowCauses {
+		for _, g := range got {
+			if g == c {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
 
 type latencyAt struct {
 	at    time.Time
@@ -205,6 +230,7 @@ func (l *Link) State() State {
 	if l.latency != nil && s.Connected {
 		now := time.Now()
 		lat := *l.latency
+		lat.Causes = append([]string(nil), lat.Causes...)
 		lat.AgeMS = now.Sub(l.latencyAt).Milliseconds()
 		for _, r := range l.recent {
 			if now.Sub(r.at) <= time.Minute && r.worst > lat.WorstMinute {
@@ -240,6 +266,10 @@ func (l *Link) setLatency(m incoming) {
 		TotalMax:   ms(m.TotalMax),
 		TickMax:    ms(m.TickMax),
 		Dropped:    max(0, min(m.Dropped, 1_000_000)),
+		Slow:       m.Slow,
+	}
+	if m.Slow {
+		lat.Causes = knownCauses(m.Causes)
 	}
 	now := time.Now()
 	l.mu.Lock()
@@ -330,15 +360,17 @@ type incoming struct {
 	End     int     `json:"end"`
 	FPS     float64 `json:"fps"`
 
-	Samples    int     `json:"samples"`
-	WaitMed    float64 `json:"wait_med"`
-	WaitMax    float64 `json:"wait_max"`
-	PictureMed float64 `json:"picture_med"`
-	PictureMax float64 `json:"picture_max"`
-	TotalMed   float64 `json:"total_med"`
-	TotalMax   float64 `json:"total_max"`
-	TickMax    float64 `json:"tick_max"`
-	Dropped    int     `json:"dropped"`
+	Samples    int      `json:"samples"`
+	WaitMed    float64  `json:"wait_med"`
+	WaitMax    float64  `json:"wait_max"`
+	PictureMed float64  `json:"picture_med"`
+	PictureMax float64  `json:"picture_max"`
+	TotalMed   float64  `json:"total_med"`
+	TotalMax   float64  `json:"total_max"`
+	TickMax    float64  `json:"tick_max"`
+	Dropped    int      `json:"dropped"`
+	Slow       bool     `json:"slow"`
+	Causes     []string `json:"causes"`
 }
 
 // handle waits for the hello, registers the client, then reads until the

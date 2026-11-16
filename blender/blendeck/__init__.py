@@ -16,7 +16,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.16.0"
+ADDON_VERSION = "0.17.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -62,6 +62,7 @@ class _Meter:
     pending = None
     drawn = 0.0
     handle = None
+    slow = []  # what the panel says after a slow picture (see protocol.slow_note)
 
 
 meter = _Meter()
@@ -101,6 +102,49 @@ def _unwatch_preview():
     except Exception as e:
         print("Blendeck: preview watch not removed:", e)
     meter.handle = None
+
+
+def _slow_causes():
+    """What is set that makes pictures slow, as protocol.slow_causes names
+    it: a preview that doesn't use proxies, prefetch, and a preview range
+    Cache Window holds (it restarts prefetch at every move). Never raises."""
+    proxies_off = prefetch_on = cache_window = False
+    try:
+        scene = _scene()
+        ed = getattr(scene, "sequence_editor", None)
+        prefetch_on = bool(getattr(ed, "use_prefetch", False))
+        cache_window = scene is not None and _cache_window_range(scene)
+        wm = bpy.context.window_manager
+        for win in (wm.windows if wm else ()):
+            screen = win.screen
+            if screen is None:
+                continue
+            for area in screen.areas:
+                if area.type != "SEQUENCE_EDITOR":
+                    continue
+                space = area.spaces.active
+                if getattr(space, "view_type", "") in ("PREVIEW", "SEQUENCER_PREVIEW") and not getattr(space, "use_proxies", True):
+                    proxies_off = True
+    except Exception as e:
+        print("Blendeck: couldn't read why the picture is slow:", e)
+    return protocol.slow_causes(proxies_off, prefetch_on, cache_window)
+
+
+def _slow_check(report):
+    """After a report with pictures in it: when the slowest was slow, the
+    report says so with the reasons found, and the panel shows them until a
+    report that isn't slow. Never raises."""
+    try:
+        causes = _slow_causes() if report["picture_max"] >= protocol.SLOW_PICTURE_MS else []
+        note = protocol.slow_note(report["picture_max"], causes)
+        if note:
+            report["slow"] = True
+            report["causes"] = causes
+        if note != meter.slow:
+            meter.slow = note
+            _redraw()
+    except Exception as e:
+        print("Blendeck: slow picture check:", e)
 
 
 def _playhead():
@@ -147,6 +191,8 @@ def _measure(messages, started, wall, moved):
         if now - meter.last_report >= REPORT and meter.pending is None:
             report = protocol.latency_report(meter.waits, meter.pictures, meter.totals, meter.tick * 1000, meter.dropped)
             if report is not None:
+                if meter.pictures:
+                    _slow_check(report)
                 _send(report)
                 meter.last_report = now
                 meter.waits, meter.pictures, meter.totals = [], [], []
@@ -216,6 +262,7 @@ def _close(reason):
     link.out = b""
     link.last_state = None
     _meter_reset()
+    meter.slow = []
     _shuttle_stop()  # nothing would drive it any more
     _move_undo()  # nothing more will come for that turn of the knob
     stopped.running = False  # a stop seen after reconnecting isn't this one
@@ -1615,6 +1662,8 @@ class SEQUENCER_PT_blendeck(bpy.types.Panel):
         col.label(text=link.status, icon=icon)
         if link.note:
             col.label(text=link.note, icon="FILE_TICK" if link.note.startswith("Saved") else "INFO")
+        for i, line in enumerate(meter.slow):
+            col.label(text=line, icon="ERROR" if i == 0 else "DOT")
         if prefs:
             col.prop(prefs, "enabled")
             col.prop(prefs, "clamp")

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -417,7 +418,7 @@ func TestLatencyReport(t *testing.T) {
 	got := *l.State().Latency
 	got.AgeMS = 0
 	want := Latency{Samples: 7, WaitMed: 4, WaitMax: 9, PictureMed: 11, PictureMax: 170, TotalMed: 16, TotalMax: 178, TickMax: 171, Dropped: 2, WorstMinute: 178}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("latency = %+v", got)
 	}
 
@@ -451,5 +452,33 @@ func TestLatencyReport(t *testing.T) {
 	eventually(t, "disconnect", func() bool { return !l.State().Connected })
 	if l.State().Latency != nil {
 		t.Fatal("latency kept after the add-on left")
+	}
+}
+
+// A slow picture and its reasons reach the state; reasons the bridge doesn't
+// know, repeats and a flood of them don't, and neither do reasons on a
+// report that isn't slow.
+func TestSlowPictureCauses(t *testing.T) {
+	l, addr := start(t)
+	conn := dialHello(t, addr)
+	eventually(t, "connect", func() bool { return l.State().Connected })
+
+	fmt.Fprintln(conn, `{"type":"latency","samples":1,"picture_max":430,"total_max":440,"slow":true,"causes":["cache_window","proxies_off"]}`)
+	eventually(t, "slow report", func() bool { lat := l.State().Latency; return lat != nil && lat.Slow })
+	if got := l.State().Latency.Causes; !reflect.DeepEqual(got, []string{"proxies_off", "cache_window"}) {
+		t.Fatalf("causes = %q", got)
+	}
+
+	many := strings.Repeat(`"prefetch_on","<b>x</b>","nonsense",`, 1000)
+	fmt.Fprintln(conn, `{"type":"latency","samples":2,"picture_max":300,"slow":true,"causes":[`+many+`"prefetch_on"]}`)
+	eventually(t, "flooded report", func() bool { return l.State().Latency.Samples == 2 })
+	if got := l.State().Latency.Causes; !reflect.DeepEqual(got, []string{"prefetch_on"}) {
+		t.Fatalf("causes = %q", got)
+	}
+
+	fmt.Fprintln(conn, `{"type":"latency","samples":3,"picture_max":12,"causes":["prefetch_on"]}`)
+	eventually(t, "fast report", func() bool { return l.State().Latency.Samples == 3 })
+	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
+		t.Fatalf("latency = %+v", lat)
 	}
 }

@@ -2928,5 +2928,84 @@ class MeterTest(unittest.TestCase):
         self.assertIsNone(addon.meter.handle)
 
 
+class SlowPictureTest(unittest.TestCase):
+    """What the add-on says after a slow picture, and why."""
+
+    def setUp(self):
+        self.perf = [100.0]
+        self.sent = []
+        for name, value in (("_perf", lambda: self.perf[0]), ("_send", self.sent.append)):
+            self.addCleanup(setattr, addon, name, getattr(addon, name))
+            setattr(addon, name, value)
+        addon._meter_reset()
+        addon.meter.last_report = 0.0
+        addon.meter.drawn = 0.0
+        addon.meter.slow = []
+        self.addCleanup(addon._meter_reset)
+        self.addCleanup(setattr, addon.meter, "slow", [])
+        # A preview that doesn't use proxies, prefetch on, Cache Window's range
+        wm = addon.bpy.context.window_manager
+        old_windows = wm.windows
+        self.addCleanup(setattr, wm, "windows", old_windows)
+        self.space = types.SimpleNamespace(view_type="SEQUENCER_PREVIEW", use_proxies=False)
+        area = types.SimpleNamespace(type="SEQUENCE_EDITOR", spaces=types.SimpleNamespace(active=self.space), regions=[], tag_redraw=lambda: None)
+        wm.windows = [types.SimpleNamespace(screen=types.SimpleNamespace(areas=[area]), scene=SCENE)]
+        self.ed = types.SimpleNamespace(use_prefetch=True)
+        old_ed = getattr(SCENE, "sequence_editor", None)
+        self.addCleanup(setattr, SCENE, "sequence_editor", old_ed)
+        SCENE.sequence_editor = self.ed
+        old_scene = getattr(addon.bpy.context, "scene", None)
+        self.addCleanup(setattr, addon.bpy.context, "scene", old_scene)
+        addon.bpy.context.scene = SCENE
+
+    def move(self, picture):
+        """One command whose picture takes picture seconds, then its report."""
+        addon._measure([{"type": "scrub", "frames": -1, "t": 4995}], self.perf[0], 5.0, True)
+        self.perf[0] += picture
+        addon._on_preview_draw()
+        self.perf[0] += 1.1
+        addon._measure([], self.perf[0], 5.0, False)
+        return self.sent[-1]
+
+    def test_slow_picture_names_what_is_set(self):
+        report = self.move(0.430)
+        self.assertEqual((report["slow"], report["causes"]), (True, ["proxies_off", "prefetch_on"]))
+        self.assertEqual(addon.meter.slow, ["Slow picture: 430 ms", "Use Proxies is off in the preview", "Prefetch Frames is on"])
+
+    def test_fast_picture_says_nothing_and_clears_the_note(self):
+        self.move(0.430)
+        report = self.move(0.012)
+        self.assertNotIn("slow", report)
+        self.assertNotIn("causes", report)
+        self.assertEqual(addon.meter.slow, [])
+
+    def test_slow_with_everything_set_right(self):
+        self.space.use_proxies = True
+        self.ed.use_prefetch = False
+        report = self.move(0.200)
+        self.assertEqual((report["slow"], report["causes"]), (True, []))
+        self.assertEqual(addon.meter.slow, ["Slow picture: 200 ms"])
+
+    def test_a_report_without_pictures_keeps_the_note(self):
+        # A zoom has no picture to judge: what was said about the last one stays
+        self.move(0.430)
+        addon._measure([{"type": "zoom", "clicks": 1, "t": 4999}], self.perf[0], 5.0, False)
+        self.perf[0] += 1.1
+        addon._measure([], self.perf[0], 5.0, False)
+        self.assertNotIn("slow", self.sent[-1])
+        self.assertEqual(addon.meter.slow[0], "Slow picture: 430 ms")
+
+    def test_unreadable_blender_never_raises(self):
+        addon.bpy.context.window_manager.windows = [types.SimpleNamespace(screen=object())]
+        report = self.move(0.430)
+        self.assertTrue(report["slow"])
+        addon._slow_check({})  # a report it can't read: printed, not raised
+
+    def test_closing_the_link_clears_the_note(self):
+        self.move(0.430)
+        addon._close("Not connected")
+        self.assertEqual(addon.meter.slow, [])
+
+
 if __name__ == "__main__":
     unittest.main()
