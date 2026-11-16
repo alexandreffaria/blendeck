@@ -1308,6 +1308,11 @@ def _apply(messages, prefs):
     if scene is None:
         return
     _shuttle_tick(scene)
+    dropped = protocol.presses_dropped(messages)
+    if dropped:
+        # Never silently: every press counts (decision 202611163di7), so
+        # the ones a flood cost are said
+        print("Blendeck: %d presses dropped: more than %d cuts, undos and ripple deletes waited while Blender was busy" % (dropped, protocol.MAX_PRESSES_PER_TICK))
     for kind, frames in protocol.edit_steps(messages):
         if kind in ("move", "move_before"):
             _move(scene, frames, kind == "move_before")
