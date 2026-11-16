@@ -488,6 +488,27 @@ func TestHints(t *testing.T) {
 		t.Fatalf("after a change: %+v", m)
 	}
 
+	l.ShowHints(false) // already hidden: nothing is sent
+	l.ShowHints(true)
+	if m := readHints(t, r); !m.Show || m.Profile != "Colour" || !l.HintsShown() {
+		t.Fatalf("shown: %+v", m)
+	}
+	l.SetHints("Colour", first) // a new list keeps them shown
+	if m := readHints(t, r); !m.Show || len(m.Hints) != 1 {
+		t.Fatalf("new list while shown: %+v", m)
+	}
+	late := dialHello(t, addr) // an add-on connecting now shows them too
+	late.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if m := readHints(t, bufio.NewReader(late)); !m.Show {
+		t.Fatalf("connected while shown: %+v", m)
+	}
+	late.Close()
+	eventually(t, "late add-on gone", func() bool { return l.State().Clients == 1 })
+	l.ShowHints(false)
+	if m := readHints(t, r); m.Show || l.HintsShown() {
+		t.Fatalf("hidden: %+v", m)
+	}
+
 	// commands still arrive, after the hints
 	eventually(t, "client", func() bool { return l.State().Clients == 1 })
 	l.Send(engine.Command{Type: "cut"})

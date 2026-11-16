@@ -3,6 +3,15 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Holding Fn shows what the controls do (202611167kkw)
+
+Holding Fn (any modifier) on its own for half a second shows a list over
+the timeline: each control by the name given to it on the page, what it
+does, and what it does with Fn. It goes when Fn is released or any other
+control is used. The owner picked it over a list in the sidebar, dim text
+always in a corner, and the setup page: no mouse, and nothing on screen the
+rest of the time.
+
 ## The scrub knob stops playback (asked for directly, 2026-11-15)
 
 Turning the scrub knob while it plays, at any speed, pauses playback, and

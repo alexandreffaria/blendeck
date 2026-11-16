@@ -172,9 +172,9 @@ def _held_text(plain, name):
 
 def hints(messages):
     """What the controls do, from the newest {"type":"hints"} in messages:
-    (profile, [(control, text), ...]) with one pair per control, like
-    ("D2", "Scrub timeline · Fn: fine"). None when messages hold no
-    hints, so the list already shown stays. Anything malformed is left out
+    (profile, [(control, text), ...], show) with one pair per control, like
+    ("D2", "Scrub timeline · Fn: fine"); show says whether to draw the
+    list now. None when messages hold no hints, so what there is stays. Anything malformed is left out
     rather than raising: the bridge may be newer or older than this."""
     found = None
     for m in messages:
@@ -201,7 +201,18 @@ def hints(messages):
                 parts.append("%s: %s" % (modifier, _held_text(plain, name)))
         if control and parts:
             lines.append((control, " · ".join(parts)))
-    return _hint_text(found.get("profile")), lines
+    return _hint_text(found.get("profile")), lines, found.get("show") is True
+
+
+def hint_rows(count, height, line_height):
+    """How many of count lines go in each column so the list fits in
+    height pixels: as few columns as that takes, filled evenly. At least 1,
+    however little room there is."""
+    if count < 1:
+        return 1
+    fit = max(1, min(count, int(height // line_height) if line_height > 0 else count))
+    columns = -(-count // fit)
+    return -(-count // columns)
 
 
 def pan_pixels(width, percent):

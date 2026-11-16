@@ -23,8 +23,11 @@
 // The bridge also tells each add-on what the controls do, when it connects
 // and whenever that changes, so Blender can show it (see SetHints):
 //
-//	{"type":"hints","profile":"Video editing","hints":[{"control":"D2",
+//	{"type":"hints","profile":"Video editing","show":false,"hints":[{"control":"D2",
 //	 "name":"Scrub timeline","held":[{"modifier":"Fn","name":"Scrub timeline (fine)"}]}]}
+//
+// "show" says whether Blender shows the list now: true while a modifier
+// has been held on its own for a moment (decision 202611167kkw).
 //
 // A connection counts as an add-on only once its first line is a hello, sent
 // within HelloTimeout. That keeps stray connections (a web page's request to
@@ -193,8 +196,12 @@ type Link struct {
 	dropped int64
 	// hints is the line that tells an add-on what each control does: sent
 	// to each one as it connects and to all when it changes. Never
-	// modified once set, so clients share it.
-	hints []byte
+	// modified once set, so clients share it. hintProfile, hintList and
+	// hintShow are what it was made from.
+	hints       []byte
+	hintProfile string
+	hintList    []config.Hint
+	hintShow    bool
 	// latency is the latest report and when it came; recent holds the
 	// worst total of the last latencyKept reports, oldest first
 	latency   *Latency
@@ -292,7 +299,33 @@ func (l *Link) SetHints(profile string, hints []config.Hint) {
 	if hints == nil {
 		hints = []config.Hint{}
 	}
-	msg := hintsMsg{Type: "hints", Profile: truncate(profile), Hints: hints}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hintProfile, l.hintList = truncate(profile), hints
+	l.sendHints()
+}
+
+// ShowHints has every add-on show the hints, or hide them. It is part of
+// the hints message, not a command: it is never dropped or left waiting
+// behind a full queue, and an add-on that connects gets it as it is now.
+func (l *Link) ShowHints(show bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hintShow = show
+	l.sendHints()
+}
+
+// HintsShown reports whether add-ons are told to show the hints.
+func (l *Link) HintsShown() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.hintShow
+}
+
+// sendHints queues the hints line for every add-on if it changed. The
+// caller holds l.mu.
+func (l *Link) sendHints() {
+	msg := hintsMsg{Type: "hints", Profile: l.hintProfile, Show: l.hintShow, Hints: l.hintList}
 	line, err := json.Marshal(msg)
 	if err != nil || len(line) >= maxLine {
 		l.log.Warn("control hints don't fit in one message; sending none", "bytes", len(line), "error", err)
@@ -300,8 +333,6 @@ func (l *Link) SetHints(profile string, hints []config.Hint) {
 		line, _ = json.Marshal(msg)
 	}
 	line = append(line, '\n')
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if bytes.Equal(line, l.hints) {
 		return
 	}
@@ -318,6 +349,7 @@ func (l *Link) SetHints(profile string, hints []config.Hint) {
 type hintsMsg struct {
 	Type    string        `json:"type"`
 	Profile string        `json:"profile"`
+	Show    bool          `json:"show"`
 	Hints   []config.Hint `json:"hints"`
 }
 

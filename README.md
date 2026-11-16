@@ -35,6 +35,11 @@ moves, the strips under it are selected and the rest deselected, so the cut
 and ripple delete buttons act on them. Select some of them by hand to cut or
 delete only those. Turn it off in the add-on's preferences or its panel.
 
+**Forgot a control? Hold Fn**: with Fn held on its own for half a second,
+a list of every control and what it does (and does with Fn) shows over the
+timeline, using the names you gave the controls on the page. It goes when
+you let go or use any control.
+
 **The timeline recenters when playback stops**: whatever stops it (play /
 pause, the end of the play range, Space or undo in Blender), every timeline
 slides so the playhead is in the middle, at the same zoom.
