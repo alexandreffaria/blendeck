@@ -583,6 +583,48 @@ class TrimTest(unittest.TestCase):
         flood = [{"type": "trim", "frames": 1}] * (protocol.MAX_TRIMS_PER_TICK + 10)
         self.assertEqual(protocol.edit_steps(flood), [("trim", protocol.MAX_TRIMS_PER_TICK)])
 
+    def test_shrink_steps_are_their_own_kind(self):
+        S = {"type": "trim", "frames": 1, "shrink": True}
+        steps = protocol.edit_steps([S, S, {"type": "trim", "frames": 1}, dict(S, shrink=1), S])
+        # Only shrink: true counts as shrinking; a truthy non-bool is a plain trim
+        self.assertEqual(steps, [("trim_shrink", 2), ("trim", 2), ("trim_shrink", 1)])
+        flood = [S, {"type": "trim", "frames": 1}] * protocol.MAX_TRIMS_PER_TICK
+        self.assertEqual(len(protocol.edit_steps(flood)), protocol.MAX_TRIMS_PER_TICK, "both kinds share the cap")
+
+    # Decision 202611150cft: with Fn, only the clip turned into gets shorter.
+    def joined(self):
+        C = self.C
+        return [C(50, 100, channel=1, lo=0, hi=110), C(100, 200, channel=1, lo=95, hi=300),
+                C(50, 100, channel=2, lo=0, hi=110), C(100, 200, channel=2, lo=95, hi=300)]
+
+    def test_shrink_at_a_join_opens_a_gap(self):
+        # Right shortens the next clips' starts only; the ends stay
+        self.assertEqual(protocol.trim_plan(self.joined(), 100, 4, shrink=True), protocol.TrimPlan([1, 3], [], 4, 104))
+        # Left shortens the first clips' ends only
+        self.assertEqual(protocol.trim_plan(self.joined(), 100, -4, shrink=True), protocol.TrimPlan([], [0, 2], -4, 96))
+        # No footage limit applies to a handle going inwards: down to one frame
+        self.assertEqual(protocol.trim_plan(self.joined(), 100, 500, shrink=True).shift, 99)
+        self.assertEqual(protocol.trim_plan(self.joined(), 100, -500, shrink=True).shift, -49)
+        # Without shrink it still rolls
+        self.assertEqual(protocol.trim_plan(self.joined(), 100, 4), protocol.TrimPlan([1, 3], [0, 2], 4, 104))
+
+    def test_shrink_never_grows_a_lone_handle(self):
+        # A start after the gap: right shrinks it, left (growing) does nothing
+        self.assertEqual(protocol.trim_plan(self.gap(), 120, 3, shrink=True), protocol.TrimPlan([1, 3], [], 3, 123))
+        self.assertIsNone(protocol.trim_plan(self.gap(), 120, -3, shrink=True))
+        self.assertEqual(protocol.trim_plan(self.gap(), 100, -3, shrink=True), protocol.TrimPlan([], [0, 2], -3, 97))
+        self.assertIsNone(protocol.trim_plan(self.gap(), 100, 3, shrink=True))
+
+    def test_shrink_ignores_effects_on_the_side_that_stays(self):
+        C = self.C
+        # A transform following the first clip ends at the join, with a
+        # locked title starting there on its channel: shrinking the next clip's
+        # start doesn't move the transform, so the title is no limit
+        clips = self.joined() + [C(50, 100, channel=3, follows=True), C(100, 130, channel=3, locked=True)]
+        self.assertEqual(protocol.trim_plan(clips, 100, 4, shrink=True).shift, 4)
+        # Rolling moves the transform's end too, into the title: blocked
+        self.assertIsNone(protocol.trim_plan(clips, 100, 4))
+
 
 class SelectionTest(unittest.TestCase):
     def spans(self):

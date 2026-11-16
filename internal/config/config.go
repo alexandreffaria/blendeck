@@ -90,6 +90,11 @@ const (
 	// start it shows more of the clip's beginning, turned right on its end
 	// more of its end. Where two clips meet, the cut between them rolls.
 	ActionTrim = "timeline.trim"
+	// ActionTrimShrink is ActionTrim that only shortens the clip turned
+	// into: right moves only clip starts, left only ends, so where two
+	// clips meet it opens a gap instead of rolling the cut (decision
+	// 202611150cft). The trim knob with Fn held.
+	ActionTrimShrink = "timeline.trim_shrink"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -181,6 +186,7 @@ func Default() Config {
 				{ID: "move-after", Name: "Move selected and later strips", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 10},
 				{ID: "move-after-fine", Name: "Move selected and later strips (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 1},
 				{ID: "trim", Name: "Trim handle at playhead", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionTrim, Step: 1},
+				{ID: "trim-shrink", Name: "Trim, shrinking one side", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionTrimShrink, Step: 1},
 			},
 		}},
 	}
@@ -265,7 +271,7 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionMoveAfter, ActionMoveBefore, ActionTrim:
+			case ActionMoveAfter, ActionMoveBefore, ActionTrim, ActionTrimShrink:
 				if b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: moving strips or handles needs a knob (cc)", b.Name)
 				}

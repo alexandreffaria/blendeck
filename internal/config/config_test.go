@@ -459,6 +459,27 @@ func TestTrimBinding(t *testing.T) {
 	}
 }
 
+func TestTrimShrinkBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "trim-shrink")
+	if b.Action != ActionTrimShrink || b.Modifier != "Fn" || b.Control.Learned() || b.Control.Type != "cc" || b.Step != 1 || b.Encoder != EncoderTwos {
+		t.Fatalf("default trim-shrink binding = %+v", b)
+	}
+	b.Control = Control{"cc", 1, 33}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	b.Control.Type = "note"
+	if c.Validate() == nil {
+		t.Fatal("shrinking on a button accepted")
+	}
+	b.Control.Type = "cc"
+	b.Step = 0
+	if c.Validate() == nil {
+		t.Fatal("step 0 accepted")
+	}
+}
+
 func TestPanBinding(t *testing.T) {
 	c := Default()
 	b := byID(&c, "pan")

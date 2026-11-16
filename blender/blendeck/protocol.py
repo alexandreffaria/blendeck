@@ -169,8 +169,9 @@ def edit_steps(messages):
     ("move", frames), of the selected strips and those before them
     ("move_before", frames): moves of one kind in a row are added up, at
     most MAX_MOVES_PER_TICK commands count. Turns of the trim knob are
-    ("trim", frames), added up the same way, at most MAX_TRIMS_PER_TICK
-    commands. Malformed commands are ignored."""
+    ("trim", frames), and with Fn held ("shrink": true) ("trim_shrink",
+    frames), added up the same way, at most MAX_TRIMS_PER_TICK commands
+    both kinds together. Malformed commands are ignored."""
     return _edit_steps(messages)[0]
 
 
@@ -259,12 +260,13 @@ def _edit_steps(messages):
             if type(frames) is not int or frames == 0 or trims >= MAX_TRIMS_PER_TICK:
                 continue
             trims += 1
-            if steps and steps[-1][0] == "trim":
-                steps[-1] = ("trim", steps[-1][1] + frames)
+            step = "trim_shrink" if m.get("shrink") is True else "trim"
+            if steps and steps[-1][0] == step:
+                steps[-1] = (step, steps[-1][1] + frames)
                 if steps[-1][1] == 0:
                     steps.pop()  # right then left: back where it was
             else:
-                steps.append(("trim", frames))
+                steps.append((step, frames))
     return steps, dropped
 
 
@@ -613,11 +615,17 @@ Clip = namedtuple("Clip", "start end locked channel follows lo hi", defaults=(Fa
 TrimPlan = namedtuple("TrimPlan", "starts ends shift playhead")
 
 
-def trim_plan(clips, frame, frames):
+def trim_plan(clips, frame, frames, shrink=False):
     """Plans the trim knob over clips (a list of Clip) with the playhead at
     frame: the handles at the playhead move frames right, or left when
     negative, and the playhead goes with them. Returns None when nothing
     moves.
+
+    With shrink (the trim knob with Fn held, decision 202611150cft) only
+    the clips turned into get shorter: right moves only starts, left only
+    ends. Where two clips meet, that opens a gap instead of rolling the
+    cut, and the neighbor never changes; a lone handle turned the other way
+    stays put.
 
     Which handles: the start of every unlocked strip that starts at the
     playhead and the end of every one that ends there, on every channel, so
@@ -634,13 +642,21 @@ def trim_plan(clips, frame, frames):
         return None
     starts = [i for i, c in enumerate(clips) if not c.locked and not c.follows and c.start == frame]
     ends = [i for i, c in enumerate(clips) if not c.locked and not c.follows and c.end == frame]
+    if shrink:
+        if frames > 0:
+            ends = []
+        else:
+            starts = []
     if not starts and not ends:
         return None
     moving_starts, moving_ends = set(starts), set(ends)
     # An effect with an edge there grows and shrinks with its inputs, so it
-    # must not run into its own neighbors either
-    edge_starts = moving_starts | {i for i, c in enumerate(clips) if c.follows and c.start == frame}
-    edge_ends = moving_ends | {i for i, c in enumerate(clips) if c.follows and c.end == frame}
+    # must not run into its own neighbors either. Shrinking, only the edges
+    # of the side that moves follow.
+    follow_starts = not shrink or bool(starts)
+    follow_ends = not shrink or bool(ends)
+    edge_starts = moving_starts | {i for i, c in enumerate(clips) if follow_starts and c.follows and c.start == frame}
+    edge_ends = moving_ends | {i for i, c in enumerate(clips) if follow_ends and c.follows and c.end == frame}
     shift = frames
     for i in starts:
         c = clips[i]
