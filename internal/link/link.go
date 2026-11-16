@@ -22,6 +22,15 @@
 // slowest picture was slow it adds "slow":true and "causes", the reasons it
 // found: any of "proxies_off", "prefetch_on" and "cache_window".
 //
+// The bridge also tells each add-on what the controls do, when it connects
+// and whenever that changes, so Blender can show it (see SetHints):
+//
+//	{"type":"hints","profile":"Video editing","show":false,"hints":[{"control":"D2",
+//	 "name":"Scrub timeline","held":[{"modifier":"Fn","name":"Scrub timeline (fine)"}]}]}
+//
+// "show" says whether Blender shows the list now: true while a modifier
+// has been held on its own for a moment (decision 202611167kkw).
+//
 // A connection counts as an add-on only once its first line is a hello, sent
 // within HelloTimeout. That keeps stray connections (a web page's request to
 // this port, a port scanner) from taking a slot or posting a fake state.
@@ -29,6 +38,7 @@ package link
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,6 +47,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alexandreffaria/blendeck/internal/config"
 	"github.com/alexandreffaria/blendeck/internal/engine"
 )
 
@@ -158,6 +169,7 @@ type queued struct {
 type client struct {
 	conn  net.Conn
 	queue []queued      // waiting to be written; guarded by Link.mu
+	hints []byte        // a hints line not written yet; guarded by Link.mu
 	wake  chan struct{} // signals writeLoop that queue has something
 	done  chan struct{}
 }
@@ -213,6 +225,14 @@ type Link struct {
 	pending int
 	state   State
 	dropped int64
+	// hints is the line that tells an add-on what each control does: sent
+	// to each one as it connects and to all when it changes. Never
+	// modified once set, so clients share it. hintProfile, hintList and
+	// hintShow are what it was made from.
+	hints       []byte
+	hintProfile string
+	hintList    []config.Hint
+	hintShow    bool
 	// latency is the latest report and when it came; recent holds the
 	// worst total of the last latencyKept reports, oldest first
 	latency   *Latency
@@ -318,13 +338,76 @@ func (l *Link) Send(cmd engine.Command) bool {
 	return taken
 }
 
+// SetHints tells every add-on, and each one that connects later, what the
+// controls of the active profile do, so Blender can show it. The add-on
+// replaces its list with each message. A list that would not fit in one
+// line is sent empty rather than cut mid-way.
+func (l *Link) SetHints(profile string, hints []config.Hint) {
+	if hints == nil {
+		hints = []config.Hint{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hintProfile, l.hintList = truncate(profile), hints
+	l.sendHints()
+}
+
+// ShowHints has every add-on show the hints, or hide them. It is part of
+// the hints message, not a command: it is never dropped or left waiting
+// behind a full queue, and an add-on that connects gets it as it is now.
+func (l *Link) ShowHints(show bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hintShow = show
+	l.sendHints()
+}
+
+// HintsShown reports whether add-ons are told to show the hints.
+func (l *Link) HintsShown() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.hintShow
+}
+
+// sendHints queues the hints line for every add-on if it changed. The
+// caller holds l.mu.
+func (l *Link) sendHints() {
+	msg := hintsMsg{Type: "hints", Profile: l.hintProfile, Show: l.hintShow, Hints: l.hintList}
+	line, err := json.Marshal(msg)
+	if err != nil || len(line) >= maxLine {
+		l.log.Warn("control hints don't fit in one message; sending none", "bytes", len(line), "error", err)
+		msg.Hints = []config.Hint{}
+		line, _ = json.Marshal(msg)
+	}
+	line = append(line, '\n')
+	if bytes.Equal(line, l.hints) {
+		return
+	}
+	l.hints = line
+	for c := range l.clients {
+		c.hints = line
+		select {
+		case c.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+type hintsMsg struct {
+	Type    string        `json:"type"`
+	Profile string        `json:"profile"`
+	Show    bool          `json:"show"`
+	Hints   []config.Hint `json:"hints"`
+}
+
 // take empties c's queue and returns it as lines ready to write.
 func (l *Link) take(c *client) []byte {
 	l.mu.Lock()
 	cmds := c.queue
 	c.queue = nil
+	data := append([]byte(nil), c.hints...) // a copy: clients share the line
+	c.hints = nil
 	l.mu.Unlock()
-	var data []byte
 	for _, cmd := range cmds {
 		line, err := json.Marshal(cmd)
 		if err != nil {
@@ -414,6 +497,10 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 	c := &client{conn: conn, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	if l.hints != nil {
+		c.hints = l.hints
+		c.wake <- struct{}{} // buffered and new: never blocks
+	}
 	l.clients[c] = true
 	l.state.Blender = truncate(hello.Blender)
 	l.state.Addon = truncate(hello.Addon)

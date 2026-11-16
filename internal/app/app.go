@@ -52,6 +52,14 @@ type App struct {
 
 	cfgMu sync.Mutex // serializes SetConfig so disk and engine agree
 
+	// hintMod is the modifier being held on its own, with nothing else
+	// touched since its press at hintAt; "" when there is none. Once it has
+	// been held for HintDelay the add-on shows the hints (hintShown).
+	hintMu    sync.Mutex
+	hintMod   string
+	hintAt    time.Time
+	hintShown bool
+
 	mu      sync.Mutex
 	events  []Event // ring buffer, oldest first once full
 	seq     int64
@@ -61,6 +69,7 @@ type App struct {
 // New makes an App from a loaded store.
 func New(log *slog.Logger, store *config.Store, conn *midi.Conn, lnk *link.Link, devices Devices) *App {
 	cfg := store.Get()
+	lnk.SetHints(cfg.ActiveProfile, cfg.Hints())
 	return &App{
 		log:     log.With("component", "app"),
 		store:   store,
@@ -82,11 +91,71 @@ func newRunID() string {
 // Run is this process's run id.
 func (a *App) RunID() string { return a.run }
 
+// HintDelay is how long a modifier is held on its own before Blender shows
+// what the controls do (decision 202611167kkw). Long enough that reaching
+// for Fn on the way to a fine turn rarely shows them. A variable so tests
+// can shorten it.
+var HintDelay = 500 * time.Millisecond
+
+// hintOn follows one controller message for the hints: a modifier's press
+// starts the wait, and anything else (its release, any other control,
+// bound or not) ends it and hides the hints.
+func (a *App) hintOn(m midi.Message, hit engine.Hit, now time.Time) {
+	if _, ok := engine.ControlOf(m); !ok {
+		return // not a control: aftertouch, a program change
+	}
+	a.hintMu.Lock()
+	defer a.hintMu.Unlock()
+	a.hintMod = ""
+	// On its own: a second modifier pressed while one is held shows
+	// nothing, and neither does letting go of one of the two
+	if hit.Modifier != "" && hit.Held && len(a.engine.Held()) == 1 {
+		a.hintMod, a.hintAt = hit.Modifier, now
+	}
+	a.hideHints()
+}
+
+// hintTick shows the hints once the modifier has been held long enough.
+func (a *App) hintTick(now time.Time) {
+	a.hintMu.Lock()
+	defer a.hintMu.Unlock()
+	if a.hintMod == "" || a.hintShown || now.Sub(a.hintAt) < HintDelay {
+		return
+	}
+	if a.engine.Learning() != engine.LearnOff {
+		// The page is learning a control, whether that began before the
+		// press or during the wait: this hold shows nothing
+		a.hintMod = ""
+		return
+	}
+	a.hintShown = true
+	a.link.ShowHints(true)
+}
+
+// hintOff ends the wait and hides the hints: the device went away, so the
+// modifier's release will never come.
+func (a *App) hintOff() {
+	a.hintMu.Lock()
+	defer a.hintMu.Unlock()
+	a.hintMod = ""
+	a.hideHints()
+}
+
+// hideHints hides the hints if they are shown. The caller holds hintMu.
+func (a *App) hideHints() {
+	if a.hintShown {
+		a.hintShown = false
+		a.link.ShowHints(false)
+	}
+}
+
 // Run handles controller messages until ctx ends. When the device goes away,
 // held buttons are released: their note-offs will never come.
 func (a *App) Run(ctx context.Context, messages <-chan midi.Message) {
 	check := time.NewTicker(250 * time.Millisecond)
 	defer check.Stop()
+	hint := time.NewTicker(50 * time.Millisecond)
+	defer hint.Stop()
 	wasConnected := false
 	for {
 		select {
@@ -94,10 +163,13 @@ func (a *App) Run(ctx context.Context, messages <-chan midi.Message) {
 			return
 		case m := <-messages:
 			a.Handle(m)
+		case now := <-hint.C:
+			a.hintTick(now)
 		case <-check.C:
 			connected := a.conn.Status().State == "connected"
 			if wasConnected && !connected {
 				a.engine.ReleaseAll()
+				a.hintOff()
 			}
 			wasConnected = connected
 		}
@@ -107,6 +179,7 @@ func (a *App) Run(ctx context.Context, messages <-chan midi.Message) {
 // Handle processes one controller message.
 func (a *App) Handle(m midi.Message) {
 	hit, learned := a.engine.Handle(m)
+	a.hintOn(m, hit, time.Now())
 	delivered := false
 	if hit.Command != nil {
 		delivered = a.link.Send(*hit.Command)
@@ -189,6 +262,7 @@ func (a *App) SetConfig(cfg config.Config) error {
 	}
 	a.engine.SetProfile(*cfg.Active())
 	a.conn.SetDevice(cfg.Device)
+	a.link.SetHints(cfg.ActiveProfile, cfg.Hints())
 	return nil
 }
 

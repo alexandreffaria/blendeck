@@ -139,6 +139,82 @@ def wants_save(messages):
     return any(m.get("type") == "save" for m in messages)
 
 
+# The bridge sends at most this many hints, modifiers per hint and
+# characters per text (config.MaxHint*); more than that is cut here too, so
+# the list stays small whatever is on the other end.
+MAX_HINTS = 40
+MAX_HINT_HELD = 2
+MAX_HINT_LEN = 40
+
+
+def _hint_text(value):
+    """value as one line of at most MAX_HINT_LEN characters, or "" when it
+    isn't text."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    if len(text) > MAX_HINT_LEN:
+        text = text[:MAX_HINT_LEN - 1] + "…"
+    return text
+
+
+def _held_text(plain, name):
+    """name without what it repeats of plain: "Scrub timeline (fine)" next
+    to "Scrub timeline" is "fine"."""
+    if plain and name.startswith(plain):
+        rest = name[len(plain):].strip(" ,:-")
+        if rest.startswith("(") and rest.endswith(")"):
+            rest = rest[1:-1].strip()
+        if rest:
+            return rest
+    return name
+
+
+def hints(messages):
+    """What the controls do, from the newest {"type":"hints"} in messages:
+    (profile, [(control, text), ...], show) with one pair per control, like
+    ("D2", "Scrub timeline · Fn: fine"); show says whether to draw the
+    list now. None when messages hold no hints, so what there is stays. Anything malformed is left out
+    rather than raising: the bridge may be newer or older than this."""
+    found = None
+    for m in messages:
+        if m.get("type") == "hints":
+            found = m
+    if found is None:
+        return None
+    lines = []
+    items = found.get("hints")
+    for h in items if isinstance(items, list) else []:
+        if len(lines) >= MAX_HINTS:
+            break
+        if not isinstance(h, dict):
+            continue
+        control = _hint_text(h.get("control"))
+        plain = _hint_text(h.get("name"))
+        parts = [plain] if plain else []
+        held = h.get("held")
+        for hh in (held if isinstance(held, list) else [])[:MAX_HINT_HELD]:
+            if not isinstance(hh, dict):
+                continue
+            modifier, name = _hint_text(hh.get("modifier")), _hint_text(hh.get("name"))
+            if modifier and name:
+                parts.append("%s: %s" % (modifier, _held_text(plain, name)))
+        if control and parts:
+            lines.append((control, " · ".join(parts)))
+    return _hint_text(found.get("profile")), lines, found.get("show") is True
+
+
+def hint_rows(count, height, line_height):
+    """How many of count lines go in each column so the list fits in
+    height pixels: as few columns as that takes, filled evenly. At least 1,
+    however little room there is."""
+    if count < 1:
+        return 1
+    fit = max(1, min(count, int(height // line_height) if line_height > 0 else count))
+    columns = -(-count // fit)
+    return -(-count // columns)
+
+
 def pan_pixels(width, percent):
     """How far to pan a region width pixels wide for percent of its width,
     in pixels (positive shows later frames)."""

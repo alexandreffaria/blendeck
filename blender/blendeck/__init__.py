@@ -16,7 +16,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.17.0"
+ADDON_VERSION = "0.18.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -43,6 +43,7 @@ class _Link:
     move_undo = 0.0  # when the move or trim knob last changed strips with no undo step yet (0: none waiting)
     undo_message = "Move strips"  # what that waiting undo step is called
     note = ""  # what the last save press did, shown in the panel
+    hints = None  # (profile, [(control, text)], show): what the controls do, from the bridge
 
 
 link = _Link()
@@ -107,6 +108,105 @@ def _unwatch_preview():
     except Exception as e:
         print("Blendeck: preview watch not removed:", e)
     meter.handle = None
+
+
+class _HintsDraw:
+    handle = None  # the timeline draw handler
+    failed = False  # a drawing error was printed already
+
+
+hints_draw = _HintsDraw()
+HINT_FONT = 12  # points, before the interface scale
+HINT_BACK = (0.07, 0.07, 0.07, 0.9)
+HINT_TITLE = (0.6, 0.6, 0.6, 1.0)
+HINT_CONTROL = (1.0, 0.78, 0.35, 1.0)
+HINT_TEXT = (0.93, 0.93, 0.93, 1.0)
+
+
+def _watch_timeline():
+    """Starts drawing the hints over the timeline. Never raises: without
+    it everything else still works."""
+    try:
+        if hints_draw.handle is None:
+            hints_draw.handle = bpy.types.SpaceSequenceEditor.draw_handler_add(_draw_hints, (), "WINDOW", "POST_PIXEL")
+    except Exception as e:
+        print("Blendeck: the hints can't be drawn:", e)
+
+
+def _unwatch_timeline():
+    try:
+        if hints_draw.handle is not None:
+            bpy.types.SpaceSequenceEditor.draw_handler_remove(hints_draw.handle, "WINDOW")
+    except Exception as e:
+        print("Blendeck: hints drawing not removed:", e)
+    hints_draw.handle = None
+
+
+def _draw_hints():
+    """Draws what the controls do over the timeline while the bridge says
+    to show it: a modifier held on its own (decision 202611167kkw). Blender
+    calls this on every redraw of a video editor's timeline. Never raises,
+    and says so only once if drawing fails."""
+    try:
+        hints = link.hints
+        if not hints or not hints[2] or not hints[1]:
+            return
+        region = bpy.context.region
+        if region is None:
+            return
+        _draw_hint_box(region, hints[0] or "Blendeck", hints[1])
+    except Exception as e:
+        if not hints_draw.failed:
+            hints_draw.failed = True
+            print("Blendeck: hints not drawn:", e)
+
+
+def _draw_hint_box(region, title, lines):
+    import blf
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+
+    scale = bpy.context.preferences.system.ui_scale
+    font = 0
+    blf.size(font, HINT_FONT * scale)
+    line = round(HINT_FONT * scale * 1.7)
+    pad, gap, margin = round(12 * scale), round(14 * scale), round(28 * scale)
+
+    rows = protocol.hint_rows(len(lines), region.height - 2 * margin - 2 * pad - line, line)
+    columns = [lines[i:i + rows] for i in range(0, len(lines), rows)]
+    widths = []  # per column: its control names' width, its texts' width
+    for column in columns:
+        widths.append((
+            max(blf.dimensions(font, control)[0] for control, _ in column),
+            max(blf.dimensions(font, text)[0] for _, text in column),
+        ))
+    width = sum(c + gap + t for c, t in widths) + 2 * gap * (len(columns) - 1) + 2 * pad
+    width = max(width, blf.dimensions(font, title)[0] + 2 * pad)
+    height = line * (rows + 1) + 2 * pad
+    x0 = max(0, (region.width - width) // 2)
+    y0 = margin
+
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    box = ((x0, y0), (x0 + width, y0), (x0 + width, y0 + height), (x0, y0 + height))
+    batch = batch_for_shader(shader, "TRI_FAN", {"pos": box})
+    gpu.state.blend_set("ALPHA")
+    shader.bind()
+    shader.uniform_float("color", HINT_BACK)
+    batch.draw(shader)
+    gpu.state.blend_set("NONE")
+
+    def put(x, row, color, s):
+        blf.color(font, *color)
+        blf.position(font, x, y0 + height - pad - line * (row + 1) + line * 0.3, 0)
+        blf.draw(font, s)
+
+    put(x0 + pad, 0, HINT_TITLE, title)
+    x = x0 + pad
+    for column, (cw, tw) in zip(columns, widths):
+        for row, (control, what) in enumerate(column):
+            put(x, row + 1, HINT_CONTROL, control)
+            put(x + cw + gap, row + 1, HINT_TEXT, what)
+        x += cw + gap + tw + 2 * gap
 
 
 def _slow_causes():
@@ -270,6 +370,7 @@ def _close(reason):
     link.buf = None
     link.out = b""
     link.last_state = None
+    link.hints = None  # the bridge says them again when it is back
     _meter_reset()
     meter.slow = []
     _shuttle_stop()  # nothing would drive it any more
@@ -1498,6 +1599,10 @@ def on_frame_change(scene, depsgraph=None):
 
 
 def _apply(messages, prefs):
+    hints = protocol.hints(messages)
+    if hints is not None and hints != link.hints:
+        link.hints = hints
+        _redraw()  # shown, hidden or changed: the timeline draws it
     # View all first: a zoom or pan in the same read then applies to the
     # whole-edit view instead of being thrown away by it
     if protocol.wants_view_all(messages):
@@ -1691,6 +1796,7 @@ def register():
     _remove_handler()
     bpy.app.handlers.frame_change_post.append(on_frame_change)
     _watch_preview()
+    _watch_timeline()
 
 
 def _remove_handler():
@@ -1705,6 +1811,7 @@ def _remove_handler():
 def unregister():
     _remove_handler()
     _unwatch_preview()
+    _unwatch_timeline()
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
     _close("Not connected")

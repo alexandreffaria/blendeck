@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexandreffaria/blendeck/internal/config"
 	"github.com/alexandreffaria/blendeck/internal/engine"
 )
 
@@ -452,6 +453,85 @@ func TestLatencyReport(t *testing.T) {
 	eventually(t, "disconnect", func() bool { return !l.State().Connected })
 	if l.State().Latency != nil {
 		t.Fatal("latency kept after the add-on left")
+	}
+}
+
+func readHints(t *testing.T, r *bufio.Reader) hintsMsg {
+	t.Helper()
+	line, err := r.ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m hintsMsg
+	if err := json.Unmarshal(line, &m); err != nil || m.Type != "hints" {
+		t.Fatalf("got %q (%v)", line, err)
+	}
+	return m
+}
+
+// An add-on is told what the controls do when it connects and whenever
+// that changes, and only then.
+func TestHints(t *testing.T) {
+	l, addr := start(t)
+	first := []config.Hint{{Control: "D2", Name: "Scrub timeline", Held: []config.HeldHint{{Modifier: "Fn", Name: "fine"}}}}
+	l.SetHints("Video editing", first)
+
+	conn := dialHello(t, addr)
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	r := bufio.NewReader(conn)
+	if m := readHints(t, r); m.Profile != "Video editing" || len(m.Hints) != 1 || m.Hints[0].Held[0].Name != "fine" {
+		t.Fatalf("on connect: %+v", m)
+	}
+
+	l.SetHints("Video editing", first) // the same again: nothing is sent
+	l.SetHints("Colour", nil)
+	if m := readHints(t, r); m.Profile != "Colour" || m.Hints == nil || len(m.Hints) != 0 {
+		t.Fatalf("after a change: %+v", m)
+	}
+
+	l.ShowHints(false) // already hidden: nothing is sent
+	l.ShowHints(true)
+	if m := readHints(t, r); !m.Show || m.Profile != "Colour" || !l.HintsShown() {
+		t.Fatalf("shown: %+v", m)
+	}
+	l.SetHints("Colour", first) // a new list keeps them shown
+	if m := readHints(t, r); !m.Show || len(m.Hints) != 1 {
+		t.Fatalf("new list while shown: %+v", m)
+	}
+	late := dialHello(t, addr) // an add-on connecting now shows them too
+	late.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if m := readHints(t, bufio.NewReader(late)); !m.Show {
+		t.Fatalf("connected while shown: %+v", m)
+	}
+	late.Close()
+	eventually(t, "late add-on gone", func() bool { return l.State().Clients == 1 })
+	l.ShowHints(false)
+	if m := readHints(t, r); m.Show || l.HintsShown() {
+		t.Fatalf("hidden: %+v", m)
+	}
+
+	// commands still arrive, after the hints
+	eventually(t, "client", func() bool { return l.State().Clients == 1 })
+	l.Send(engine.Command{Type: "cut"})
+	line, err := r.ReadBytes('\n')
+	if err != nil || !strings.HasPrefix(string(line), `{"type":"cut"`) {
+		t.Fatalf("got %q (%v)", line, err)
+	}
+}
+
+// A list too long for one line is sent empty: the add-on would drop the
+// connection over a line past its limit.
+func TestHintsTooLong(t *testing.T) {
+	l, addr := start(t)
+	var many []config.Hint
+	for i := 0; i < 2000; i++ {
+		many = append(many, config.Hint{Control: strings.Repeat("x", 40), Name: strings.Repeat("y", 40)})
+	}
+	l.SetHints("Big", many)
+	conn := dialHello(t, addr)
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if m := readHints(t, bufio.NewReader(conn)); m.Profile != "Big" || len(m.Hints) != 0 {
+		t.Fatalf("got %d hints", len(m.Hints))
 	}
 }
 

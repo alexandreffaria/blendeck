@@ -2928,6 +2928,144 @@ class MeterTest(unittest.TestCase):
         self.assertIsNone(addon.meter.handle)
 
 
+class HintsTest(unittest.TestCase):
+    """What the controls do, drawn over the timeline while the bridge says
+    to show it (decision 202611167kkw)."""
+
+    MSG = {"type": "hints", "profile": "Video editing", "show": False, "hints": [
+        {"control": "D2", "name": "Scrub timeline", "held": [{"modifier": "Fn", "name": "Scrub timeline (fine)"}]},
+        {"control": "C5", "name": "Cut at playhead"},
+        {"control": "C6", "name": "Ripple delete"},
+    ]}
+
+    def setUp(self):
+        self.redraws = 0
+        self.drawn = []  # texts, in the order drawn
+        self.boxes = []  # the background's corners, once per draw
+
+        def redraw():
+            self.redraws += 1
+
+        blf = types.SimpleNamespace(
+            size=lambda font, size: None,
+            dimensions=lambda font, text: (7.0 * len(text), 10.0),
+            color=lambda font, r, g, b, a: None,
+            position=lambda font, x, y, z: self.at.append((x, y)),
+            draw=lambda font, text: self.drawn.append(text),
+        )
+        self.at = []
+        shader = types.SimpleNamespace(bind=lambda: None, uniform_float=lambda name, value: None)
+        gpu = types.SimpleNamespace(
+            shader=types.SimpleNamespace(from_builtin=lambda name: shader),
+            state=types.SimpleNamespace(blend_set=lambda mode: None),
+        )
+        batch = types.SimpleNamespace(
+            batch_for_shader=lambda sh, kind, data: self.boxes.append(data["pos"]) or types.SimpleNamespace(draw=lambda sh: None),
+        )
+        extras = types.SimpleNamespace(batch=batch)
+        for name, mod in (("blf", blf), ("gpu", gpu), ("gpu_extras", extras), ("gpu_extras.batch", batch)):
+            old = sys.modules.get(name)
+            sys.modules[name] = mod
+            self.addCleanup(sys.modules.__setitem__, name, old) if old is not None else self.addCleanup(sys.modules.pop, name, None)
+        self.context = types.SimpleNamespace(
+            region=types.SimpleNamespace(width=1200, height=400),
+            preferences=types.SimpleNamespace(system=types.SimpleNamespace(ui_scale=1.0)),
+            window_manager=None,
+            scene=None,
+        )
+        for obj, name, value in ((addon, "_redraw", redraw), (addon.bpy, "context", self.context), (addon.link, "hints", None), (addon.hints_draw, "failed", False)):
+            self.addCleanup(setattr, obj, name, getattr(obj, name))
+            setattr(obj, name, value)
+
+    def apply(self, *messages):
+        addon._apply(list(messages), _Prefs())
+
+    def test_drawn_only_while_shown(self):
+        self.apply(self.MSG)
+        self.assertEqual(self.redraws, 1)
+        addon._draw_hints()
+        self.assertEqual((self.drawn, self.boxes), ([], []), "hidden until the bridge says show")
+
+        self.apply(dict(self.MSG, show=True))
+        self.assertEqual(self.redraws, 2)
+        addon._draw_hints()
+        self.assertEqual(self.drawn, [
+            "Video editing",
+            "D2", "Scrub timeline \u00b7 Fn: fine",
+            "C5", "Cut at playhead",
+            "C6", "Ripple delete",
+        ])
+        (box,) = self.boxes
+        xs, ys = [x for x, _ in box], [y for _, y in box]
+        self.assertTrue(0 <= min(xs) and max(xs) <= 1200 and 0 < min(ys) and max(ys) <= 400, box)
+        for x, y in self.at:
+            self.assertTrue(min(xs) < x < max(xs) and min(ys) < y < max(ys), (x, y, box))
+
+        self.apply(dict(self.MSG, show=True))  # the same again: nothing to redraw
+        self.assertEqual(self.redraws, 2)
+        self.apply(self.MSG)
+        self.assertEqual(self.redraws, 3)
+        del self.drawn[:]
+        addon._draw_hints()
+        self.assertEqual(self.drawn, [])
+
+    def test_other_commands_leave_them_alone(self):
+        self.apply(dict(self.MSG, show=True))
+        self.apply({"type": "zoom", "clicks": 0})
+        self.assertTrue(addon.link.hints[2])
+        self.assertEqual(self.redraws, 1)
+
+    def test_columns_when_the_timeline_is_short(self):
+        self.context.region.height = 120  # room for the title and one row
+        self.apply(dict(self.MSG, show=True))
+        addon._draw_hints()
+        rows = {y for _, y in self.at}
+        self.assertEqual(len(rows), 2, "the title's row and one row of three columns")
+        self.assertEqual(len(self.drawn), 7)
+
+    def test_nothing_to_show(self):
+        self.apply(dict(self.MSG, show=True, hints=[]))
+        addon._draw_hints()
+        self.assertEqual(self.boxes, [])
+
+    def test_gone_with_the_bridge(self):
+        self.apply(dict(self.MSG, show=True))
+        addon._close("Bridge went away")
+        self.assertIsNone(addon.link.hints)
+        addon._draw_hints()
+        self.assertEqual(self.drawn, [])
+
+    def test_never_raises(self):
+        self.apply(dict(self.MSG, show=True))
+        sys.modules["blf"].draw = lambda font, text: 1 / 0
+        printed = []
+        self.addCleanup(setattr, addon, "print", print)
+        addon.print = lambda *a: printed.append(a)
+        addon._draw_hints()
+        addon._draw_hints()
+        self.assertEqual(len(printed), 1, "said once, not on every redraw")
+        self.context.region = None
+        addon._draw_hints()
+
+    def test_timeline_watched_while_registered(self):
+        calls = []
+        space = types.SimpleNamespace(
+            draw_handler_add=lambda f, args, region, when: calls.append(("add", f, region, when)) or "handle",
+            draw_handler_remove=lambda h, region: calls.append(("remove", h, region)),
+        )
+        old = addon.bpy.types
+        addon.bpy.types = types.SimpleNamespace(SpaceSequenceEditor=space)
+        self.addCleanup(setattr, addon.bpy, "types", old)
+        addon._watch_timeline()
+        addon._watch_timeline()  # once
+        addon._unwatch_timeline()
+        addon._unwatch_timeline()
+        self.assertEqual(calls, [("add", addon._draw_hints, "WINDOW", "POST_PIXEL"), ("remove", "handle", "WINDOW")])
+        addon.bpy.types = types.SimpleNamespace()
+        addon._watch_timeline()  # a Blender without it: nothing raised
+        self.assertIsNone(addon.hints_draw.handle)
+
+
 class SlowPictureTest(unittest.TestCase):
     """What the add-on says after a slow picture, and why."""
 
