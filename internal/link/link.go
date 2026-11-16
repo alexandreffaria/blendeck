@@ -8,6 +8,18 @@
 //	then {"type":"state","scene":"Scene","frame":120,"start":1,"end":250,"fps":24}
 //	on every change and {"type":"ping"} at least every PingEvery.
 //
+// Every command also carries "t", the time the bridge took it, in
+// milliseconds since 1970. The add-on measures from it and, while commands
+// arrive, sends about once a second
+//
+//	{"type":"latency","samples":12,"wait_med":4,"wait_max":9,"picture_med":11,
+//	 "picture_max":170,"total_med":16,"total_max":178,"tick_max":171,"dropped":0}
+//
+// in milliseconds: wait is from the bridge to the add-on applying the
+// command, picture from there to the preview having drawn, total both,
+// tick the longest gap between two of the add-on's ticks (Blender busy),
+// and dropped the presses the add-on left out (see State.Latency).
+//
 // A connection counts as an add-on only once its first line is a hello, sent
 // within HelloTimeout. That keeps stray connections (a web page's request to
 // this port, a port scanner) from taking a slot or posting a fake state.
@@ -68,12 +80,54 @@ type State struct {
 	Start     int     `json:"start"`
 	End       int     `json:"end"`
 	FPS       float64 `json:"fps,omitempty"`
+	// Latency is the add-on's latest report, nil until one came.
+	Latency *Latency `json:"latency,omitempty"`
+}
+
+// Latency is how long commands took, as the add-on measured it over about a
+// second, in milliseconds. Wait is from the bridge taking a command to the
+// add-on applying it, Picture from there to the preview having drawn, Total
+// both. TickMax is the longest gap between two of the add-on's ticks, which
+// is how long Blender was busy. Dropped is the presses the add-on left out
+// of a read. WorstMinute is the largest TotalMax of the last minute and
+// AgeMS how old this report is, both filled in by State.
+type Latency struct {
+	Samples     int     `json:"samples"`
+	WaitMed     float64 `json:"wait_med"`
+	WaitMax     float64 `json:"wait_max"`
+	PictureMed  float64 `json:"picture_med"`
+	PictureMax  float64 `json:"picture_max"`
+	TotalMed    float64 `json:"total_med"`
+	TotalMax    float64 `json:"total_max"`
+	TickMax     float64 `json:"tick_max"`
+	Dropped     int     `json:"dropped"`
+	WorstMinute float64 `json:"worst_minute"`
+	AgeMS       int64   `json:"age_ms"`
+}
+
+const (
+	// latencyKept is how many reports are kept for WorstMinute: one a
+	// second for a minute.
+	latencyKept = 60
+	// maxLatencyMS bounds what an add-on can report: ten minutes.
+	maxLatencyMS = 600_000
+)
+
+type latencyAt struct {
+	at    time.Time
+	worst float64
+}
+
+// queued is a command waiting for an add-on, with when the bridge took it.
+type queued struct {
+	engine.Command
+	T int64 `json:"t"`
 }
 
 type client struct {
 	conn  net.Conn
-	queue []engine.Command // waiting to be written; guarded by Link.mu
-	wake  chan struct{}    // signals writeLoop that queue has something
+	queue []queued      // waiting to be written; guarded by Link.mu
+	wake  chan struct{} // signals writeLoop that queue has something
 	done  chan struct{}
 }
 
@@ -92,7 +146,8 @@ func turn(cmd engine.Command) bool {
 // after another turn of the same knob is added to it, which keeps the order
 // of everything else: only turns with nothing between them become one.
 // Turns that cancel out leave nothing, as the add-on does within one read.
-func (c *client) push(cmd engine.Command) bool {
+// A merged turn keeps the time of its first, so its age is the oldest's.
+func (c *client) push(cmd engine.Command, t int64) bool {
 	if n := len(c.queue); n > 0 && turn(cmd) {
 		last := &c.queue[n-1]
 		if last.Type == cmd.Type && last.Sound == cmd.Sound && last.Before == cmd.Before {
@@ -111,7 +166,7 @@ func (c *client) push(cmd engine.Command) bool {
 	if len(c.queue) >= limit {
 		return false
 	}
-	c.queue = append(c.queue, cmd)
+	c.queue = append(c.queue, queued{Command: cmd, T: t})
 	select {
 	case c.wake <- struct{}{}:
 	default:
@@ -127,6 +182,11 @@ type Link struct {
 	pending int
 	state   State
 	dropped int64
+	// latency is the latest report and when it came; recent holds the
+	// worst total of the last latencyKept reports, oldest first
+	latency   *Latency
+	latencyAt time.Time
+	recent    []latencyAt
 }
 
 // New makes a Link. Call Serve to start accepting.
@@ -142,7 +202,53 @@ func (l *Link) State() State {
 	s.Clients = len(l.clients)
 	s.Connected = s.Clients > 0
 	s.Dropped = l.dropped
+	if l.latency != nil && s.Connected {
+		now := time.Now()
+		lat := *l.latency
+		lat.AgeMS = now.Sub(l.latencyAt).Milliseconds()
+		for _, r := range l.recent {
+			if now.Sub(r.at) <= time.Minute && r.worst > lat.WorstMinute {
+				lat.WorstMinute = r.worst
+			}
+		}
+		s.Latency = &lat
+	}
 	return s
+}
+
+// ms bounds a duration an add-on reported: never negative, never NaN, at
+// most maxLatencyMS.
+func ms(v float64) float64 {
+	if !(v > 0) {
+		return 0
+	}
+	if v > maxLatencyMS {
+		return maxLatencyMS
+	}
+	return v
+}
+
+// setLatency records an add-on's report.
+func (l *Link) setLatency(m incoming) {
+	lat := &Latency{
+		Samples:    max(0, min(m.Samples, 1_000_000)),
+		WaitMed:    ms(m.WaitMed),
+		WaitMax:    ms(m.WaitMax),
+		PictureMed: ms(m.PictureMed),
+		PictureMax: ms(m.PictureMax),
+		TotalMed:   ms(m.TotalMed),
+		TotalMax:   ms(m.TotalMax),
+		TickMax:    ms(m.TickMax),
+		Dropped:    max(0, min(m.Dropped, 1_000_000)),
+	}
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.latency, l.latencyAt = lat, now
+	if len(l.recent) >= latencyKept {
+		l.recent = append(l.recent[:0], l.recent[1:]...)
+	}
+	l.recent = append(l.recent, latencyAt{at: now, worst: lat.TotalMax})
 }
 
 // Send queues cmd for every connected add-on. It reports whether at least
@@ -151,17 +257,18 @@ func (l *Link) State() State {
 // counted only once MaxQueued are waiting (MaxQueued + PressReserve for a
 // button press).
 func (l *Link) Send(cmd engine.Command) bool {
+	t := time.Now().UnixMilli()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	queued := false
+	taken := false
 	for c := range l.clients {
-		if c.push(cmd) {
-			queued = true
+		if c.push(cmd, t) {
+			taken = true
 		} else {
 			l.dropped++
 		}
 	}
-	return queued
+	return taken
 }
 
 // take empties c's queue and returns it as lines ready to write.
@@ -222,6 +329,16 @@ type incoming struct {
 	Start   int     `json:"start"`
 	End     int     `json:"end"`
 	FPS     float64 `json:"fps"`
+
+	Samples    int     `json:"samples"`
+	WaitMed    float64 `json:"wait_med"`
+	WaitMax    float64 `json:"wait_max"`
+	PictureMed float64 `json:"picture_med"`
+	PictureMax float64 `json:"picture_max"`
+	TotalMed   float64 `json:"total_med"`
+	TotalMax   float64 `json:"total_max"`
+	TickMax    float64 `json:"tick_max"`
+	Dropped    int     `json:"dropped"`
 }
 
 // handle waits for the hello, registers the client, then reads until the
@@ -269,6 +386,10 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 			l.log.Debug("bad message from add-on", "error", err)
 			continue
 		}
+		if m.Type == "latency" {
+			l.setLatency(m)
+			continue
+		}
 		if m.Type != "state" {
 			continue // ping, or something newer than this bridge knows
 		}
@@ -289,6 +410,7 @@ func (l *Link) remove(c *client) {
 	close(c.done)
 	if len(l.clients) == 0 {
 		l.state = State{}
+		l.latency, l.recent = nil, nil
 	}
 	l.mu.Unlock()
 	_ = c.conn.Close()

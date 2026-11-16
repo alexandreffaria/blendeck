@@ -246,6 +246,7 @@ tr.flash td { animation: flash 600ms ease-out; }
           <div class="fact"><span>Scene</span><b id="scene"></b></div>
           <div class="fact"><span>Range</span><b id="range"></b></div>
           <div class="fact"><span>Running</span><b id="blenderVersion"></b></div>
+          <div class="fact" id="latencyFact" hidden><span>Control to picture</span><b id="latency"></b></div>
         </div>
       </div>
       <div class="scrubber"><div class="scrub-fill" id="frameFill"></div></div>
@@ -644,7 +645,24 @@ function renderLive() {
     const span = Math.max(1, b.end - b.start);
     $('frameFill').style.width = Math.max(0, Math.min(100, (b.frame - b.start) / span * 100)) + '%';
   }
+  renderLatency(b.connected ? b.latency : null);
   $('held').innerHTML = l.held.map((h) => `<span class="mod-chip">${esc(h)}</span>`).join(' ');
+}
+
+// What the add-on measured over about a second, while controls were used:
+// from the bridge taking a command to Blender's preview having drawn it.
+function renderLatency(lat) {
+  $('latencyFact').hidden = !lat;
+  if (!lat) return;
+  const ms = (v) => `${Math.round(v)} ms`;
+  const el = $('latency');
+  const seen = lat.total_max > 0;
+  // Nothing drawn to time (a zoom, or no preview on screen): show the wait
+  const typical = seen ? lat.total_med : lat.wait_med;
+  const worst = Math.max(lat.worst_minute, seen ? lat.total_max : lat.wait_max);
+  el.textContent = `${ms(typical)} · worst ${ms(worst)}${seen ? '' : ' to Blender'}${lat.dropped ? ` · ${lat.dropped} presses dropped` : ''}`;
+  el.style.opacity = lat.age_ms > 5000 ? '.55' : '';
+  el.title = `Last second of use: ${lat.samples} commands. Waiting for Blender ${ms(lat.wait_med)} (worst ${ms(lat.wait_max)}), drawing the picture ${ms(lat.picture_med)} (worst ${ms(lat.picture_max)}), Blender busy for up to ${ms(lat.tick_max)}. Worst in the last minute: ${ms(worst)}.`;
 }
 
 function describe(ev) {

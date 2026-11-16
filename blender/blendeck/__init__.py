@@ -9,18 +9,22 @@ import math
 import select
 import socket
 import time
+from time import perf_counter as _perf
+from time import time as _wall
 
 import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.15.1"
+ADDON_VERSION = "0.16.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
 # A turn of the move or trim knob is one undo step: it is pushed once the
 # knob has been still this long, or right before any other command.
 MOVE_UNDO_DELAY = 0.5
+REPORT = 1.0  # seconds between latency reports while commands arrive
+PICTURE_WAIT = 1.0  # a picture not drawn this long after a command isn't coming
 
 
 class _Link:
@@ -38,6 +42,129 @@ class _Link:
 
 
 link = _Link()
+
+
+class _Meter:
+    """How long commands take, measured here and reported to the bridge
+    (see _measure). waits, pictures and totals are the samples since the
+    last report, in milliseconds; tick the longest gap between two ticks,
+    in seconds; dropped the presses left out of a read. pending is the
+    command whose picture hasn't been seen yet: (when its tick started, how
+    long it had waited by then). drawn is when the preview last drew."""
+
+    waits = []
+    pictures = []
+    totals = []
+    tick = 0.0
+    dropped = 0
+    last_tick = 0.0
+    last_report = 0.0
+    pending = None
+    drawn = 0.0
+    handle = None
+
+
+meter = _Meter()
+
+
+def _meter_reset():
+    meter.waits, meter.pictures, meter.totals = [], [], []
+    meter.tick = 0.0
+    meter.dropped = 0
+    meter.last_tick = 0.0
+    meter.pending = None
+
+
+def _on_preview_draw():
+    """Runs each time a video editor's preview has drawn. Must never raise:
+    Blender would print it on every redraw."""
+    try:
+        meter.drawn = _perf()
+    except Exception:
+        pass
+
+
+def _watch_preview():
+    """Starts noting when the preview draws. Never raises: without it the
+    meter still reports how long commands waited."""
+    try:
+        if meter.handle is None:
+            meter.handle = bpy.types.SpaceSequenceEditor.draw_handler_add(_on_preview_draw, (), "PREVIEW", "POST_PIXEL")
+    except Exception as e:
+        print("Blendeck: the latency meter can't see the preview:", e)
+
+
+def _unwatch_preview():
+    try:
+        if meter.handle is not None:
+            bpy.types.SpaceSequenceEditor.draw_handler_remove(meter.handle, "PREVIEW")
+    except Exception as e:
+        print("Blendeck: preview watch not removed:", e)
+    meter.handle = None
+
+
+def _playhead():
+    """The edited scene's frame, or None. Never raises."""
+    try:
+        scene = _scene()
+        return None if scene is None else scene.frame_current
+    except Exception:
+        return None
+
+
+def _keep(samples, value):
+    if len(samples) < protocol.MAX_LATENCY_SAMPLES:
+        samples.append(value)
+
+
+def _measure(messages, started, wall, moved):
+    """The latency meter, once per tick after the commands were applied.
+    started and wall are when this tick began (perf counter, and seconds
+    since 1970 to compare with the bridge's stamps); moved says the tick
+    changed what the preview shows. A command's wait is from the bridge
+    taking it to this tick starting; its picture time from there to the
+    preview's next draw, seen on a later tick. About once a second, while
+    there is something to say, the numbers go to the bridge. Never raises."""
+    try:
+        now = _perf()
+        if meter.last_tick:
+            meter.tick = max(meter.tick, started - meter.last_tick)
+        meter.last_tick = started
+        if meter.pending is not None:
+            applied, waited = meter.pending
+            if meter.drawn > applied:
+                picture = (meter.drawn - applied) * 1000
+                _keep(meter.pictures, picture)
+                _keep(meter.totals, waited + picture)
+                meter.pending = None
+            elif now - applied > PICTURE_WAIT:
+                meter.pending = None  # no preview on screen, or nothing changed in it
+        meter.dropped += protocol.presses_dropped(messages)
+        # Before this tick's own command is noted: a knob that keeps turning
+        # has a picture awaited at the end of every tick, but none here, so
+        # the reports don't wait for it to stop. A command and its picture
+        # always go out together.
+        if now - meter.last_report >= REPORT and meter.pending is None:
+            report = protocol.latency_report(meter.waits, meter.pictures, meter.totals, meter.tick * 1000, meter.dropped)
+            if report is not None:
+                _send(report)
+                meter.last_report = now
+                meter.waits, meter.pictures, meter.totals = [], [], []
+                meter.tick = 0.0
+                meter.dropped = 0
+            elif not messages:
+                meter.tick = 0.0  # idle: a gap from before the next command isn't its wait
+        oldest = protocol.oldest_stamp(messages)
+        if oldest is not None:
+            waited = wall * 1000 - oldest
+            if 0 <= waited <= protocol.MAX_WAIT_MS:
+                _keep(meter.waits, waited)
+                if moved and meter.pending is None:
+                    meter.pending = (started, waited)
+    except Exception as e:
+        print("Blendeck: latency meter:", e)
+
+
 CONNECT_TIMEOUT = 1.0
 MAX_OUT = 64 * 1024
 
@@ -88,6 +215,7 @@ def _close(reason):
     link.buf = None
     link.out = b""
     link.last_state = None
+    _meter_reset()
     _shuttle_stop()  # nothing would drive it any more
     _move_undo()  # nothing more will come for that turn of the knob
     stopped.running = False  # a stop seen after reconnecting isn't this one
@@ -1423,8 +1551,11 @@ def _tick():
         if not _finish_connect():
             return TICK if link.pending is not None else RETRY
     _flush()
+    started, wall = _perf(), _wall()
     messages = _read()
+    before = _playhead()
     _apply(messages, prefs)
+    _measure(messages, started, wall, before != _playhead() or protocol.moves_picture(messages))
     if protocol.wants_save(messages):
         # After the edits, so the file holds every one from the same read,
         # and with the move knob's undo step pushed. It needs no scene.
@@ -1501,6 +1632,7 @@ def register():
         bpy.app.timers.register(tick, first_interval=0.5, persistent=True)
     _remove_handler()
     bpy.app.handlers.frame_change_post.append(on_frame_change)
+    _watch_preview()
 
 
 def _remove_handler():
@@ -1514,6 +1646,7 @@ def _remove_handler():
 
 def unregister():
     _remove_handler()
+    _unwatch_preview()
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
     _close("Not connected")

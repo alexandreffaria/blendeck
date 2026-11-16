@@ -89,7 +89,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal("Send found no receiver for zoom")
 	}
 	line, err = r.ReadBytes('\n')
-	if err != nil || string(line) != `{"type":"zoom","clicks":-3}`+"\n" {
+	if err != nil || !strings.HasPrefix(string(line), `{"type":"zoom","clicks":-3,"t":`) {
 		t.Fatalf("zoom line %q (%v)", line, err)
 	}
 
@@ -178,7 +178,16 @@ func TestLongLineDropsClient(t *testing.T) {
 	eventually(t, "dropped", func() bool { return !l.State().Connected })
 }
 
-func cmds(c *client) []engine.Command { return append([]engine.Command(nil), c.queue...) }
+func cmds(c *client) []engine.Command {
+	out := []engine.Command{}
+	for _, q := range c.queue {
+		out = append(out, q.Command)
+	}
+	return out
+}
+
+// push with no time, for the tests that are about order and merging.
+func (c *client) add(cmd engine.Command) bool { return c.push(cmd, 0) }
 
 func newClient() *client {
 	return &client{wake: make(chan struct{}, 1), done: make(chan struct{})}
@@ -203,7 +212,7 @@ func TestPushMergesOnlyTurnsInARow(t *testing.T) {
 		{Type: "zoom", Clicks: 2},
 		{Type: "zoom", Clicks: 1},
 	} {
-		if !c.push(cmd) {
+		if !c.add(cmd) {
 			t.Fatalf("push(%+v) refused", cmd)
 		}
 	}
@@ -234,9 +243,9 @@ func TestPushMergesOnlyTurnsInARow(t *testing.T) {
 // Turns that cancel out leave nothing behind, not a command for 0 frames.
 func TestPushDropsTurnsThatCancel(t *testing.T) {
 	c := newClient()
-	c.push(engine.Command{Type: "cut"})
-	c.push(engine.Command{Type: "scrub", Frames: 4})
-	c.push(engine.Command{Type: "scrub", Frames: -4})
+	c.add(engine.Command{Type: "cut"})
+	c.add(engine.Command{Type: "scrub", Frames: 4})
+	c.add(engine.Command{Type: "scrub", Frames: -4})
 	if got := cmds(c); len(got) != 1 || got[0].Type != "cut" {
 		t.Fatalf("queue = %+v", got)
 	}
@@ -247,25 +256,25 @@ func TestPushDropsTurnsThatCancel(t *testing.T) {
 func TestPushKeepsRoomForPresses(t *testing.T) {
 	c := newClient()
 	for i := 0; i < MaxQueued/2; i++ {
-		if !c.push(engine.Command{Type: "scrub", Frames: 1}) || !c.push(engine.Command{Type: "pan", Clicks: 1}) {
+		if !c.add(engine.Command{Type: "scrub", Frames: 1}) || !c.add(engine.Command{Type: "pan", Clicks: 1}) {
 			t.Fatalf("refused before the cap, at %d", len(c.queue))
 		}
 	}
 	if len(c.queue) != MaxQueued {
 		t.Fatalf("queue holds %d, want %d", len(c.queue), MaxQueued)
 	}
-	if c.push(engine.Command{Type: "scrub", Frames: 1}) {
+	if c.add(engine.Command{Type: "scrub", Frames: 1}) {
 		t.Fatal("a knob turn was taken past the cap")
 	}
-	if !c.push(engine.Command{Type: "pan", Clicks: 1}) || c.queue[MaxQueued-1].Clicks != 2 {
+	if !c.add(engine.Command{Type: "pan", Clicks: 1}) || c.queue[MaxQueued-1].Clicks != 2 {
 		t.Fatal("a turn of the last knob in the queue didn't add up")
 	}
 	for i := 0; i < PressReserve; i++ {
-		if !c.push(engine.Command{Type: "cut"}) {
+		if !c.add(engine.Command{Type: "cut"}) {
 			t.Fatalf("press %d refused inside the reserve", i)
 		}
 	}
-	if c.push(engine.Command{Type: "undo"}) {
+	if c.add(engine.Command{Type: "undo"}) {
 		t.Fatal("a press was taken past the reserve")
 	}
 	if len(c.queue) != MaxQueued+PressReserve {
@@ -361,5 +370,86 @@ func TestWriterStopsWhenAddonIsRemoved(t *testing.T) {
 	case <-stopped:
 	case <-time.After(3 * time.Second):
 		t.Fatal("writeLoop kept waiting for a removed add-on")
+	}
+}
+
+// Every command carries when the bridge took it; turns merged while the
+// add-on was busy keep the time of the first, so the add-on measures the
+// longest wait.
+func TestCommandsCarryTheirTime(t *testing.T) {
+	c := newClient()
+	c.push(engine.Command{Type: "scrub", Frames: 1}, 1000)
+	c.push(engine.Command{Type: "scrub", Frames: 2}, 1400)
+	c.push(engine.Command{Type: "cut"}, 1500)
+	if len(c.queue) != 2 || c.queue[0].T != 1000 || c.queue[0].Frames != 3 || c.queue[1].T != 1500 {
+		t.Fatalf("queue = %+v", c.queue)
+	}
+
+	l, addr := start(t)
+	conn := dialHello(t, addr)
+	eventually(t, "connect", func() bool { return l.State().Connected })
+	before := time.Now().UnixMilli()
+	l.Send(engine.Command{Type: "cut"})
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Type string `json:"type"`
+		T    int64  `json:"t"`
+	}
+	if err := json.Unmarshal(line, &got); err != nil || got.Type != "cut" || got.T < before || got.T > time.Now().UnixMilli() {
+		t.Fatalf("line %q (%v)", line, err)
+	}
+}
+
+// The add-on's latency report shows in the state, bounded, with the worst
+// of the last minute, and goes away with the add-on.
+func TestLatencyReport(t *testing.T) {
+	l, addr := start(t)
+	conn := dialHello(t, addr)
+	eventually(t, "connect", func() bool { return l.State().Connected })
+	if l.State().Latency != nil {
+		t.Fatal("latency before any report")
+	}
+	fmt.Fprintln(conn, `{"type":"latency","samples":7,"wait_med":4,"wait_max":9,"picture_med":11,"picture_max":170,"total_med":16,"total_max":178,"tick_max":171,"dropped":2}`)
+	eventually(t, "report", func() bool { return l.State().Latency != nil })
+	got := *l.State().Latency
+	got.AgeMS = 0
+	want := Latency{Samples: 7, WaitMed: 4, WaitMax: 9, PictureMed: 11, PictureMax: 170, TotalMed: 16, TotalMax: 178, TickMax: 171, Dropped: 2, WorstMinute: 178}
+	if got != want {
+		t.Fatalf("latency = %+v", got)
+	}
+
+	// A quieter second: the latest numbers, but the minute's worst stays
+	fmt.Fprintln(conn, `{"type":"latency","samples":3,"total_med":15,"total_max":20}`)
+	eventually(t, "second report", func() bool { return l.State().Latency.Samples == 3 })
+	if lat := l.State().Latency; lat.TotalMax != 20 || lat.WorstMinute != 178 {
+		t.Fatalf("latency = %+v", lat)
+	}
+
+	// Nonsense is bounded, never passed on
+	fmt.Fprintln(conn, `{"type":"latency","samples":-5,"total_med":-1,"total_max":1e300,"dropped":-3}`)
+	eventually(t, "bounded report", func() bool { return l.State().Latency.Samples == 0 })
+	if lat := l.State().Latency; lat.TotalMed != 0 || lat.TotalMax != maxLatencyMS || lat.Dropped != 0 {
+		t.Fatalf("latency = %+v", lat)
+	}
+
+	// Many reports: only the last latencyKept are kept
+	for i := 0; i < latencyKept*2; i++ {
+		fmt.Fprintln(conn, `{"type":"latency","samples":1,"total_max":5}`)
+	}
+	eventually(t, "old reports forgotten", func() bool { return l.State().Latency.WorstMinute == 5 })
+	l.mu.Lock()
+	kept := len(l.recent)
+	l.mu.Unlock()
+	if kept != latencyKept {
+		t.Fatalf("kept %d reports", kept)
+	}
+
+	conn.Close()
+	eventually(t, "disconnect", func() bool { return !l.State().Connected })
+	if l.State().Latency != nil {
+		t.Fatal("latency kept after the add-on left")
 	}
 }

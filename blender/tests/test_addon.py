@@ -2796,5 +2796,137 @@ class AddonTest(unittest.TestCase):
             conn.close()
             bridge.close()
 
+class MeterTest(unittest.TestCase):
+    """The latency meter (_measure), on clocks the test moves."""
+
+    def setUp(self):
+        self.perf = [100.0]
+        self.sent = []
+        for name, value in (("_perf", lambda: self.perf[0]), ("_send", self.sent.append)):
+            self.addCleanup(setattr, addon, name, getattr(addon, name))
+            setattr(addon, name, value)
+        addon._meter_reset()
+        addon.meter.last_report = 0.0
+        addon.meter.drawn = 0.0
+        self.addCleanup(addon._meter_reset)
+
+    def tick(self, messages=(), moved=False, wall=5.0):
+        """One tick starting now."""
+        addon._measure(list(messages), self.perf[0], wall, moved)
+
+    def test_wait_and_picture(self):
+        addon.meter.last_report = self.perf[0]  # one just went
+        # Taken by the bridge at 4.990 s, applied at 5.000 s: waited 10 ms
+        self.tick([{"type": "scrub", "frames": 1, "t": 4990}], moved=True)
+        self.perf[0] += 0.170
+        addon._on_preview_draw()  # drawn 170 ms after the tick began
+        self.perf[0] += 0.008
+        self.tick()
+        self.assertEqual(self.sent, [], "not a second since the last report")
+        self.perf[0] += 1.0
+        self.tick()
+        self.assertEqual(len(self.sent), 1)
+        r = self.sent[0]
+        self.assertEqual((r["type"], r["samples"], r["wait_max"], r["picture_max"], r["total_max"]), ("latency", 1, 10.0, 170.0, 180.0))
+        self.assertEqual(r["tick_max"], 1000.0, "the longest gap between two ticks")
+
+    def test_reports_about_once_a_second(self):
+        for i in range(30):
+            self.tick([{"type": "zoom", "clicks": 1, "t": 5000 - 3}])
+            self.perf[0] += 0.125
+        self.assertEqual(len(self.sent), 4)
+        self.assertEqual(self.sent[1]["samples"], 8)
+        self.assertEqual(self.sent[1]["wait_med"], 3.0)
+
+    def test_reports_while_the_knob_keeps_turning(self):
+        # Slow footage: every tick has a scrub in it and a picture still to
+        # come, for 5 s. The reports must not wait for the knob to stop.
+        for i in range(40):
+            self.tick([{"type": "scrub", "frames": -1, "t": 5000 - 20}], moved=True)
+            self.perf[0] += 0.117
+            addon._on_preview_draw()
+            self.perf[0] += 0.008
+        self.assertEqual(len(self.sent), 5)
+        for r in self.sent[1:]:
+            self.assertEqual(r["samples"], 8)
+            self.assertEqual((r["wait_max"], r["picture_med"], r["total_max"], r["tick_max"]), (20.0, 117.0, 137.0, 125.0))
+        self.assertLessEqual(len(addon.meter.waits), 8, "samples don't pile up across reports")
+
+    def test_the_stall_before_a_command_is_reported(self):
+        for _ in range(300):  # idle for 3 s
+            self.tick()
+            self.perf[0] += 0.01
+        self.perf[0] += 0.29  # Blender busy for 300 ms, commands waiting
+        self.tick([{"type": "zoom", "clicks": 1, "t": 5000 - 250}])
+        self.perf[0] += 0.01
+        self.tick()
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual((self.sent[0]["wait_max"], self.sent[0]["tick_max"]), (250.0, 300.0))
+
+    def test_idle_says_nothing(self):
+        for _ in range(500):
+            self.tick()
+            self.perf[0] += 0.01
+        self.assertEqual(self.sent, [])
+
+    def test_no_preview_gives_up_on_the_picture(self):
+        self.tick([{"type": "scrub", "frames": 1, "t": 4995}], moved=True)
+        self.perf[0] += addon.PICTURE_WAIT + 0.1
+        self.tick()
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual((self.sent[0]["samples"], self.sent[0]["wait_max"], self.sent[0]["total_max"]), (1, 5.0, 0.0))
+        self.assertIsNone(addon.meter.pending)
+
+    def test_a_draw_before_the_command_is_not_its_picture(self):
+        addon._on_preview_draw()
+        self.perf[0] += 0.05
+        self.tick([{"type": "cut", "t": 4999}], moved=True)
+        self.perf[0] += 0.01
+        self.tick()
+        self.assertEqual(self.sent, [], "still waiting for a draw after the cut")
+
+    def test_clock_nonsense_is_not_a_sample(self):
+        self.tick([{"type": "cut", "t": 9_000_000}])  # from the future
+        self.tick([{"type": "cut", "t": 1}], wall=5000.0)  # over a minute old
+        self.tick([{"type": "cut"}])  # an older bridge: no stamp
+        self.assertEqual(addon.meter.waits, [])
+        self.assertEqual(self.sent, [])
+
+    def test_samples_are_capped(self):
+        addon.meter.last_report = self.perf[0]  # no report during the flood
+        for _ in range(addon.protocol.MAX_LATENCY_SAMPLES * 3):
+            self.tick([{"type": "zoom", "clicks": 1, "t": 4999}])
+        self.assertEqual(len(addon.meter.waits), addon.protocol.MAX_LATENCY_SAMPLES)
+
+    def test_dropped_presses_are_reported(self):
+        self.tick([{"type": "undo", "t": 4999}] * (addon.protocol.MAX_PRESSES_PER_TICK + 3))
+        self.assertEqual(self.sent[0]["dropped"], 3)
+
+    def test_never_raises(self):
+        addon._measure(None, "x", None, True)  # prints, doesn't raise
+        addon._perf = lambda: 1 / 0
+        addon._on_preview_draw()
+        addon._measure([], 1.0, 1.0, False)
+
+    def test_preview_watched_while_registered(self):
+        calls = []
+        space = types.SimpleNamespace(
+            draw_handler_add=lambda f, args, region, when: calls.append(("add", region, when)) or "handle",
+            draw_handler_remove=lambda h, region: calls.append(("remove", h, region)),
+        )
+        old = addon.bpy.types
+        addon.bpy.types = types.SimpleNamespace(SpaceSequenceEditor=space)
+        self.addCleanup(setattr, addon.bpy, "types", old)
+        addon._watch_preview()
+        addon._watch_preview()  # once
+        addon._unwatch_preview()
+        addon._unwatch_preview()
+        self.assertEqual(calls, [("add", "PREVIEW", "POST_PIXEL"), ("remove", "handle", "PREVIEW")])
+        # A Blender without it: no meter picture, nothing raised
+        addon.bpy.types = types.SimpleNamespace()
+        addon._watch_preview()
+        self.assertIsNone(addon.meter.handle)
+
+
 if __name__ == "__main__":
     unittest.main()
