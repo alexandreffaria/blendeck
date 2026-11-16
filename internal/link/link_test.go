@@ -505,4 +505,25 @@ func TestSlowPictureCauses(t *testing.T) {
 	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
 		t.Fatalf("still slow after slowKept: %+v", lat)
 	}
+
+	// "slow" with no picture time to go with it isn't one
+	fmt.Fprintln(conn, `{"type":"latency","samples":6,"slow":true,"causes":["prefetch_on"]}`)
+	eventually(t, "slow without a picture", func() bool { return l.State().Latency.Samples == 6 })
+	if lat := l.State().Latency; lat.Slow {
+		t.Fatalf("latency = %+v", lat)
+	}
+
+	// A slow picture doesn't outlive its add-on: after a reconnect, a report
+	// with no picture in it must not bring the old warning back
+	fmt.Fprintln(conn, `{"type":"latency","samples":7,"picture_max":430,"slow":true,"causes":["prefetch_on"]}`)
+	eventually(t, "slow before leaving", func() bool { return l.State().Latency.Slow })
+	conn.Close()
+	eventually(t, "disconnect", func() bool { return !l.State().Connected })
+	conn = dialHello(t, addr)
+	eventually(t, "reconnect", func() bool { return l.State().Connected })
+	fmt.Fprintln(conn, `{"type":"latency","samples":3,"wait_max":5}`)
+	eventually(t, "report after reconnect", func() bool { return l.State().Latency != nil })
+	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
+		t.Fatalf("the last add-on's warning came back: %+v", lat)
+	}
 }

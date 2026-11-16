@@ -285,7 +285,7 @@ func (l *Link) setLatency(m incoming) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	switch {
-	case m.Slow:
+	case m.Slow && lat.PictureMax > 0:
 		l.slowMS, l.slowCauses, l.slowAt = lat.PictureMax, knownCauses(m.Causes), now
 	case lat.PictureMax > 0:
 		// A picture was timed and it wasn't slow: over
