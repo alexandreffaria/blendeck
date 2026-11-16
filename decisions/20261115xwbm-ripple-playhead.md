@@ -32,6 +32,7 @@ options:
 resolution:
   choice: edit-point
   resolved_at: 2026-11-15T07:30:03Z
+applied_at: 2026-11-15T07:38:28Z
 ---
 
 ## Context
