@@ -84,6 +84,9 @@ bridge drops it and the add-on reconnects by itself a second later.
   (cut, undo, ripple delete, playback, view whole timeline, save) have neither.
 - **Modifiers**: buttons like Fn that switch bindings while held.
 - **Profiles**: named sets of bindings; the selected one is active.
+- **Controls**: name each control after its label on the device ("Knob 1",
+  "Wheel"), and the page shows that name instead of its MIDI number in the
+  bindings, the modifiers and the monitor. Every profile shares the names.
 - **Blender**: connection, scene, playhead, and test buttons.
 
 - **Startup**: Start with Windows (also in the tray menu).
