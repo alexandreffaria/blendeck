@@ -39,6 +39,7 @@ class _Link:
     move_undo = 0.0  # when the move or trim knob last changed strips with no undo step yet (0: none waiting)
     undo_message = "Move strips"  # what that waiting undo step is called
     note = ""  # what the last save press did, shown in the panel
+    hints = None  # (profile, [(control, text)]): what the controls do, from the bridge
 
 
 link = _Link()
@@ -215,6 +216,7 @@ def _close(reason):
     link.buf = None
     link.out = b""
     link.last_state = None
+    link.hints = None  # the bridge says them again when it is back
     _meter_reset()
     _shuttle_stop()  # nothing would drive it any more
     _move_undo()  # nothing more will come for that turn of the knob
@@ -1442,6 +1444,9 @@ def on_frame_change(scene, depsgraph=None):
 
 
 def _apply(messages, prefs):
+    hints = protocol.hints(messages)
+    if hints is not None:
+        link.hints = hints
     # View all first: a zoom or pan in the same read then applies to the
     # whole-edit view instead of being thrown away by it
     if protocol.wants_view_all(messages):

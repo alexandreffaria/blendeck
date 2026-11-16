@@ -61,6 +61,7 @@ type App struct {
 // New makes an App from a loaded store.
 func New(log *slog.Logger, store *config.Store, conn *midi.Conn, lnk *link.Link, devices Devices) *App {
 	cfg := store.Get()
+	lnk.SetHints(cfg.ActiveProfile, cfg.Hints())
 	return &App{
 		log:     log.With("component", "app"),
 		store:   store,
@@ -189,6 +190,7 @@ func (a *App) SetConfig(cfg config.Config) error {
 	}
 	a.engine.SetProfile(*cfg.Active())
 	a.conn.SetDevice(cfg.Device)
+	a.link.SetHints(cfg.ActiveProfile, cfg.Hints())
 	return nil
 }
 

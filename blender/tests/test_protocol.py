@@ -24,6 +24,53 @@ class LineBufferTest(unittest.TestCase):
             b.feed(b"a" * (protocol.MAX_LINE + 1))
 
 
+class HintsTest(unittest.TestCase):
+    def test_none_without_a_hints_message(self):
+        self.assertIsNone(protocol.hints([]))
+        self.assertIsNone(protocol.hints([{"type": "scrub", "frames": 1}]))
+
+    def test_lines(self):
+        msg = {"type": "hints", "profile": "Video editing", "hints": [
+            {"control": "D2", "name": "Scrub timeline", "held": [{"modifier": "Fn", "name": "Scrub timeline (fine)"}]},
+            {"control": "C5", "name": "Cut at playhead"},
+            {"control": "Exposure", "name": "Trim handle at playhead", "held": [{"modifier": "Fn", "name": "Trim, shrinking one side"}]},
+            {"control": "CC 48", "held": [{"modifier": "Fn", "name": "Jump between all cuts"}]},
+        ]}
+        self.assertEqual(protocol.hints([{"type": "cut"}, msg]), ("Video editing", [
+            ("D2", "Scrub timeline · Fn: fine"),
+            ("C5", "Cut at playhead"),
+            ("Exposure", "Trim handle at playhead · Fn: Trim, shrinking one side"),
+            ("CC 48", "Fn: Jump between all cuts"),
+        ]))
+
+    def test_newest_wins_and_empty_clears(self):
+        old = {"type": "hints", "profile": "A", "hints": [{"control": "K", "name": "Cut"}]}
+        new = {"type": "hints", "profile": "B", "hints": []}
+        self.assertEqual(protocol.hints([old, new]), ("B", []))
+
+    def test_same_name_held_is_kept(self):
+        msg = {"type": "hints", "hints": [{"control": "K", "name": "Zoom", "held": [{"modifier": "Fn", "name": "Zoom"}]}]}
+        self.assertEqual(protocol.hints([msg]), ("", [("K", "Zoom · Fn: Zoom")]))
+
+    def test_malformed_is_left_out(self):
+        for bad in (None, 3, "x", {"a": 1}, [None, 3, "x", [], {}, {"control": 5, "name": "x"}, {"control": "K"},
+                                             {"control": "K", "name": 7, "held": "no"},
+                                             {"control": "K", "held": [None, {"modifier": "Fn"}, {"name": "x"}, {"modifier": 1, "name": 2}]}]):
+            self.assertEqual(protocol.hints([{"type": "hints", "profile": ["x"], "hints": bad}]), ("", []), bad)
+
+    def test_caps(self):
+        long = "x" * 500
+        many = [{"control": long, "name": "a\nb\t c", "held": [{"modifier": "M%d" % i, "name": long} for i in range(9)]} for _ in range(500)]
+        profile, lines = protocol.hints([{"type": "hints", "profile": long, "hints": many}])
+        self.assertEqual(len(profile), protocol.MAX_HINT_LEN)
+        self.assertEqual(len(lines), protocol.MAX_HINTS)
+        control, text = lines[0]
+        self.assertEqual(len(control), protocol.MAX_HINT_LEN)
+        self.assertTrue(text.startswith("a b c · M0: "))
+        self.assertEqual(text.count("·"), protocol.MAX_HINT_HELD)
+        self.assertNotIn("\n", text)
+
+
 class ScrubTest(unittest.TestCase):
     def test_total(self):
         msgs = [
