@@ -588,6 +588,10 @@ class TrimTest(unittest.TestCase):
         steps = protocol.edit_steps([S, S, {"type": "trim", "frames": 1}, dict(S, shrink=1), S])
         # Only shrink: true counts as shrinking; a truthy non-bool is a plain trim
         self.assertEqual(steps, [("trim_shrink", 2), ("trim", 2), ("trim_shrink", 1)])
+        # A shrink the other way is not taken off the one before it
+        back = dict(S, frames=-1)
+        self.assertEqual(protocol.edit_steps([dict(S, frames=3), back]), [("trim_shrink", 3), ("trim_shrink", -1)])
+        self.assertEqual(protocol.edit_steps([S, S, back, back]), [("trim_shrink", 2), ("trim_shrink", -2)])
         flood = [S, {"type": "trim", "frames": 1}] * protocol.MAX_TRIMS_PER_TICK
         self.assertEqual(len(protocol.edit_steps(flood)), protocol.MAX_TRIMS_PER_TICK, "both kinds share the cap")
 

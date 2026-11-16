@@ -170,8 +170,8 @@ def edit_steps(messages):
     ("move_before", frames): moves of one kind in a row are added up, at
     most MAX_MOVES_PER_TICK commands count. Turns of the trim knob are
     ("trim", frames), and with Fn held ("shrink": true) ("trim_shrink",
-    frames), added up the same way, at most MAX_TRIMS_PER_TICK commands
-    both kinds together. Malformed commands are ignored."""
+    frames), added up the same way (shrinks only while they keep one
+    direction), at most MAX_TRIMS_PER_TICK commands both kinds together. Malformed commands are ignored."""
     return _edit_steps(messages)[0]
 
 
@@ -261,7 +261,10 @@ def _edit_steps(messages):
                 continue
             trims += 1
             step = "trim_shrink" if m.get("shrink") is True else "trim"
-            if steps and steps[-1][0] == step:
+            # Shrinking never grows anything back, so a turn the other way
+            # is its own step: added up, right 3 then left 1 would shrink 2
+            # where read apart it shrinks 3 and the left does nothing
+            if steps and steps[-1][0] == step and (step == "trim" or (steps[-1][1] > 0) == (frames > 0)):
                 steps[-1] = (step, steps[-1][1] + frames)
                 if steps[-1][1] == 0:
                     steps.pop()  # right then left: back where it was
