@@ -1323,7 +1323,6 @@ def _apply(messages, prefs):
     scene = _scene()
     if scene is None:
         return
-    _shuttle_tick(scene)
     dropped = protocol.presses_dropped(messages)
     if dropped:
         # Never silently: every press counts (decision 202611163di7), so
@@ -1379,6 +1378,11 @@ def _apply(messages, prefs):
             _seek(scene, target)
             if prefs.scrub_audio:
                 _scrub_sound(scene, was)
+    # After the edits, not before: the playhead is still on the frame the
+    # last tick put on screen, so a cut or ripple delete pressed during
+    # playback the add-on drives lands on the picture that was shown, not
+    # on where the clock has got to since (frames nobody has seen)
+    _shuttle_tick(scene)
     if link.sock is None:
         return  # the read just found the bridge gone
     state = (scene.name, scene.frame_current, scene.frame_start, scene.frame_end, scene.render.fps / scene.render.fps_base)
