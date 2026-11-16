@@ -150,6 +150,10 @@ td .select[data-f="encoder"] { min-width: 86px; }
 .ctl-label i { font-style: normal; color: var(--muted); font-size: 11.5px; }
 .ctl-label.cc b { color: var(--sky); }
 .ctl-label.note b { color: var(--amber); }
+.ctl-label.named b { color: var(--text); }
+.ctl-label.named i { font-family: var(--mono); font-size: 11px; }
+.ctl-uses { color: var(--muted); font-size: 12.5px; }
+.log-row .what .cname { color: var(--text); font-weight: 600; }
 .ctl-label.unset { color: var(--coral); border-color: rgba(240,128,104,.35); border-style: dashed; }
 tr.flash td { animation: flash 600ms ease-out; }
 @keyframes flash { from { background: var(--amber-tint); } to { background: transparent; } }
@@ -331,6 +335,19 @@ tr.flash td { animation: flash 600ms ease-out; }
         </div>
         <div class="sheet-foot"><p class="hint">A modifier is a button that switches bindings while held, like Fn. If your Fn button doesn't show up in the monitor, the device changes the knob's number instead: learn the fine binding with Fn held and leave "While held" empty.</p></div>
       </section>
+
+      <section class="sheet">
+        <div class="sheet-head">
+          <h2>Controls</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Control</th><th>Name on the device</th><th>Used by</th><th></th></tr></thead>
+            <tbody id="controls"></tbody>
+          </table>
+        </div>
+        <div class="sheet-foot"><p class="hint">Give each control the name printed on your device and the page shows it everywhere instead of its number. Touch a control to find it here. Every profile shares these names.</p></div>
+      </section>
     </div>
 
     <aside class="side">
@@ -410,24 +427,38 @@ const state = {
   learn: null,       // { kind: 'binding'|'modifier', index, baseSeq }
   paused: false,
   devices: [],
+  seen: [],          // controls touched since the page opened, for naming
 };
+const MAX_SEEN = 256;
+const MAX_NAME = 40;  // config.MaxControlNameLen
 
 // ---------- helpers ----------
 function clone(v) { return JSON.parse(JSON.stringify(v)); }
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function profile() { return state.draft.profiles.find((p) => p.name === state.draft.active_profile); }
 function isDirty() { return JSON.stringify(state.draft) !== JSON.stringify(state.saved); }
+function ctlRaw(c) { return c.type === 'cc' ? `CC ${c.number}` : c.type === 'note' ? `Note ${c.number}` : 'Bend'; }
+// The user's name for a control (the label on the device), or ''.
+function ctlName(c) {
+  if (!c || c.number < 0) return '';
+  const n = (state.draft.controls || []).find((x) => sameCtl(x.control, c));
+  return n ? n.name : '';
+}
 function ctlLabel(c) {
   if (!c || c.number < 0) return null;
-  const t = c.type === 'cc' ? 'CC' : c.type === 'note' ? 'Note' : 'Bend';
-  return c.type === 'pitch_bend' ? `${t} (ch ${c.channel})` : `${t} ${c.number} (ch ${c.channel})`;
+  const name = ctlName(c);
+  return name ? `${name} (${ctlRaw(c)}, ch ${c.channel})` : `${ctlRaw(c)} (ch ${c.channel})`;
 }
-// The same control as a chip: what it is in color, its channel quieter.
-function ctlChip(c) {
+// The same control as a chip: its name, or what it is in color, the rest
+// quieter. plain leaves the name out (the Controls table shows it beside).
+function ctlChip(c, plain) {
   if (!c || c.number < 0) return '<span class="ctl-label unset">not set</span>';
-  const t = c.type === 'cc' ? `CC ${c.number}` : c.type === 'note' ? `Note ${c.number}` : 'Bend';
-  return `<span class="ctl-label ${esc(c.type)}"><b>${t}</b><i>ch ${c.channel}</i></span>`;
+  const name = plain ? '' : ctlName(c);
+  if (name) return `<span class="ctl-label named ${esc(c.type)}" title="${esc(ctlRaw(c))}, channel ${c.channel}"><b>${esc(name)}</b><i>${ctlRaw(c)} · ${c.channel}</i></span>`;
+  return `<span class="ctl-label ${esc(c.type)}"><b>${ctlRaw(c)}</b><i>ch ${c.channel}</i></span>`;
 }
+function ctlKey(c) { return `${c.type}-${c.channel}-${c.number}`; }
+function ctlFromKey(k) { const [type, channel, number] = k.split('-'); return { type, channel: +channel, number: +number }; }
 function sameCtl(a, b) { return a && b && a.type === b.type && a.channel === b.channel && a.number === b.number; }
 function ctlOfMessage(m) {
   if (m.kind === 'cc') return { type: 'cc', channel: m.channel, number: m.number };
@@ -472,7 +503,7 @@ function renderBindings() {
   const p = profile();
   const mods = p.modifiers.map((m) => m.name);
   const tbody = $('bindings');
-  if (!p.bindings.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">No bindings yet.</td></tr>'; return; }
+  if (!p.bindings.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">No bindings yet.</td></tr>'; refreshControls(); return; }
   tbody.innerHTML = p.bindings.map((b, i) => {
     const label = ctlLabel(b.control);
     const modOpts = ['<option value="">—</option>']
@@ -492,6 +523,7 @@ function renderBindings() {
       <td><button class="btn ghost small icon danger" data-del-b="${i}" aria-label="Delete binding" title="Delete binding">✕</button></td>
     </tr>`;
   }).join('');
+  refreshControls();
 }
 
 function renderModifiers() {
@@ -509,6 +541,67 @@ function renderModifiers() {
   }).join('');
 }
 
+// Every control worth naming: named ones, the ones this profile uses, and
+// the ones touched since the page opened.
+function controlRows() {
+  const p = profile(), rows = [];
+  const add = (c) => { if (c && c.number >= 0 && !rows.some((r) => sameCtl(r, c))) rows.push({ type: c.type, channel: c.channel, number: c.number }); };
+  (state.draft.controls || []).forEach((n) => add(n.control));
+  p.bindings.forEach((b) => add(b.control));
+  p.modifiers.forEach((m) => add(m.control));
+  state.seen.forEach(add);
+  return rows.sort(byCtl);
+}
+function byCtl(a, b) {
+  const order = { note: 0, cc: 1, pitch_bend: 2 };
+  return order[a.type] - order[b.type] || a.channel - b.channel || a.number - b.number;
+}
+function renderControls() {
+  const p = profile();
+  const tbody = $('controls');
+  const rows = controlRows();
+  // Keep the field being typed in when a newly touched control adds a row
+  const act = document.activeElement;
+  const focusKey = act && act.dataset && act.dataset.cname !== undefined ? act.dataset.cname : null;
+  // Its raw text too: the draft holds the trimmed name, and "Knob " must not
+  // lose its space halfway through typing "Knob 1"
+  const sel = focusKey ? [act.selectionStart, act.selectionEnd, act.value] : null;
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Touch a control on the device to name it.</td></tr>'; return; }
+  tbody.innerHTML = rows.map((c) => {
+    const k = ctlKey(c), name = ctlName(c);
+    const uses = p.bindings.filter((b) => sameCtl(b.control, c)).map((b) => b.modifier ? `${b.name} (${b.modifier})` : b.name)
+      .concat(p.modifiers.filter((m) => sameCtl(m.control, c)).map((m) => `${m.name} (modifier)`));
+    const eg = c.type === 'cc' ? 'Knob 1' : c.type === 'note' ? 'Circle' : 'Wheel';
+    return `<tr data-row="c${k}">
+      <td style="width:1%">${ctlChip(c, true)}</td>
+      <td><input class="input" data-cname="${k}" value="${esc(name)}" maxlength="${MAX_NAME}" placeholder="e.g. ${eg}" aria-label="Name for ${esc(ctlRaw(c))}, channel ${c.channel}" style="min-width:140px"></td>
+      <td class="ctl-uses">${uses.length ? esc(uses.join(', ')) : '—'}</td>
+      <td style="width:1%">${name ? `<button class="btn ghost small icon danger" data-del-c="${k}" aria-label="Forget this name" title="Forget this name">✕</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+  if (focusKey) {
+    const el = tbody.querySelector(`input[data-cname="${focusKey}"]`);
+    if (el) { el.value = sel[2]; el.focus(); el.setSelectionRange(sel[0], sel[1]); }
+  }
+}
+// The Controls table lists what each control is used by, so it follows the
+// bindings; while one of its names is being typed it waits, and re-renders
+// when that field is left.
+function refreshControls() {
+  const a = document.activeElement;
+  if (!(a && a.dataset && a.dataset.cname !== undefined)) renderControls();
+}
+// Name a control in the draft; an empty name forgets it.
+function setCtlName(c, name) {
+  name = name.trim().slice(0, MAX_NAME);
+  const list = (state.draft.controls || []).filter((x) => !sameCtl(x.control, c));
+  if (name) list.push({ control: c, name });
+  // Kept in control order, so typing a name back as it was leaves nothing unsaved
+  list.sort((a, b) => byCtl(a.control, b.control));
+  // No names is no key at all, as the bridge sends it, so it isn't "unsaved"
+  if (list.length) state.draft.controls = list; else delete state.draft.controls;
+}
+
 function renderDevices() {
   const names = state.devices.slice();
   const cur = state.draft.device;
@@ -517,7 +610,7 @@ function renderDevices() {
     || '<option>No MIDI inputs found</option>';
 }
 
-function renderAll() { renderProfiles(); renderBindings(); renderModifiers(); renderDevices(); renderSaveBar(); }
+function renderAll() { renderProfiles(); renderBindings(); renderModifiers(); renderControls(); renderDevices(); renderSaveBar(); }
 
 function fmtTime(frame, fps) {
   if (!fps) return '';
@@ -601,8 +694,25 @@ function describe(ev) {
   return '<span class="hint">not bound</span>';
 }
 
+function monitorName(m) {
+  const n = ctlName(ctlOfMessage(m));
+  return n ? `<span class="cname">${esc(n)}</span> · ` : '';
+}
+// Remember touched controls so they can be named, even while paused.
+function noteSeen(events) {
+  let added = false;
+  for (const ev of events) {
+    const c = ctlOfMessage(ev.message);
+    if (!c || state.seen.some((x) => sameCtl(x, c))) continue;
+    state.seen.push(c); added = true;
+    if (state.seen.length > MAX_SEEN) state.seen.shift();
+  }
+  if (added) renderControls();
+}
+
 function appendEvents(events) {
   if (!events.length) return;
+  noteSeen(events);
   // The mascot answers the controller even while the log is paused
   mascotReact(events[events.length - 1].message);
   if (state.paused) return;
@@ -616,7 +726,7 @@ function appendEvents(events) {
     row.className = 'log-row';
     const t = new Date(ev.time);
     row.innerHTML = `<span class="t">${t.toLocaleTimeString([], { hour12: false })}.${String(t.getMilliseconds()).padStart(3, '0').slice(0, 2)}</span>
-      <span class="k-${esc(m.kind)}">${esc(m.kind)}</span><span class="raw">${m.channel} · ${m.number} · ${m.value}</span><span class="t"></span><span class="what">${describe(ev)}</span>`;
+      <span class="k-${esc(m.kind)}">${esc(m.kind)}</span><span class="raw">${m.channel} · ${m.number} · ${m.value}</span><span class="t"></span><span class="what">${monitorName(m)}${describe(ev)}</span>`;
     frag.appendChild(row);
     flashRows(ctlOfMessage(m));
   }
@@ -628,6 +738,7 @@ function appendEvents(events) {
 
 function flashRows(c) {
   if (!c) return;
+  flash('c' + ctlKey(c));
   const p = profile();
   p.bindings.forEach((b, i) => { if (sameCtl(b.control, c)) flash(`b${i}`); });
   p.modifiers.forEach((m, i) => { if (sameCtl(m.control, c)) flash(`m${i}`); });
@@ -714,6 +825,7 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   if (t.dataset.learn) return startLearn(t.dataset.learn, +t.dataset.i);
   if (t.dataset.delB !== undefined) { dropLearn(); profile().bindings.splice(+t.dataset.delB, 1); renderBindings(); renderSaveBar(); return; }
+  if (t.dataset.delC !== undefined) { setCtlName(ctlFromKey(t.dataset.delC), ''); renderBindings(); renderModifiers(); renderControls(); renderSaveBar(); return; }
   if (t.dataset.delM !== undefined) { dropLearn(); profile().modifiers.splice(+t.dataset.delM, 1); renderAll(); return; }
   if (t.dataset.test) return sendTest({ frames: +t.dataset.test });
   if (t.dataset.testZoom) return sendTest({ zoom: +t.dataset.testZoom });
@@ -731,6 +843,13 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
+  if (t.dataset.cname !== undefined) {
+    // The Controls table itself re-renders when the field is left, so
+    // typing keeps its focus
+    setCtlName(ctlFromKey(t.dataset.cname), t.value);
+    renderBindings(); renderModifiers(); renderSaveBar();
+    return;
+  }
   const p = profile();
   if (t.dataset.b !== undefined) {
     const b = p.bindings[+t.dataset.b];
@@ -739,6 +858,7 @@ document.addEventListener('input', (e) => {
     else b[t.dataset.f] = t.value;
     if (t.dataset.f === 'modifier') { if (!t.value) delete b.modifier; renderBindings(); }
     if (t.dataset.f === 'action') renderBindings();
+    if (t.dataset.f === 'name') refreshControls();
     renderSaveBar();
   }
 });
@@ -746,6 +866,7 @@ document.addEventListener('input', (e) => {
 // passing through another modifier's name on the way can't take its bindings.
 document.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.dataset.cname !== undefined) { renderControls(); return; }
   if (t.dataset.m === undefined || t.dataset.f !== 'name') return;
   const p = profile();
   const m = p.modifiers[+t.dataset.m];

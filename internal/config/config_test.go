@@ -549,3 +549,60 @@ func TestSaveBinding(t *testing.T) {
 		t.Fatalf("encoder err = %v", err)
 	}
 }
+
+func TestControlNames(t *testing.T) {
+	knob := Control{Type: "cc", Channel: 1, Number: 3}
+	named := func(names ...ControlName) Config {
+		c := Default()
+		c.Controls = names
+		return c
+	}
+	ok := named(ControlName{Control: knob, Name: "Knob 1"}, ControlName{Control: Control{Type: "pitch_bend", Channel: 2, Number: 0}, Name: "Wheel"})
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("é", MaxControlNameLen)
+	if c := named(ControlName{Control: knob, Name: long}); c.Validate() != nil {
+		t.Fatalf("%d characters should be allowed: %v", MaxControlNameLen, c.Validate())
+	}
+	many := make([]ControlName, MaxControlNames+1)
+	for i := range many {
+		many[i] = ControlName{Control: Control{Type: "cc", Channel: 1 + i/128, Number: i % 128}, Name: "k"}
+	}
+	bad := map[string]Config{
+		"empty name":     named(ControlName{Control: knob, Name: "  "}),
+		"padded name":    named(ControlName{Control: knob, Name: " Knob"}),
+		"long name":      named(ControlName{Control: knob, Name: long + "x"}),
+		"not learned":    named(ControlName{Control: Control{Type: "cc", Channel: 1, Number: -1}, Name: "Knob"}),
+		"bad channel":    named(ControlName{Control: Control{Type: "cc", Channel: 0, Number: 3}, Name: "Knob"}),
+		"bad type":       named(ControlName{Control: Control{Type: "sysex", Channel: 1, Number: 3}, Name: "Knob"}),
+		"bend number":    named(ControlName{Control: Control{Type: "pitch_bend", Channel: 1, Number: 5}, Name: "Wheel"}),
+		"named twice":    named(ControlName{Control: knob, Name: "A"}, ControlName{Control: knob, Name: "B"}),
+		"too many names": named(many...),
+	}
+	for name, c := range bad {
+		if c.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestControlNamesRoundTripAndCopy(t *testing.T) {
+	s, _ := Open(filepath.Join(t.TempDir(), "c.json"))
+	c := s.Get()
+	c.Controls = []ControlName{{Control: Control{Type: "note", Channel: 1, Number: 7}, Name: "Circle"}}
+	if err := s.Set(c); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Get()
+	got.Controls[0].Name = "changed"
+	s2, err := Open(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range []Config{s.Get(), s2.Get()} {
+		if len(g.Controls) != 1 || g.Controls[0].Name != "Circle" {
+			t.Fatalf("names not kept, or Get shares memory: %+v", g.Controls)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -454,5 +455,42 @@ func TestTestEndpointSave(t *testing.T) {
 	}
 	if rec := do(h, "POST", "/api/test", "127.0.0.1:7870", "text/plain", `{"save":true}`); rec.Code == http.StatusOK {
 		t.Fatalf("non-JSON save accepted")
+	}
+}
+
+func TestPutConfigControlNames(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+	var st stateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	st.Config.Controls = []config.ControlName{{Control: config.Control{Type: "cc", Channel: 1, Number: 3}, Name: "Knob 1"}}
+	body, _ := json.Marshal(st.Config)
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	rec = do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+	st = stateResponse{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Config.Controls) != 1 || st.Config.Controls[0].Name != "Knob 1" {
+		t.Fatalf("names not kept: %+v", st.Config.Controls)
+	}
+	st.Config.Controls[0].Name = strings.Repeat("x", config.MaxControlNameLen+1)
+	body, _ = json.Marshal(st.Config)
+	if rec := do(h, "PUT", "/api/config", "127.0.0.1:7870", "application/json", string(body)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("too long a name: %d", rec.Code)
+	}
+}
+
+func TestIndexHasControlNames(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
+	for _, want := range []string{`id="controls"`, "data-cname", fmt.Sprintf("MAX_NAME = %d", config.MaxControlNameLen)} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("page is missing %q", want)
+		}
 	}
 }

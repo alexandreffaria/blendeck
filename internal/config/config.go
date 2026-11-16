@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // Control identifies one physical control by the messages it sends.
@@ -115,11 +116,22 @@ type Profile struct {
 	Bindings  []Binding  `json:"bindings"`
 }
 
+// ControlName is the user's name for one physical control, like the label
+// printed on the device ("Knob 1", "Wheel"), so the page can show it instead
+// of the control's MIDI number.
+type ControlName struct {
+	Control Control `json:"control"`
+	Name    string  `json:"name"`
+}
+
 // Config is everything stored on disk.
 type Config struct {
 	Device        string    `json:"device"`
 	ActiveProfile string    `json:"active_profile"`
 	Profiles      []Profile `json:"profiles"`
+	// Controls names the device's controls. The names belong to the device,
+	// not a profile: every profile shows them.
+	Controls []ControlName `json:"controls,omitempty"`
 }
 
 // Limits on what a config may hold, so a bad file or request can't blow up.
@@ -133,6 +145,12 @@ const (
 	MaxZoomStep = 20
 	// MaxPanStep caps how far one click pans: a whole view width.
 	MaxPanStep = 100
+	// MaxControlNames caps how many controls can have a name: far more than
+	// any controller has.
+	MaxControlNames = 512
+	// MaxControlNameLen caps a control's name, in characters: it's a label
+	// for a chip, not a description.
+	MaxControlNameLen = 40
 )
 
 // Default is the config a fresh install starts with: one profile with the
@@ -303,6 +321,39 @@ func (c *Config) Validate() error {
 	if c.Active() == nil {
 		return fmt.Errorf("active profile %q does not exist", c.ActiveProfile)
 	}
+	return validControlNames(c.Controls)
+}
+
+func validControlNames(names []ControlName) error {
+	if len(names) > MaxControlNames {
+		return fmt.Errorf("at most %d named controls", MaxControlNames)
+	}
+	seen := map[Control]bool{}
+	for _, n := range names {
+		name := strings.TrimSpace(n.Name)
+		if name == "" {
+			return errors.New("a named control has no name")
+		}
+		if name != n.Name {
+			return fmt.Errorf("control name %q starts or ends with a space", n.Name)
+		}
+		if utf8.RuneCountInString(name) > MaxControlNameLen {
+			return fmt.Errorf("control name %q: at most %d characters", name, MaxControlNameLen)
+		}
+		if err := n.Control.validate(); err != nil {
+			return fmt.Errorf("control %q: %w", name, err)
+		}
+		if !n.Control.Learned() {
+			return fmt.Errorf("control %q: only a learned control can have a name", name)
+		}
+		if n.Control.Type == "pitch_bend" && n.Control.Number != 0 {
+			return fmt.Errorf("control %q: pitch bend has no number (use 0)", name)
+		}
+		if seen[n.Control] {
+			return fmt.Errorf("control %q: that control has two names", name)
+		}
+		seen[n.Control] = true
+	}
 	return nil
 }
 
@@ -337,6 +388,9 @@ func (c Config) Clone() Config {
 		p.Modifiers = append([]Modifier{}, p.Modifiers...)
 		p.Bindings = append([]Binding{}, p.Bindings...)
 		out.Profiles[i] = p
+	}
+	if c.Controls != nil {
+		out.Controls = append([]ControlName{}, c.Controls...)
 	}
 	return out
 }
