@@ -741,15 +741,30 @@ class AudioPlanTest(unittest.TestCase):
 
 class ScrubSoundsTest(unittest.TestCase):
     # 24 fps; strips are (key, start, end, content_start, sound_offset)
-    def test_one_frame_of_each_strip_under_the_playhead(self):
-        strips = [("b", 150, 400, 150, 0.0), ("a", 100, 340, 40, 1.0), ("gone", 0, 160, 0, 0.0), ("ahead", 161, 200, 161, 0.0)]
-        self.assertEqual(protocol.scrub_sounds(strips, 160, 24), [("a", 6.0, 6.0 + 1 / 24), ("b", 10 / 24, 11 / 24)])
+    def test_frames_moved_over_landing_frame_included(self):
+        self.assertEqual(protocol.scrub_frames(100, 110, 24), (101, 111))  # forward: ends on the playhead
+        self.assertEqual(protocol.scrub_frames(110, 100, 24), (100, 110))  # backwards: starts there
+        self.assertEqual(protocol.scrub_frames(100, 101, 24), (101, 102))  # Fn: just the landing frame
+        self.assertEqual(protocol.scrub_frames(101, 100, 24), (100, 101))
+        self.assertIsNone(protocol.scrub_frames(100, 100, 24))
+        self.assertIsNone(protocol.scrub_frames(100, 110, 0))
 
-    def test_stops_at_the_strips_end_and_caps(self):
-        self.assertEqual(protocol.scrub_sounds([("a", 100, 101, 100, 0.0)], 100, 24, frames=5), [("a", 0.0, 1 / 24)])
+    def test_a_long_move_plays_the_part_nearest_the_landing_frame(self):
+        # 0.5 s at 24 fps is 12 frames
+        self.assertEqual(protocol.scrub_frames(100, 140, 24), (129, 141))
+        self.assertEqual(protocol.scrub_frames(140, 100, 24), (100, 112))
+
+    def test_each_strip_in_the_stretch_plays_in_turn(self):
+        # A ends on 105, B starts there, C starts after the stretch
+        strips = [("b", 105, 300, 105, 0.0), ("a", 50, 105, 20, 1.0), ("c", 111, 300, 111, 0.0)]
+        plan = protocol.scrub_sounds(strips, 100, 110, 24)
+        self.assertEqual(plan, [("a", 81 / 24 + 1.0, 85 / 24 + 1.0, 0.0), ("b", 0.0, 6 / 24, 4 / 24)])
+
+    def test_caps_and_no_move(self):
         strips = [(i, 0, 400, 0, 0.0) for i in range(40)]
-        self.assertEqual(len(protocol.scrub_sounds(strips, 10, 24)), protocol.MAX_AUDIO_SOUNDS)
-        self.assertEqual(protocol.scrub_sounds(strips, 10, 0), [])
+        self.assertEqual(len(protocol.scrub_sounds(strips, 10, 20, 24)), protocol.MAX_AUDIO_SOUNDS)
+        self.assertEqual(protocol.scrub_sounds(strips, 10, 10, 24), [])
+        self.assertEqual(protocol.scrub_sounds(strips, 10, 20, 0), [])
 
 
 class ManifestTest(unittest.TestCase):

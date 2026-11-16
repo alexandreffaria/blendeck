@@ -1235,11 +1235,12 @@ def _scrub_stop():
     scrub.handles = []
 
 
-def _scrub_sound(scene):
-    """Plays the sound under the playhead after a scrub click moved it,
-    like Blender's own audio scrubbing (which a script's frame change
-    doesn't trigger): protocol.SCRUB_FRAMES frames of every sound strip
-    heard there, at the strip's volume. What the previous click started is
+def _scrub_sound(scene, frm):
+    """Plays the sound of a scrub that moved the playhead from frame frm
+    to where it is, since a script's frame change doesn't trigger
+    Blender's own audio scrubbing: the frames it moved over (see
+    protocol.scrub_frames) of every sound strip heard there, at the
+    strip's volume. What the previous click started is
     stopped first. Silent while anything plays, since playback has its own
     sound. Never raises; a failure is printed once until it changes."""
     _scrub_stop()
@@ -1251,13 +1252,16 @@ def _scrub_sound(scene):
         found = _sound_strips(scene)
         files = {span[0]: (path, volume) for span, path, volume in found}
         fps = scene.render.fps / scene.render.fps_base
-        plan = protocol.scrub_sounds([span for span, _, _ in found], scene.frame_current, fps)
+        plan = protocol.scrub_sounds([span for span, _, _ in found], frm, scene.frame_current, fps)
         if not plan:
             return
         device = aud.Device()
-        for key, from_s, to_s in plan:
+        for key, from_s, to_s, delay in plan:
             path, volume = files[key]
-            scrub.handles.append(device.play(aud.Sound(path).limit(from_s, to_s).volume(volume)))
+            sound = aud.Sound(path).limit(from_s, to_s).volume(volume)
+            if delay > 0:
+                sound = sound.delay(delay)
+            scrub.handles.append(device.play(sound))
         scrub.error = None
     except Exception as e:
         _scrub_stop()
@@ -1347,9 +1351,10 @@ def _apply(messages, prefs):
             continue
         target = protocol.scrub_target(scene.frame_current, frames, scene.frame_start, scene.frame_end, prefs.clamp)
         if target != scene.frame_current:
+            was = scene.frame_current
             _seek(scene, target)
             if prefs.scrub_audio:
-                _scrub_sound(scene)
+                _scrub_sound(scene, was)
     if link.sock is None:
         return  # the read just found the bridge gone
     state = (scene.name, scene.frame_current, scene.frame_start, scene.frame_end, scene.render.fps / scene.render.fps_base)
@@ -1417,7 +1422,7 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
     )
     scrub_audio: bpy.props.BoolProperty(
         name="Sound while scrubbing",
-        description="Each click of the scrub knob plays a frame of the sound under the playhead, like Blender's audio scrubbing",
+        description="Each click of the scrub knob plays the sound of the frames it moved over",
         default=True,
     )
     follow_selection: bpy.props.BoolProperty(

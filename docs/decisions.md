@@ -173,3 +173,12 @@ zoom: the play / pause button, undo, the shuttle reaching an end, Space or
 the pause button in Blender, a render or a scene switch. The playhead is
 always in view after playback, at the cost of the view also moving on stops
 nobody meant.
+
+## A scrub click plays the frames it moved over (20261115kntq)
+
+Each click of the scrub knob plays the sound of the frames it moved over,
+landing frame included, forward in time: 10 frames without Fn, just the
+landing frame with Fn. Going forward the sound ends on the playhead, going
+backwards it starts there. Turning steadily, no frames are skipped; the
+next click cuts the last one's sound off. Clicks added up in one read play
+at most the last half second, nearest the playhead.
