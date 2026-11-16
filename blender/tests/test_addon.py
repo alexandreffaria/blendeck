@@ -1972,6 +1972,31 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "play_pause"}], PREFS)
         self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
 
+    def test_cut_while_shuttling_lands_on_the_frame_shown(self):
+        # The clock has moved on since the last picture (a slow frame): the
+        # cut belongs on that picture, and playback then carries on
+        advance = self._clock()
+        ed = self._editor()  # A, C cross 50
+        self._play_window()
+        SCENE.frame_end = 1000
+        self.addCleanup(setattr, SCENE, "frame_end", 100)
+        SCENE.frame_current = 50
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(0.25)  # 6 frames at 24 fps, not shown yet
+        addon._apply([{"type": "cut"}], PREFS)
+        self.assertTrue(ed.log)
+        self.assertEqual({f for _, f, _ in ed.log}, {50}, "cut where the picture was")
+        self.assertEqual(SCENE.frame_current, 44, "then playback carries on by the clock")
+        self.assertEqual(addon.shuttle.speed, -100)
+
+    def test_scrub_while_shuttling_starts_from_the_frame_shown(self):
+        advance = self._clock()
+        scene = self._shuttle_scene()
+        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
+        advance(0.5)  # 12 frames nobody has seen
+        addon._apply([{"type": "scrub", "frames": 10}], PREFS)
+        self.assertEqual(scene.frame_current, 110, "10 on from the frame shown, 100")
+
     def test_selection_follows_while_shuttling(self):
         advance = self._clock()
         ed = self._editor()  # A, C cross 50; D starts at 60
@@ -2134,11 +2159,12 @@ class AddonTest(unittest.TestCase):
             channels={1: types.SimpleNamespace(mute=False), 2: muted},
         )
         addon._apply([{"type": "shuttle", "clicks": 1}] * 3, PREFS)  # 1x (Blender's), then up to 1.5x
+        old = list(plays)
+        self.assertTrue(old, "1.5x has sound from the tick of the press")
+        del plays[:]
         addon._apply([{"type": "shuttle", "clicks": 1}] * 2, PREFS)  # 2x
         self.assertEqual(addon.shuttle.speed, 200)
-        self.assertTrue(all(h.status == 0 for _, _, h in plays), "the 1.5x sounds stopped")
-        del plays[:]
-        addon._apply([], PREFS)
+        self.assertTrue(all(h.status == 0 for _, _, h in old), "the 1.5x sounds stopped")
         self.assertEqual([p[0] for p in plays], ["C:/edit/voice.wav", "C:/edit/music.wav"])
         self.assertEqual(plays[0][1], [("limit", 80 / 24 + 1.0, 380 / 24 + 1.0), ("stretch", 0.5, 1.0), ("volume", 0.5)])
         self.assertEqual(plays[1][1][-1], ("delay", 30 / 48))
