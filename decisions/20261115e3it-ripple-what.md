@@ -41,6 +41,7 @@ resolution:
   choice: selected-else-all
   note: playhead should select everything under it
   resolved_at: 2026-11-15T07:29:57Z
+applied_at: 2026-11-15T07:38:25Z
 ---
 
 ## Context

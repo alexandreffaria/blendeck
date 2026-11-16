@@ -107,7 +107,9 @@ func (a *App) hintOn(m midi.Message, hit engine.Hit, now time.Time) {
 	a.hintMu.Lock()
 	defer a.hintMu.Unlock()
 	a.hintMod = ""
-	if hit.Modifier != "" && hit.Held && a.engine.Learning() == engine.LearnOff {
+	// On its own: a second modifier pressed while one is held shows
+	// nothing, and neither does letting go of one of the two
+	if hit.Modifier != "" && hit.Held && len(a.engine.Held()) == 1 {
 		a.hintMod, a.hintAt = hit.Modifier, now
 	}
 	a.hideHints()
@@ -117,10 +119,17 @@ func (a *App) hintOn(m midi.Message, hit engine.Hit, now time.Time) {
 func (a *App) hintTick(now time.Time) {
 	a.hintMu.Lock()
 	defer a.hintMu.Unlock()
-	if a.hintMod != "" && !a.hintShown && now.Sub(a.hintAt) >= HintDelay {
-		a.hintShown = true
-		a.link.ShowHints(true)
+	if a.hintMod == "" || a.hintShown || now.Sub(a.hintAt) < HintDelay {
+		return
 	}
+	if a.engine.Learning() != engine.LearnOff {
+		// The page is learning a control, whether that began before the
+		// press or during the wait: this hold shows nothing
+		a.hintMod = ""
+		return
+	}
+	a.hintShown = true
+	a.link.ShowHints(true)
 }
 
 // hintOff ends the wait and hides the hints: the device went away, so the

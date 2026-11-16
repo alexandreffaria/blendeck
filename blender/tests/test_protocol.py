@@ -1005,5 +1005,22 @@ class LatencyTest(unittest.TestCase):
         self.assertEqual(protocol.latency_report([], [], [], 0, 3)["dropped"], 3)
 
 
+class SlowPictureTest(unittest.TestCase):
+    def test_causes_in_order(self):
+        self.assertEqual(protocol.slow_causes(False, False, False), [])
+        self.assertEqual(protocol.slow_causes(True, True, True), list(protocol.SLOW_CAUSES))
+        self.assertEqual(protocol.slow_causes(False, True, False), ["prefetch_on"])
+
+    def test_note(self):
+        self.assertEqual(protocol.slow_note(protocol.SLOW_PICTURE_MS - 1, ["prefetch_on"]), [])
+        self.assertEqual(protocol.slow_note(0.0, []), [])
+        self.assertEqual(protocol.slow_note(float("nan"), ["prefetch_on"]), [])
+        self.assertEqual(protocol.slow_note(430.4, []), ["Slow picture: 430 ms"])
+        self.assertEqual(
+            protocol.slow_note(protocol.SLOW_PICTURE_MS, ["cache_window", "proxies_off", "made up"]),
+            ["Slow picture: 150 ms", "Use Proxies is off in the preview", "Cache Window is on"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -249,6 +249,7 @@ tr.flash td { animation: flash 600ms ease-out; }
           <div class="fact" id="latencyFact" hidden><span>Control to picture</span><b id="latency"></b></div>
         </div>
       </div>
+      <div class="warn" id="slowPicture" hidden></div>
       <div class="scrubber"><div class="scrub-fill" id="frameFill"></div></div>
     </div>
     <fieldset class="tests" id="tests" disabled>
@@ -651,9 +652,21 @@ function renderLive() {
 
 // What the add-on measured over about a second, while controls were used:
 // from the bridge taking a command to Blender's preview having drawn it.
+const SLOW_CAUSES = {
+  proxies_off: 'Use Proxies is off in the preview',
+  prefetch_on: 'Prefetch Frames is on',
+  cache_window: 'Cache Window is on',
+};
+
 function renderLatency(lat) {
   $('latencyFact').hidden = !lat;
+  const slow = $('slowPicture');
+  slow.hidden = !(lat && lat.slow);
   if (!lat) return;
+  if (lat.slow) {
+    const why = (lat.causes || []).filter((c) => Object.hasOwn(SLOW_CAUSES, c)).map((c) => SLOW_CAUSES[c]);
+    slow.textContent = `Slow picture in Blender: ${Math.round(lat.slow_ms)} ms.${why.length ? ' ' + why.join('. ') + '.' : ''}`;
+  }
   const ms = (v) => `${Math.round(v)} ms`;
   const el = $('latency');
   const seen = lat.total_max > 0;

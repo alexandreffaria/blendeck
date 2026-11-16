@@ -18,7 +18,9 @@
 // in milliseconds: wait is from the bridge to the add-on applying the
 // command, picture from there to the preview having drawn, total both,
 // tick the longest gap between two of the add-on's ticks (Blender busy),
-// and dropped the presses the add-on left out (see State.Latency).
+// and dropped the presses the add-on left out (see State.Latency). When the
+// slowest picture was slow it adds "slow":true and "causes", the reasons it
+// found: any of "proxies_off", "prefetch_on" and "cache_window".
 //
 // The bridge also tells each add-on what the controls do, when it connects
 // and whenever that changes, so Blender can show it (see SetHints):
@@ -103,17 +105,24 @@ type State struct {
 // of a read. WorstMinute is the largest TotalMax of the last minute and
 // AgeMS how old this report is, both filled in by State.
 type Latency struct {
-	Samples     int     `json:"samples"`
-	WaitMed     float64 `json:"wait_med"`
-	WaitMax     float64 `json:"wait_max"`
-	PictureMed  float64 `json:"picture_med"`
-	PictureMax  float64 `json:"picture_max"`
-	TotalMed    float64 `json:"total_med"`
-	TotalMax    float64 `json:"total_max"`
-	TickMax     float64 `json:"tick_max"`
-	Dropped     int     `json:"dropped"`
-	WorstMinute float64 `json:"worst_minute"`
-	AgeMS       int64   `json:"age_ms"`
+	Samples    int     `json:"samples"`
+	WaitMed    float64 `json:"wait_med"`
+	WaitMax    float64 `json:"wait_max"`
+	PictureMed float64 `json:"picture_med"`
+	PictureMax float64 `json:"picture_max"`
+	TotalMed   float64 `json:"total_med"`
+	TotalMax   float64 `json:"total_max"`
+	TickMax    float64 `json:"tick_max"`
+	Dropped    int     `json:"dropped"`
+	// Slow says the add-on found a picture slow in the last slowKept; SlowMS
+	// is how long that picture took and Causes the reasons the add-on could
+	// name, from knownSlowCauses. A later report with no picture in it (a zoom)
+	// doesn't end it; one with a picture that wasn't slow does.
+	Slow        bool     `json:"slow,omitempty"`
+	SlowMS      float64  `json:"slow_ms,omitempty"`
+	Causes      []string `json:"causes,omitempty"`
+	WorstMinute float64  `json:"worst_minute"`
+	AgeMS       int64    `json:"age_ms"`
 }
 
 const (
@@ -122,7 +131,29 @@ const (
 	latencyKept = 60
 	// maxLatencyMS bounds what an add-on can report: ten minutes.
 	maxLatencyMS = 600_000
+	// slowKept is how long a slow picture is still said. The add-on read its
+	// reasons when it happened; they may have been fixed since.
+	slowKept = 30 * time.Second
 )
+
+// knownSlowCauses are the reasons for a slow picture an add-on may name; anything
+// else it sends is left out.
+var knownSlowCauses = []string{"proxies_off", "prefetch_on", "cache_window"}
+
+// knownCauses keeps the causes in got that the bridge knows, once each, in
+// that order: at most len(knownSlowCauses), whatever the add-on sent.
+func knownCauses(got []string) []string {
+	var out []string
+	for _, c := range knownSlowCauses {
+		for _, g := range got {
+			if g == c {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
+}
 
 type latencyAt struct {
 	at    time.Time
@@ -207,6 +238,11 @@ type Link struct {
 	latency   *Latency
 	latencyAt time.Time
 	recent    []latencyAt
+	// slowMS, slowCauses and slowAt are the last slow picture, kept apart
+	// from latency so a report without pictures doesn't erase it
+	slowMS     float64
+	slowCauses []string
+	slowAt     time.Time
 }
 
 // New makes a Link. Call Serve to start accepting.
@@ -225,6 +261,10 @@ func (l *Link) State() State {
 	if l.latency != nil && s.Connected {
 		now := time.Now()
 		lat := *l.latency
+		if !l.slowAt.IsZero() && now.Sub(l.slowAt) <= slowKept {
+			lat.Slow, lat.SlowMS = true, l.slowMS
+			lat.Causes = append([]string(nil), l.slowCauses...)
+		}
 		lat.AgeMS = now.Sub(l.latencyAt).Milliseconds()
 		for _, r := range l.recent {
 			if now.Sub(r.at) <= time.Minute && r.worst > lat.WorstMinute {
@@ -264,6 +304,13 @@ func (l *Link) setLatency(m incoming) {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	switch {
+	case m.Slow && lat.PictureMax > 0:
+		l.slowMS, l.slowCauses, l.slowAt = lat.PictureMax, knownCauses(m.Causes), now
+	case lat.PictureMax > 0:
+		// A picture was timed and it wasn't slow: over
+		l.slowMS, l.slowCauses, l.slowAt = 0, nil, time.Time{}
+	}
 	l.latency, l.latencyAt = lat, now
 	if len(l.recent) >= latencyKept {
 		l.recent = append(l.recent[:0], l.recent[1:]...)
@@ -413,15 +460,17 @@ type incoming struct {
 	End     int     `json:"end"`
 	FPS     float64 `json:"fps"`
 
-	Samples    int     `json:"samples"`
-	WaitMed    float64 `json:"wait_med"`
-	WaitMax    float64 `json:"wait_max"`
-	PictureMed float64 `json:"picture_med"`
-	PictureMax float64 `json:"picture_max"`
-	TotalMed   float64 `json:"total_med"`
-	TotalMax   float64 `json:"total_max"`
-	TickMax    float64 `json:"tick_max"`
-	Dropped    int     `json:"dropped"`
+	Samples    int      `json:"samples"`
+	WaitMed    float64  `json:"wait_med"`
+	WaitMax    float64  `json:"wait_max"`
+	PictureMed float64  `json:"picture_med"`
+	PictureMax float64  `json:"picture_max"`
+	TotalMed   float64  `json:"total_med"`
+	TotalMax   float64  `json:"total_max"`
+	TickMax    float64  `json:"tick_max"`
+	Dropped    int      `json:"dropped"`
+	Slow       bool     `json:"slow"`
+	Causes     []string `json:"causes"`
 }
 
 // handle waits for the hello, registers the client, then reads until the
@@ -498,6 +547,7 @@ func (l *Link) remove(c *client) {
 	if len(l.clients) == 0 {
 		l.state = State{}
 		l.latency, l.recent = nil, nil
+		l.slowMS, l.slowCauses, l.slowAt = 0, nil, time.Time{}
 	}
 	l.mu.Unlock()
 	_ = c.conn.Close()

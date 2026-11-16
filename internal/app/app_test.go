@@ -171,4 +171,55 @@ func TestHintsHideWhenDeviceGoesOrLearning(t *testing.T) {
 	if a.link.HintsShown() {
 		t.Fatal("shown while learning")
 	}
+
+	// A learn that begins while Fn is already held, before the delay
+	b := hintApp(t)
+	b.Handle(fnDown)
+	b.Learn(engine.LearnBinding, nil)
+	b.hintTick(time.Now().Add(time.Hour))
+	if b.link.HintsShown() {
+		t.Fatal("shown for a learn that began during the wait")
+	}
+	b.Learn(engine.LearnOff, nil)
+	b.hintTick(time.Now().Add(time.Hour))
+	if b.link.HintsShown() {
+		t.Fatal("shown once the learn ended, for the same hold")
+	}
+}
+
+// "On its own": with two modifiers down nothing shows, whichever came
+// first, until all are released and one is pressed again.
+func TestHintsNotWithTwoModifiers(t *testing.T) {
+	a := hintApp(t)
+	cfg := a.Config()
+	p := &cfg.Profiles[0]
+	p.Modifiers = append(p.Modifiers, config.Modifier{Name: "Shift", Control: config.Control{Type: "note", Channel: 1, Number: 111}})
+	if err := a.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	shiftDown := midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 111, Value: 127}
+	shiftUp := midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 111}
+	later := func() { a.hintTick(time.Now().Add(time.Hour)) }
+
+	a.Handle(fnDown)
+	later()
+	if !a.link.HintsShown() {
+		t.Fatal("not shown with Fn alone")
+	}
+	a.Handle(shiftDown)
+	later()
+	if a.link.HintsShown() {
+		t.Fatal("shown with two modifiers held")
+	}
+	a.Handle(shiftUp)
+	later()
+	if a.link.HintsShown() {
+		t.Fatal("shown again after one of the two was released")
+	}
+	a.Handle(fnUp)
+	a.Handle(shiftDown)
+	later()
+	if !a.link.HintsShown() {
+		t.Fatal("not shown with the other modifier alone")
+	}
 }

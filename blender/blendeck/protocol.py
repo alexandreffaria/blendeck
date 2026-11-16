@@ -228,6 +228,36 @@ MAX_LATENCY_SAMPLES = 256
 MAX_WAIT_MS = 60_000
 
 
+# A picture that took this long to draw after a command is slow: the
+# playhead visibly lags the hand. With everything set right, a jump to a
+# place never shown costs about 110 ms on long footage; under prefetch or
+# without proxies it is several hundred.
+SLOW_PICTURE_MS = 150
+# What the add-on can name as the reason, in the order it is shown.
+SLOW_CAUSES = ("proxies_off", "prefetch_on", "cache_window")
+_CAUSE_TEXT = {
+    "proxies_off": "Use Proxies is off in the preview",
+    "prefetch_on": "Prefetch Frames is on",
+    "cache_window": "Cache Window is on",
+}
+
+
+def slow_causes(proxies_off, prefetch_on, cache_window):
+    """The reasons to name for a slow picture, from what is set."""
+    found = (("proxies_off", proxies_off), ("prefetch_on", prefetch_on), ("cache_window", cache_window))
+    return [name for name, on in found if on]
+
+
+def slow_note(picture_max, causes):
+    """The lines the panel shows after a slow picture: how slow, then each
+    known reason. Empty when the picture wasn't slow."""
+    if not picture_max >= SLOW_PICTURE_MS:
+        return []
+    lines = ["Slow picture: %d ms" % round(picture_max)]
+    lines += [_CAUSE_TEXT[c] for c in SLOW_CAUSES if c in causes]
+    return lines
+
+
 def oldest_stamp(messages):
     """The earliest "t" (when the bridge took the command, in milliseconds
     since 1970) among messages, or None when none carries a usable one."""

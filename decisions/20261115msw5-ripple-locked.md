@@ -52,6 +52,7 @@ options:
 resolution:
   choice: keep-gap
   resolved_at: 2026-11-15T07:30:15Z
+applied_at: 2026-11-15T07:38:26Z
 ---
 
 ## Context

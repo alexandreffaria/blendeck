@@ -43,6 +43,7 @@ options:
 resolution:
   choice: all-sync
   resolved_at: 2026-11-15T07:30:25Z
+applied_at: 2026-11-15T07:38:24Z
 ---
 
 ## Context

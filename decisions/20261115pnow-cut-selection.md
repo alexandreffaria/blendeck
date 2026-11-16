@@ -44,6 +44,7 @@ resolution:
   choice: custom
   note: let's do premiere style "selection follow playhead" just have everything under the play head selected, that's how we will use with ripple delete next
   resolved_at: 2026-11-15T06:18:00Z
+applied_at: 2026-11-15T07:47:35Z
 ---
 
 ## Context
