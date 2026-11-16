@@ -10,6 +10,15 @@ the playhead stays on the frame the knob leaves it on. It used to play on
 from there. The owner asked for it in chat, so there is no card. The jump
 knob, cut and ripple delete still leave playback running.
 
+## Where two clips meet, the trim knob rolls; Fn shrinks one side (202611150cft)
+
+Turned on its own at a join, the trim knob rolls the cut: one clip gets
+longer and the other shorter by the same amount, as first built. With Fn
+held it only shortens the clip turned into: right moves only clip starts,
+left only ends, so it opens a gap and never changes the neighbor. Away
+from a join, Fn only ever shortens: a lone handle turned outwards stays
+put. The owner wanted both behaviours on one knob.
+
 ## Presses made while Blender is busy all count, in order (202611163di7)
 
 When Blender freezes (a save, a big undo, a proxy build) and cut, ripple

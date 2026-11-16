@@ -14,7 +14,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.14.1"
+ADDON_VERSION = "0.15.1"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -741,12 +741,13 @@ def _set_handle(strip, which, frame):
         strip.frame_final_end = frame
 
 
-def _trim(scene, frames):
+def _trim(scene, frames, shrink=False):
     """The trim knob: moves the handles at the playhead frames right, or
     left when negative, in the level the editor shows, and the playhead
     with them (see protocol.trim_plan for which handles and how far). Turn
     left on a clip's start to show more of its beginning, right on its end
-    to show more of its end; where two clips meet, the cut rolls. The undo
+    to show more of its end; where two clips meet, the cut rolls, or with
+    shrink (Fn) only the clip turned into gets shorter. The undo
     step waits for the knob to stop, like the move knob's. Never raises.
     Returns whether anything changed."""
     try:
@@ -762,7 +763,7 @@ def _trim(scene, frames):
             follows = getattr(s, "input_1", None) is not None
             lo, hi = _content(s)
             clips.append(protocol.Clip(start, end, locked, s.channel, follows, lo, hi))
-        plan = protocol.trim_plan(clips, scene.frame_current, frames)
+        plan = protocol.trim_plan(clips, scene.frame_current, frames, shrink)
     except Exception as e:
         print("Blendeck: trim skipped:", e)
         return False
@@ -1333,8 +1334,8 @@ def _apply(messages, prefs):
             _move(scene, frames, kind == "move_before")
             _audio_restart()
             continue
-        if kind == "trim":
-            _trim(scene, frames)
+        if kind in ("trim", "trim_shrink"):
+            _trim(scene, frames, kind == "trim_shrink")
             _audio_restart()
             continue
         # Anything else ends the knob's turn: its undo step comes first, so

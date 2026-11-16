@@ -1539,6 +1539,33 @@ func TestTrimWithFnHeld(t *testing.T) {
 	}
 }
 
+// With an Fn trim binding (the default's "Trim, shrinking one side"), Fn
+// held turns the same knob into shrinking (decision 202611150cft).
+func TestTrimShrinkWithFn(t *testing.T) {
+	trim := config.Control{Type: "cc", Channel: 1, Number: 33}
+	e := New(config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "trim", Name: "Trim", Control: trim, Encoder: config.EncoderTwos, Action: config.ActionTrim, Step: 1},
+			{ID: "trim-shrink", Name: "Shrink", Control: trim, Modifier: "Fn", Encoder: config.EncoderTwos, Action: config.ActionTrimShrink, Step: 2},
+		},
+	})
+	hit, _ := e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 33, Value: 1})
+	if hit.Binding != "trim" || *hit.Command != (Command{Type: "trim", Frames: 1}) {
+		t.Fatalf("no Fn: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	hit, _ = e.Handle(midi.Message{Kind: midi.ControlChange, Channel: 1, Number: 33, Value: 127})
+	if hit.Binding != "trim-shrink" || hit.Command == nil || *hit.Command != (Command{Type: "trim", Frames: -2, Shrink: true}) {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+	b, _ := json.Marshal(*hit.Command)
+	if string(b) != `{"type":"trim","frames":-2,"shrink":true}` {
+		t.Fatalf("wire: %s", b)
+	}
+}
+
 // The default trim binding is not learned yet: no knob may reach it.
 func TestTrimNotLearnedIgnored(t *testing.T) {
 	c := config.Default()

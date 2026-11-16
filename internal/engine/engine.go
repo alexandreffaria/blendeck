@@ -28,13 +28,15 @@ import (
 // negative), stopping against strips that stay; with "before":true it moves
 // the selected strips and every strip before them. {"type":"trim","frames":N}
 // moves the clip handles at the playhead N frames (left when negative),
-// and the playhead with them.
+// and the playhead with them; with "shrink":true only the clips turned into
+// get shorter.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
 	Clicks int    `json:"clicks,omitempty"`
 	Sound  bool   `json:"sound,omitempty"`
 	Before bool   `json:"before,omitempty"`
+	Shrink bool   `json:"shrink,omitempty"`
 }
 
 // Hit says what a message did, for the live monitor.
@@ -288,9 +290,9 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		if d := Delta(m.Value, b.Encoder); d != 0 {
 			hit.Command = &Command{Type: "move", Frames: d * b.Step, Before: b.Action == config.ActionMoveBefore}
 		}
-	case config.ActionTrim:
+	case config.ActionTrim, config.ActionTrimShrink:
 		if d := Delta(m.Value, b.Encoder); d != 0 {
-			hit.Command = &Command{Type: "trim", Frames: d * b.Step}
+			hit.Command = &Command{Type: "trim", Frames: d * b.Step, Shrink: b.Action == config.ActionTrimShrink}
 		}
 	case config.ActionJumpEdit, config.ActionJumpCut:
 		if d := Delta(m.Value, b.Encoder); d != 0 {

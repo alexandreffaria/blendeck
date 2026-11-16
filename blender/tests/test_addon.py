@@ -2666,6 +2666,26 @@ class AddonTest(unittest.TestCase):
         addon._apply([{"type": "trim", "frames": -5}], PREFS)
         self.assertEqual(ed.spans(), [("A1", 50, 125), ("A2", 125, 200), ("C", 125, 140), ("V1", 50, 125), ("V2", 125, 200)])
 
+    def test_trim_shrink_at_a_join_opens_a_gap(self):
+        ed = self._trim_editor()
+        SCENE.frame_current = 100
+        # Close the gap first: V1 / A1 end at 120 where V2 / A2 start
+        addon._apply([{"type": "trim", "frames": 20}], PREFS)
+        self.assertEqual(SCENE.frame_current, 120)
+        # Fn right: only V2 / A2 / C (following nothing) lose their start
+        addon._apply([{"type": "trim", "frames": 3, "shrink": True}], PREFS)
+        self.assertEqual(ed.spans(), [("A1", 50, 120), ("A2", 123, 200), ("C", 123, 140), ("V1", 50, 120), ("V2", 123, 200)])
+        self.assertEqual(SCENE.frame_current, 123, "the playhead rides the moved handles")
+        # On V1 / A1's end, Fn left: only they lose frames
+        SCENE.frame_current = 120
+        addon._apply([{"type": "trim", "frames": -4, "shrink": True}], PREFS)
+        self.assertEqual([x for x in ed.spans() if x[0] in ("V1", "A1", "V2", "A2")], [("A1", 50, 116), ("A2", 123, 200), ("V1", 50, 116), ("V2", 123, 200)])
+        self.assertEqual(SCENE.frame_current, 116)
+        # Fn right on that lone end would grow it: nothing moves
+        addon._apply([{"type": "trim", "frames": 2, "shrink": True}], PREFS)
+        self.assertEqual(SCENE.frame_current, 116)
+        self.assertEqual([x for x in ed.spans() if x[0] == "V1"], [("V1", 50, 116)])
+
     def test_trim_skips_locked_and_needs_a_handle(self):
         ed = self._trim_editor()
         ed.channels[3].lock = True
