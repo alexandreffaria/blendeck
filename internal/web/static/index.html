@@ -563,7 +563,9 @@ function renderControls() {
   // Keep the field being typed in when a newly touched control adds a row
   const act = document.activeElement;
   const focusKey = act && act.dataset && act.dataset.cname !== undefined ? act.dataset.cname : null;
-  const sel = focusKey ? [act.selectionStart, act.selectionEnd] : null;
+  // Its raw text too: the draft holds the trimmed name, and "Knob " must not
+  // lose its space halfway through typing "Knob 1"
+  const sel = focusKey ? [act.selectionStart, act.selectionEnd, act.value] : null;
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Touch a control on the device to name it.</td></tr>'; return; }
   tbody.innerHTML = rows.map((c) => {
     const k = ctlKey(c), name = ctlName(c);
@@ -579,7 +581,7 @@ function renderControls() {
   }).join('');
   if (focusKey) {
     const el = tbody.querySelector(`input[data-cname="${focusKey}"]`);
-    if (el) { el.focus(); el.setSelectionRange(sel[0], sel[1]); }
+    if (el) { el.value = sel[2]; el.focus(); el.setSelectionRange(sel[0], sel[1]); }
   }
 }
 // The Controls table lists what each control is used by, so it follows the
