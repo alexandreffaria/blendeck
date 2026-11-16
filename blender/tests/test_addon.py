@@ -1962,12 +1962,14 @@ class AddonTest(unittest.TestCase):
         scene = self._shuttle_scene()
         addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
         advance(1.0)
-        addon._apply([{"type": "scrub", "frames": 300}], PREFS)  # from 76, where it got to
-        self.assertEqual(scene.frame_current, 376)
+        # From 100, the frame on screen: the 24 frames the clock ran on
+        # since the last tick were never shown
+        addon._apply([{"type": "scrub", "frames": 300}], PREFS)
+        self.assertEqual(scene.frame_current, 400)
         self.assertEqual(addon.shuttle.speed, 0)
         advance(1.0)
         addon._apply([], PREFS)
-        self.assertEqual(scene.frame_current, 376, "the playhead stays where the knob left it")
+        self.assertEqual(scene.frame_current, 400, "the playhead stays where the knob left it")
         # The next play is Blender's own, at normal speed
         addon._apply([{"type": "play_pause"}], PREFS)
         self.assertEqual([c[0] for c in PLAYER.calls], ["play"])
@@ -1988,14 +1990,6 @@ class AddonTest(unittest.TestCase):
         self.assertEqual({f for _, f, _ in ed.log}, {50}, "cut where the picture was")
         self.assertEqual(SCENE.frame_current, 44, "then playback carries on by the clock")
         self.assertEqual(addon.shuttle.speed, -100)
-
-    def test_scrub_while_shuttling_starts_from_the_frame_shown(self):
-        advance = self._clock()
-        scene = self._shuttle_scene()
-        addon._apply([{"type": "shuttle", "clicks": -1}], PREFS)
-        advance(0.5)  # 12 frames nobody has seen
-        addon._apply([{"type": "scrub", "frames": 10}], PREFS)
-        self.assertEqual(scene.frame_current, 110, "10 on from the frame shown, 100")
 
     def test_selection_follows_while_shuttling(self):
         advance = self._clock()
