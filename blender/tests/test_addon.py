@@ -1116,7 +1116,7 @@ class AddonTest(unittest.TestCase):
     def test_cut_flood_capped(self):
         ed = self._editor()
         addon._apply([{"type": "cut"}, {"type": "scrub", "frames": 1}] * 30, PREFS)
-        self.assertEqual(len(UNDO), addon.protocol.MAX_CUTS_PER_TICK)
+        self.assertEqual(len(UNDO), 30, "every cut made while Blender was busy counts")
         self.assertEqual(SCENE.frame_current, 80)
         self.assertTrue(ed.log)
 
@@ -1212,7 +1212,11 @@ class AddonTest(unittest.TestCase):
         self.assertEqual(len(ED_UNDO.calls), 3, "three presses, three undos")
         ED_UNDO.calls.clear()
         addon._apply([{"type": "undo"}] * 50, PREFS)
-        self.assertEqual(len(ED_UNDO.calls), addon.protocol.MAX_UNDOS_PER_TICK)
+        self.assertEqual(len(ED_UNDO.calls), 50, "every press counts")
+        ED_UNDO.calls.clear()
+        ED_UNDO.left = 200
+        addon._apply([{"type": "undo"}] * (addon.protocol.MAX_PRESSES_PER_TICK + 9), PREFS)
+        self.assertEqual(len(ED_UNDO.calls), addon.protocol.MAX_PRESSES_PER_TICK)
 
     def test_undo_over_the_link(self):
         self._undo_scene(left=10)
@@ -1437,8 +1441,8 @@ class AddonTest(unittest.TestCase):
         SCENE.sequence_editor = ed
         SCENE.frame_current = 0
         addon._apply([{"type": "ripple_delete"}] * 30, PREFS)
-        self.assertEqual(len(UNDO), addon.protocol.MAX_RIPPLES_PER_TICK)
-        self.assertEqual(len(ed.strips), 40 - addon.protocol.MAX_RIPPLES_PER_TICK)
+        self.assertEqual(len(UNDO), 30, "every ripple delete made while Blender was busy counts")
+        self.assertEqual(len(ed.strips), 10)
 
     def _play_window(self, editor=True, window_scene=None, sequencer_scene=None):
         """One window: a properties area, and a video editor if editor. Its

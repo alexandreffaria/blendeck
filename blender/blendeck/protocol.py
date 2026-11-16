@@ -13,18 +13,12 @@ MAX_ZOOM_PER_TICK = 40
 # Pan per tick at most, in percent of the view's width either way: four
 # views. A fast spin at 5% a click sends far less; more is a flood.
 MAX_PAN_PER_TICK = 400
-# Cuts applied per tick at most; a button can't be pressed faster than a few
-# times a tick, so more than this is a flood, not someone editing.
-MAX_CUTS_PER_TICK = 8
-# Undos applied per tick at most. Each press is one undo, like Ctrl+Z, but
-# presses that piled up while Blender was busy shouldn't undo a whole
-# session at once, and one undo of a big file can take a good fraction of a
-# second. Undos past this in one read are dropped.
-MAX_UNDOS_PER_TICK = 4
-# Ripple deletes applied per tick at most. Unlike cuts, two in a row both
-# do something (the second deletes what slid under the playhead), so they
-# are never merged.
-MAX_RIPPLES_PER_TICK = 8
+# Cut, undo and ripple delete presses applied per tick at most, all three
+# together. One read holds every press made while Blender was busy, and each
+# of them counts, in the order it was made (decision 202611163di7): nobody
+# presses this many by hand during one freeze, so more is a flood. Presses
+# past it are dropped and reported (see presses_dropped).
+MAX_PRESSES_PER_TICK = 64
 # Play / pause presses applied per tick at most. Each press toggles, so two
 # in a row with nothing between cancel out and are dropped together.
 MAX_TOGGLES_PER_TICK = 8
@@ -155,11 +149,13 @@ def edit_steps(messages):
     messages, in order: ("scrub", frames), ("cut", None), ("undo", None),
     ("ripple_delete", None) and ("play_pause", None). Order matters, since
     a cut or delete lands where the playhead is at that moment and an undo
-    takes back what came before it. Scrubs in a row are added up, cuts in a row with no scrub between
-    become one (a second cut at the same frame does nothing), and cuts past
-    MAX_CUTS_PER_TICK are dropped; scrubs after them still count. Every undo
-    is kept, one per press, never merged, up to MAX_UNDOS_PER_TICK, and so is
-    every ripple delete, up to MAX_RIPPLES_PER_TICK. Play / pause presses in
+    takes back what came before it. Scrubs in a row are added up, and cuts
+    in a row with no scrub between become one (a second cut at the same
+    frame does nothing). Every undo is kept, one per press, never merged,
+    and so is every ripple delete (two in a row both do something: the
+    second deletes what slid under the playhead). Cuts, undos and ripple
+    deletes past MAX_PRESSES_PER_TICK, all three together, are dropped (see
+    presses_dropped); scrubs after them still count. Play / pause presses in
     a row with nothing between are a toggle each, so a pair cancels out: an
     even run leaves nothing, an odd one a single toggle. At most
     MAX_TOGGLES_PER_TICK presses count. Forward and backwards presses are
@@ -174,10 +170,22 @@ def edit_steps(messages):
     most MAX_MOVES_PER_TICK commands count. Turns of the trim knob are
     ("trim", frames), added up the same way, at most MAX_TRIMS_PER_TICK
     commands. Malformed commands are ignored."""
+    return _edit_steps(messages)[0]
+
+
+def presses_dropped(messages):
+    """How many cut, undo and ripple delete presses in messages edit_steps
+    leaves out because more than MAX_PRESSES_PER_TICK came in one read. A
+    cut merged into the cut before it isn't one: it would have done
+    nothing."""
+    return _edit_steps(messages)[1]
+
+
+def _edit_steps(messages):
+    """(steps, presses dropped): see edit_steps and presses_dropped."""
     steps = []
-    cuts = 0
-    undos = 0
-    ripples = 0
+    presses = 0
+    dropped = 0
     toggles = 0
     shuttles = 0
     jumps = 0
@@ -193,21 +201,14 @@ def edit_steps(messages):
                 steps[-1] = ("scrub", steps[-1][1] + frames)
             else:
                 steps.append(("scrub", frames))
-        elif kind == "cut":
-            if cuts >= MAX_CUTS_PER_TICK or (steps and steps[-1][0] == "cut"):
+        elif kind in ("cut", "undo", "ripple_delete"):
+            if kind == "cut" and steps and steps[-1][0] == "cut":
                 continue
-            cuts += 1
-            steps.append(("cut", None))
-        elif kind == "undo":
-            if undos >= MAX_UNDOS_PER_TICK:
+            if presses >= MAX_PRESSES_PER_TICK:
+                dropped += 1
                 continue
-            undos += 1
-            steps.append(("undo", None))
-        elif kind == "ripple_delete":
-            if ripples >= MAX_RIPPLES_PER_TICK:
-                continue
-            ripples += 1
-            steps.append(("ripple_delete", None))
+            presses += 1
+            steps.append((kind, None))
         elif kind == "play_pause":
             if toggles >= MAX_TOGGLES_PER_TICK:
                 continue
@@ -263,7 +264,7 @@ def edit_steps(messages):
                     steps.pop()  # right then left: back where it was
             else:
                 steps.append(("trim", frames))
-    return steps
+    return steps, dropped
 
 
 def edit_points(spans):

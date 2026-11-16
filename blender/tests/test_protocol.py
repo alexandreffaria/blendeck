@@ -200,11 +200,36 @@ class CutTest(unittest.TestCase):
 
     def test_cuts_capped_scrubs_kept(self):
         msgs = []
-        for _ in range(protocol.MAX_CUTS_PER_TICK + 5):
+        for _ in range(protocol.MAX_PRESSES_PER_TICK + 5):
             msgs += [{"type": "cut"}, {"type": "scrub", "frames": 1}]
         steps = protocol.edit_steps(msgs)
-        self.assertEqual(steps.count(("cut", None)), protocol.MAX_CUTS_PER_TICK)
-        self.assertEqual(sum(n for k, n in steps if k == "scrub"), protocol.MAX_CUTS_PER_TICK + 5)
+        self.assertEqual(steps.count(("cut", None)), protocol.MAX_PRESSES_PER_TICK)
+        self.assertEqual(sum(n for k, n in steps if k == "scrub"), protocol.MAX_PRESSES_PER_TICK + 5)
+        self.assertEqual(protocol.presses_dropped(msgs), 5)
+
+    def test_every_press_of_a_freeze_counts_in_order(self):
+        # Decision 202611163di7: what piled up while Blender was busy is
+        # applied press by press, far past the old 4 undos and 8 cuts
+        msgs = []
+        for _ in range(10):
+            msgs += [{"type": "scrub", "frames": 2}, {"type": "cut"}, {"type": "ripple_delete"}, {"type": "undo"}, {"type": "undo"}]
+        self.assertEqual(
+            protocol.edit_steps(msgs),
+            [("scrub", 2), ("cut", None), ("ripple_delete", None), ("undo", None), ("undo", None)] * 10,
+        )
+        self.assertEqual(protocol.presses_dropped(msgs), 0)
+
+    def test_press_cap_is_shared_and_keeps_the_first(self):
+        cap = protocol.MAX_PRESSES_PER_TICK
+        msgs = [{"type": "undo"}] * (cap - 1) + [{"type": "ripple_delete"}, {"type": "cut"}, {"type": "undo"}, {"type": "scrub", "frames": 3}]
+        steps = protocol.edit_steps(msgs)
+        self.assertEqual(steps, [("undo", None)] * (cap - 1) + [("ripple_delete", None), ("scrub", 3)])
+        self.assertEqual(protocol.presses_dropped(msgs), 2)
+
+    def test_merged_cut_is_not_a_dropped_press(self):
+        msgs = [{"type": "cut"}] * (protocol.MAX_PRESSES_PER_TICK * 2)
+        self.assertEqual(protocol.edit_steps(msgs), [("cut", None)])
+        self.assertEqual(protocol.presses_dropped(msgs), 0)
 
     def test_malformed_ignored(self):
         msgs = [
@@ -250,9 +275,10 @@ class UndoTest(unittest.TestCase):
         self.assertEqual(protocol.edit_steps(msgs), [("cut", None), ("undo", None), ("cut", None)])
 
     def test_undos_capped(self):
-        steps = protocol.edit_steps([{"type": "undo"}, {"type": "scrub", "frames": 1}] * 20)
-        self.assertEqual(steps.count(("undo", None)), protocol.MAX_UNDOS_PER_TICK)
-        self.assertEqual(sum(n for k, n in steps if k == "scrub"), 20)
+        n = protocol.MAX_PRESSES_PER_TICK + 20
+        steps = protocol.edit_steps([{"type": "undo"}, {"type": "scrub", "frames": 1}] * n)
+        self.assertEqual(steps.count(("undo", None)), protocol.MAX_PRESSES_PER_TICK)
+        self.assertEqual(sum(n for k, n in steps if k == "scrub"), n)
 
     def test_malformed_ignored(self):
         self.assertEqual(protocol.edit_steps([{"type": "Undo"}, {"type": "undo "}, {"undo": True}]), [])
@@ -279,10 +305,10 @@ class RippleDeleteTest(unittest.TestCase):
         )
 
     def test_steps_capped_scrubs_kept(self):
-        msgs = [{"type": "ripple_delete"}, {"type": "scrub", "frames": 1}] * (protocol.MAX_RIPPLES_PER_TICK + 5)
+        msgs = [{"type": "ripple_delete"}, {"type": "scrub", "frames": 1}] * (protocol.MAX_PRESSES_PER_TICK + 5)
         steps = protocol.edit_steps(msgs)
-        self.assertEqual(steps.count(("ripple_delete", None)), protocol.MAX_RIPPLES_PER_TICK)
-        self.assertEqual(sum(n for k, n in steps if k == "scrub"), protocol.MAX_RIPPLES_PER_TICK + 5)
+        self.assertEqual(steps.count(("ripple_delete", None)), protocol.MAX_PRESSES_PER_TICK)
+        self.assertEqual(sum(n for k, n in steps if k == "scrub"), protocol.MAX_PRESSES_PER_TICK + 5)
         self.assertEqual(protocol.edit_steps([{"type": "ripple_delete", "x": 1}, {"type": "ripple"}]), [("ripple_delete", None)])
 
     def test_cut_twice_then_delete_the_middle(self):

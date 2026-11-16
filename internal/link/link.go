@@ -35,6 +35,15 @@ const (
 	// MaxPending caps connections still waiting to say hello.
 	MaxPending = 16
 	maxLine    = 64 * 1024
+	// MaxQueued caps the commands waiting for one add-on that isn't reading
+	// (Blender is busy). Knob turns in a row are merged into one command, so
+	// the queue only grows when different controls alternate. Past this,
+	// knob turns are dropped and counted.
+	MaxQueued = 256
+	// PressReserve is the room kept for button presses once MaxQueued is
+	// reached: a cut or an undo is never dropped to make way for a knob
+	// turn (decision 202611163di7).
+	PressReserve = 64
 )
 
 // Timeouts; variables so tests can shorten them.
@@ -42,6 +51,9 @@ var (
 	HelloTimeout = 2 * time.Second
 	// IdleTimeout drops an add-on that has sent nothing (not even a ping) for this long.
 	IdleTimeout = 15 * time.Second
+	// WriteWait is how long one write waits for an add-on that isn't
+	// reading before checking whether it is still connected.
+	WriteWait = 2 * time.Second
 )
 
 // State is what the bridge knows about the connected Blender.
@@ -59,9 +71,52 @@ type State struct {
 }
 
 type client struct {
-	conn net.Conn
-	out  chan []byte
-	done chan struct{}
+	conn  net.Conn
+	queue []engine.Command // waiting to be written; guarded by Link.mu
+	wake  chan struct{}    // signals writeLoop that queue has something
+	done  chan struct{}
+}
+
+// turn says whether cmd is a knob turn: an amount that adds up with the
+// next turn of the same knob. Everything else is a button press, which
+// counts once each and is never merged.
+func turn(cmd engine.Command) bool {
+	switch cmd.Type {
+	case "scrub", "zoom", "pan", "jump", "move", "trim":
+		return true
+	}
+	return false
+}
+
+// push queues cmd for c and reports whether it was taken. A knob turn right
+// after another turn of the same knob is added to it, which keeps the order
+// of everything else: only turns with nothing between them become one.
+// Turns that cancel out leave nothing, as the add-on does within one read.
+func (c *client) push(cmd engine.Command) bool {
+	if n := len(c.queue); n > 0 && turn(cmd) {
+		last := &c.queue[n-1]
+		if last.Type == cmd.Type && last.Sound == cmd.Sound && last.Before == cmd.Before {
+			last.Frames += cmd.Frames
+			last.Clicks += cmd.Clicks
+			if last.Frames == 0 && last.Clicks == 0 {
+				c.queue = c.queue[:n-1]
+			}
+			return true
+		}
+	}
+	limit := MaxQueued
+	if !turn(cmd) {
+		limit += PressReserve
+	}
+	if len(c.queue) >= limit {
+		return false
+	}
+	c.queue = append(c.queue, cmd)
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+	return true
 }
 
 // Link accepts add-on connections and fans commands out to them.
@@ -91,26 +146,40 @@ func (l *Link) State() State {
 }
 
 // Send queues cmd for every connected add-on. It reports whether at least
-// one add-on took it; a command for an add-on that is 256 commands behind is
-// dropped and counted.
+// one add-on took it. An add-on that isn't reading keeps its commands in
+// order, knob turns in a row merged into one; a command is dropped and
+// counted only once MaxQueued are waiting (MaxQueued + PressReserve for a
+// button press).
 func (l *Link) Send(cmd engine.Command) bool {
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return false
-	}
-	data = append(data, '\n')
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	queued := false
 	for c := range l.clients {
-		select {
-		case c.out <- data:
+		if c.push(cmd) {
 			queued = true
-		default:
+		} else {
 			l.dropped++
 		}
 	}
 	return queued
+}
+
+// take empties c's queue and returns it as lines ready to write.
+func (l *Link) take(c *client) []byte {
+	l.mu.Lock()
+	cmds := c.queue
+	c.queue = nil
+	l.mu.Unlock()
+	var data []byte
+	for _, cmd := range cmds {
+		line, err := json.Marshal(cmd)
+		if err != nil {
+			continue
+		}
+		data = append(data, line...)
+		data = append(data, '\n')
+	}
+	return data
 }
 
 // Serve accepts connections on ln until ctx ends.
@@ -178,7 +247,7 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	c := &client{conn: conn, out: make(chan []byte, 256), done: make(chan struct{})}
+	c := &client{conn: conn, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	l.clients[c] = true
 	l.state.Blender = truncate(hello.Blender)
 	l.state.Addon = truncate(hello.Addon)
@@ -226,6 +295,11 @@ func (l *Link) remove(c *client) {
 	l.log.Info("add-on disconnected", "remote", c.conn.RemoteAddr())
 }
 
+// writeLoop writes c's queue whenever it has something. An add-on that has
+// stopped reading (Blender is busy) is waited for, not dropped: what was
+// already taken from the queue is written once it reads again, and commands
+// arriving meanwhile wait, merged, in the queue. The read side decides when
+// an add-on is gone (IdleTimeout), which closes done.
 func (l *Link) writeLoop(ctx context.Context, c *client) {
 	defer l.remove(c)
 	for {
@@ -234,10 +308,26 @@ func (l *Link) writeLoop(ctx context.Context, c *client) {
 			return
 		case <-c.done:
 			return
-		case data := <-c.out:
-			_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if _, err := c.conn.Write(data); err != nil {
+		case <-c.wake:
+		}
+		data := l.take(c)
+		for len(data) > 0 {
+			_ = c.conn.SetWriteDeadline(time.Now().Add(WriteWait))
+			n, err := c.conn.Write(data)
+			data = data[n:]
+			if err == nil {
+				continue
+			}
+			var ne net.Error
+			if !errors.As(err, &ne) || !ne.Timeout() {
 				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.done:
+				return
+			default:
 			}
 		}
 	}

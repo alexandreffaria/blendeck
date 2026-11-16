@@ -3,6 +3,16 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## Presses made while Blender is busy all count, in order (202611163di7)
+
+When Blender freezes (a save, a big undo, a proxy build) and cut, ripple
+delete and undo presses pile up, every one is applied once it wakes, in the
+order it was made, up to 64 per freeze. It was the first 4 undos, 8 cuts and
+8 ripple deletes, the rest dropped without a word. With playback paused the
+result is the same as with no freeze; the price is that presses repeated
+because nothing seemed to happen all count. Knob turns, play and shuttle
+presses are as before.
+
 ## The jump knob stops at video edits; Fn stops at every cut (20261115s2rt)
 
 Turned on its own, the jump knob skips sound strips and stops only at the

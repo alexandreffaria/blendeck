@@ -177,3 +177,189 @@ func TestLongLineDropsClient(t *testing.T) {
 	c.Write([]byte(strings.Repeat("a", maxLine+10)))
 	eventually(t, "dropped", func() bool { return !l.State().Connected })
 }
+
+func cmds(c *client) []engine.Command { return append([]engine.Command(nil), c.queue...) }
+
+func newClient() *client {
+	return &client{wake: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+// Knob turns in a row become one command; a press between them keeps its
+// place, so a cut still lands where the turns before it left the playhead.
+func TestPushMergesOnlyTurnsInARow(t *testing.T) {
+	c := newClient()
+	for _, cmd := range []engine.Command{
+		{Type: "scrub", Frames: 10},
+		{Type: "scrub", Frames: 5},
+		{Type: "cut"},
+		{Type: "cut"},
+		{Type: "scrub", Frames: -3},
+		{Type: "jump", Clicks: 1},
+		{Type: "jump", Clicks: 1, Sound: true},
+		{Type: "move", Frames: 2},
+		{Type: "move", Frames: 2, Before: true},
+		{Type: "undo"},
+		{Type: "undo"},
+		{Type: "zoom", Clicks: 2},
+		{Type: "zoom", Clicks: 1},
+	} {
+		if !c.push(cmd) {
+			t.Fatalf("push(%+v) refused", cmd)
+		}
+	}
+	want := []engine.Command{
+		{Type: "scrub", Frames: 15},
+		{Type: "cut"},
+		{Type: "cut"},
+		{Type: "scrub", Frames: -3},
+		{Type: "jump", Clicks: 1},
+		{Type: "jump", Clicks: 1, Sound: true},
+		{Type: "move", Frames: 2},
+		{Type: "move", Frames: 2, Before: true},
+		{Type: "undo"},
+		{Type: "undo"},
+		{Type: "zoom", Clicks: 3},
+	}
+	got := cmds(c)
+	if len(got) != len(want) {
+		t.Fatalf("queue = %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("queue[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// Turns that cancel out leave nothing behind, not a command for 0 frames.
+func TestPushDropsTurnsThatCancel(t *testing.T) {
+	c := newClient()
+	c.push(engine.Command{Type: "cut"})
+	c.push(engine.Command{Type: "scrub", Frames: 4})
+	c.push(engine.Command{Type: "scrub", Frames: -4})
+	if got := cmds(c); len(got) != 1 || got[0].Type != "cut" {
+		t.Fatalf("queue = %+v", got)
+	}
+}
+
+// A full queue refuses knob turns but still takes button presses, up to
+// the reserve; turns of the knob already last in the queue still add up.
+func TestPushKeepsRoomForPresses(t *testing.T) {
+	c := newClient()
+	for i := 0; i < MaxQueued/2; i++ {
+		if !c.push(engine.Command{Type: "scrub", Frames: 1}) || !c.push(engine.Command{Type: "pan", Clicks: 1}) {
+			t.Fatalf("refused before the cap, at %d", len(c.queue))
+		}
+	}
+	if len(c.queue) != MaxQueued {
+		t.Fatalf("queue holds %d, want %d", len(c.queue), MaxQueued)
+	}
+	if c.push(engine.Command{Type: "scrub", Frames: 1}) {
+		t.Fatal("a knob turn was taken past the cap")
+	}
+	if !c.push(engine.Command{Type: "pan", Clicks: 1}) || c.queue[MaxQueued-1].Clicks != 2 {
+		t.Fatal("a turn of the last knob in the queue didn't add up")
+	}
+	for i := 0; i < PressReserve; i++ {
+		if !c.push(engine.Command{Type: "cut"}) {
+			t.Fatalf("press %d refused inside the reserve", i)
+		}
+	}
+	if c.push(engine.Command{Type: "undo"}) {
+		t.Fatal("a press was taken past the reserve")
+	}
+	if len(c.queue) != MaxQueued+PressReserve {
+		t.Fatalf("queue holds %d", len(c.queue))
+	}
+}
+
+// An add-on that stops reading (Blender is busy) is waited for: nothing is
+// lost, the order holds, and the turns made meanwhile arrive as one.
+func TestBusyAddonLosesNothing(t *testing.T) {
+	old := WriteWait
+	WriteWait = 20 * time.Millisecond
+	t.Cleanup(func() { WriteWait = old })
+
+	l := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ours, theirs := net.Pipe() // unbuffered: a write waits for a read
+	t.Cleanup(func() { ours.Close(); theirs.Close() })
+	c := newClient()
+	c.conn = ours
+	l.mu.Lock()
+	l.clients[c] = true
+	l.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go l.writeLoop(ctx, c)
+
+	l.Send(engine.Command{Type: "scrub", Frames: 1})
+	time.Sleep(5 * WriteWait) // the first write times out, more than once
+	for i := 0; i < 100; i++ {
+		l.Send(engine.Command{Type: "scrub", Frames: 1})
+	}
+	l.Send(engine.Command{Type: "cut"})
+	for i := 0; i < 100; i++ {
+		l.Send(engine.Command{Type: "scrub", Frames: -1})
+	}
+	l.Send(engine.Command{Type: "ripple_delete"})
+	time.Sleep(3 * WriteWait)
+	if s := l.State(); !s.Connected || s.Dropped != 0 {
+		t.Fatalf("state while busy = %+v", s)
+	}
+
+	r := bufio.NewReader(theirs)
+	var got []engine.Command
+	for len(got) == 0 || got[len(got)-1].Type != "ripple_delete" {
+		theirs.SetReadDeadline(time.Now().Add(3 * time.Second))
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("read after %+v: %v", got, err)
+		}
+		var cmd engine.Command
+		if err := json.Unmarshal(line, &cmd); err != nil {
+			t.Fatalf("line %q: %v", line, err)
+		}
+		got = append(got, cmd)
+	}
+	want := []engine.Command{
+		{Type: "scrub", Frames: 1},
+		{Type: "scrub", Frames: 100},
+		{Type: "cut"},
+		{Type: "scrub", Frames: -100},
+		{Type: "ripple_delete"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("command %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// Once the add-on is gone, the writer stops waiting for it.
+func TestWriterStopsWhenAddonIsRemoved(t *testing.T) {
+	old := WriteWait
+	WriteWait = 20 * time.Millisecond
+	t.Cleanup(func() { WriteWait = old })
+
+	l := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ours, theirs := net.Pipe()
+	t.Cleanup(func() { ours.Close(); theirs.Close() })
+	c := newClient()
+	c.conn = ours
+	l.mu.Lock()
+	l.clients[c] = true
+	l.mu.Unlock()
+	stopped := make(chan struct{})
+	go func() { l.writeLoop(context.Background(), c); close(stopped) }()
+	l.Send(engine.Command{Type: "cut"})
+	time.Sleep(2 * WriteWait)
+	l.remove(c) // what the read side does on IdleTimeout
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writeLoop kept waiting for a removed add-on")
+	}
+}
