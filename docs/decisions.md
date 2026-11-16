@@ -3,6 +3,13 @@
 Product decisions the owner made, newest first. Each comes from a decision
 card in the owner's president queue (the card id is in brackets).
 
+## The scrub knob stops playback (asked for directly, 2026-11-15)
+
+Turning the scrub knob while it plays, at any speed, pauses playback, and
+the playhead stays on the frame the knob leaves it on. It used to play on
+from there. The owner asked for it in chat, so there is no card. The jump
+knob, cut and ripple delete still leave playback running.
+
 ## Presses made while Blender is busy all count, in order (202611163di7)
 
 When Blender freezes (a save, a big undo, a proxy build) and cut, ripple
