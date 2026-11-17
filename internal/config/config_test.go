@@ -627,3 +627,33 @@ func TestControlNamesRoundTripAndCopy(t *testing.T) {
 		}
 	}
 }
+
+// The Switch app button (decision 20261117h3jl): a plain button, not
+// learned until the user picks one.
+func TestSwitchAppBinding(t *testing.T) {
+	c := Default()
+	b := byID(&c, "switch-app")
+	if b.Action != ActionSwitchApp || b.Name != "Switch app" || b.Control.Learned() || b.Control.Type != "note" || b.Modifier != "" || b.Step != 0 || b.Encoder != "" {
+		t.Fatalf("default switch binding = %+v", b)
+	}
+	for _, ctl := range []Control{{"note", 1, 52}, {"cc", 1, 20}} {
+		b.Control = ctl
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%+v: %v", ctl, err)
+		}
+	}
+	b.Control = Control{"pitch_bend", 1, 0}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "switch app needs a button") {
+		t.Fatalf("err = %v", err)
+	}
+	b.Control = Control{"note", 1, 52}
+	b.Step = 1
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+		t.Fatalf("step err = %v", err)
+	}
+	b.Step = 0
+	b.Encoder = EncoderTwos
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "no step or encoder") {
+		t.Fatalf("encoder err = %v", err)
+	}
+}

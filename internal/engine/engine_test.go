@@ -1577,3 +1577,55 @@ func TestTrimNotLearnedIgnored(t *testing.T) {
 		}
 	}
 }
+
+// The Switch app button: once per press, never on the release, and the
+// same with Fn held.
+func TestSwitchAppOncePerPress(t *testing.T) {
+	e := New(config.Profile{
+		Name:      "p",
+		Modifiers: []config.Modifier{{Name: "Fn", Control: config.Control{Type: "note", Channel: 1, Number: 110}}},
+		Bindings: []config.Binding{
+			{ID: "switch-app", Name: "Switch app", Control: config.Control{Type: "note", Channel: 1, Number: 52}, Action: config.ActionSwitchApp},
+		},
+	})
+	down := midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 52, Value: 64}
+	up := midi.Message{Kind: midi.NoteOff, Channel: 1, Number: 52, Value: 64}
+	want := Command{Type: SwitchApp}
+	if hit, _ := e.Handle(down); hit.Binding != "switch-app" || hit.Command == nil || *hit.Command != want {
+		t.Fatalf("press: %+v", hit)
+	}
+	if hit, _ := e.Handle(up); hit.Binding != "switch-app" || hit.Command != nil {
+		t.Fatalf("release: %+v", hit)
+	}
+	e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 110, Value: 127})
+	if hit, _ := e.Handle(down); hit.Command == nil || *hit.Command != want {
+		t.Fatalf("Fn held: %+v", hit)
+	}
+}
+
+func TestSwitchAppNotLearnedIgnored(t *testing.T) {
+	e := New(config.Default().Profiles[0])
+	if hit, _ := e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 52, Value: 64}); hit.Binding != "" || hit.Command != nil {
+		t.Fatalf("unlearned switch matched: %+v", hit)
+	}
+}
+
+// Learned like any other button: the next press is captured, not acted on.
+func TestSwitchAppLearned(t *testing.T) {
+	p := config.Default().Profiles[0]
+	e := New(p)
+	e.Learn(LearnBinding, nil)
+	hit, learned := e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 52, Value: 64})
+	if learned == nil || learned.Control != (config.Control{Type: "note", Channel: 1, Number: 52}) || hit.Command != nil {
+		t.Fatalf("learn: %+v %+v", hit, learned)
+	}
+	for i := range p.Bindings {
+		if p.Bindings[i].ID == "switch-app" {
+			p.Bindings[i].Control = learned.Control
+		}
+	}
+	e.SetProfile(p)
+	if hit, _ := e.Handle(midi.Message{Kind: midi.NoteOn, Channel: 1, Number: 52, Value: 64}); hit.Binding != "switch-app" || hit.Command == nil || hit.Command.Type != SwitchApp {
+		t.Fatalf("after learning: %+v", hit)
+	}
+}

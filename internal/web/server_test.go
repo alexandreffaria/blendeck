@@ -535,6 +535,7 @@ func TestStateNamesConnectedApps(t *testing.T) {
 				Connected bool       `json:"connected"`
 				Frame     int        `json:"frame"`
 				Apps      []link.App `json:"apps"`
+				Target    string     `json:"target"`
 			} `json:"blender"`
 		} `json:"live"`
 	}
@@ -556,12 +557,21 @@ func TestStateNamesConnectedApps(t *testing.T) {
 	if !b.Connected || b.Apps[0].Name != "Blender" || b.Apps[1].Name != "nomnom" {
 		t.Fatalf("live.blender = %+v", b)
 	}
+	// One of them is the target, and the state says which
+	if b.Target != "blender" && b.Target != "nomnom" {
+		t.Fatalf("target %q", b.Target)
+	}
+	for _, a := range b.Apps {
+		if a.Target != (a.App == b.Target) {
+			t.Fatalf("apps and target disagree: %+v", b)
+		}
+	}
 }
 
 func TestIndexNamesApps(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
-	for _, want := range []string{`id="apps"`, "function renderApps", "— connected"} {
+	for _, want := range []string{`id="apps"`, "function renderApps", "— connected", "a.target ?", ">Driving<", "'app.switch': 'Switch app'", "h.command.type === 'switch_app'"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("page is missing %q", want)
 		}

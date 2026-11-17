@@ -3085,6 +3085,25 @@ class HintsTest(unittest.TestCase):
         addon._draw_hints()
         self.assertEqual(self.boxes, [])
 
+    def test_title_names_the_app_driven(self):
+        # decision 20261117h3jl: with nomnom driven, Blender says so
+        self.apply(dict(self.MSG, show=True, target="nomnom"))
+        addon._draw_hints()
+        self.assertEqual(self.drawn[0], "Video editing · Driving: nomnom")
+        self.assertEqual(len(self.drawn), 7, "the list still follows")
+
+    def test_switch_shows_the_title_alone(self):
+        # A switch shows the hints even in a profile with nothing learned:
+        # the title alone, in a box that holds it
+        self.apply(dict(self.MSG, show=True, hints=[], target="nomnom"))
+        addon._draw_hints()
+        self.assertEqual(self.drawn, ["Video editing · Driving: nomnom"])
+        (box,) = self.boxes
+        xs, ys = [x for x, _ in box], [y for _, y in box]
+        for x, y in self.at:
+            self.assertTrue(min(xs) < x < max(xs) and min(ys) < y < max(ys), (x, y, box))
+        self.assertLess(max(xs) - min(xs), 1200)
+
     def test_gone_with_the_bridge(self):
         self.apply(dict(self.MSG, show=True))
         addon._close("Bridge went away")

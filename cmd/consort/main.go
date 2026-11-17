@@ -230,10 +230,18 @@ func tooltip(s app.Snapshot) string {
 		blender = "connected"
 	}
 	tip := "Consort\nController: " + ctl + "\nBlender: " + blender
+	driving := ""
 	for _, a := range s.Blender.Apps {
 		if a.App != link.Blender {
 			tip += "\n" + a.Name + ": connected"
 		}
+		if a.Target {
+			driving = a.Name
+		}
+	}
+	if driving != "" {
+		// The app the controls go to (decision 20261117h3jl)
+		tip += "\nDriving: " + driving
 	}
 	return tip
 }

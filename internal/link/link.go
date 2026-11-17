@@ -36,7 +36,15 @@
 // hello without one is Blender's, as add-ons before 0.20.0 sent it. What an
 // app says about itself (state, latency) is kept per app, so one app never
 // overwrites another's; State reports Blender's and lists every app.
-// Commands and hints go to every connected app (SendTo picks one app).
+//
+// Commands go to one app, the target (decision 20261117h3jl): the first
+// app to connect, until the Switch app button (Switch) moves it to the
+// next connected app. When the target's last window goes, the target falls
+// back to another connected app; with nothing connected there is none and
+// nothing is sent. The target is not saved: it lasts as long as the run.
+// Hints go to every connected app, and name the target:
+//
+//	{"type":"hints",...,"target":"nomnom"}
 //
 // A connection counts as an add-on only once its first line is a hello, sent
 // within HelloTimeout. That keeps stray connections (a web page's request to
@@ -125,16 +133,20 @@ type App struct {
 	App     string `json:"app"`
 	Name    string `json:"name"`
 	Clients int    `json:"clients"`
+	// Target says commands go to this app.
+	Target bool `json:"target"`
 }
 
 // State is what the bridge knows about the connected Blender, and which
 // apps are connected. Connected, Clients and everything below Dropped are
 // Blender's; Apps lists every connected app, Blender first, then by id;
+// Target is the id of the app commands go to, "" with none connected;
 // Dropped counts the commands dropped for any of them.
 type State struct {
 	Connected bool    `json:"connected"`
 	Clients   int     `json:"clients"`
 	Apps      []App   `json:"apps"`
+	Target    string  `json:"target"`
 	Dropped   int64   `json:"dropped"`
 	Blender   string  `json:"blender,omitempty"`
 	Addon     string  `json:"addon,omitempty"`
@@ -293,7 +305,10 @@ type Link struct {
 	clients map[*client]bool
 	// apps holds each connected app's data by its id; an app goes with its
 	// last window
-	apps    map[string]*appData
+	apps map[string]*appData
+	// target is the app commands go to: always a connected app's id, or
+	// "" when none is connected
+	target  string
 	pending int
 	dropped int64
 	// hints is the line that tells an add-on what each control does: sent
@@ -321,8 +336,59 @@ func (l *Link) State() State {
 		s = a.report(time.Now())
 	}
 	s.Apps = l.connectedApps()
+	s.Target = l.target
 	s.Dropped = l.dropped
 	return s
+}
+
+// Target is the app commands go to, by id and by name; both "" when no app
+// is connected.
+func (l *Link) Target() (id, name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.target, appName(l.target)
+}
+
+// Switch moves the target to the next connected app, in the order State
+// lists them, and back to the first after the last. It returns the new
+// target's id and name; with one app connected it stays, with none both
+// are "".
+func (l *Link) Switch() (id, name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	apps := l.connectedApps()
+	if len(apps) == 0 {
+		return "", ""
+	}
+	next := 0
+	for i, a := range apps {
+		if a.App == l.target {
+			next = (i + 1) % len(apps)
+		}
+	}
+	l.setTarget(apps[next].App)
+	return l.target, appName(l.target)
+}
+
+// setTarget makes app the target and tells the add-ons. The caller holds
+// l.mu.
+func (l *Link) setTarget(app string) {
+	if app == l.target {
+		return
+	}
+	l.target = app
+	l.log.Info("commands go to", "app", app)
+	if l.hints != nil { // once SetHints has said what the controls do
+		l.sendHints()
+	}
+}
+
+// appName is how the page, the tray and the hints name app: "" for none.
+func appName(app string) string {
+	if name := appNames[app]; name != "" {
+		return name
+	}
+	return app
 }
 
 // report is what a has said, as State returns it.
@@ -352,11 +418,7 @@ func (a *appData) report(now time.Time) State {
 func (l *Link) connectedApps() []App {
 	out := []App{}
 	for id, a := range l.apps {
-		name := appNames[id]
-		if name == "" {
-			name = id
-		}
-		out = append(out, App{App: id, Name: name, Clients: a.clients})
+		out = append(out, App{App: id, Name: appName(id), Clients: a.clients, Target: id == l.target})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if (out[i].App == Blender) != (out[j].App == Blender) {
@@ -413,21 +475,31 @@ func (l *Link) setLatency(app string, m incoming) {
 	a.recent = append(a.recent, latencyAt{at: now, worst: lat.TotalMax})
 }
 
-// Send queues cmd for every connected app; see SendTo.
-func (l *Link) Send(cmd engine.Command) bool { return l.SendTo("", cmd) }
+// Send queues cmd for the target app (see Switch); with no app connected
+// nothing is sent. See SendTo.
+func (l *Link) Send(cmd engine.Command) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sendTo(l.target, cmd)
+}
 
-// SendTo queues cmd for every connected window of app, or of every app when
-// app is "". It reports whether at least one window took it. A window that
+// SendTo queues cmd for every connected window of app; "" is no app. It
+// reports whether at least one window took it. A window that
 // isn't reading keeps its commands in order, knob turns in a row merged
 // into one; a command is dropped and counted only once MaxQueued are
 // waiting (MaxQueued + PressReserve for a button press).
 func (l *Link) SendTo(app string, cmd engine.Command) bool {
-	t := time.Now().UnixMilli()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.sendTo(app, cmd)
+}
+
+// sendTo is SendTo for a caller that holds l.mu.
+func (l *Link) sendTo(app string, cmd engine.Command) bool {
+	t := time.Now().UnixMilli()
 	taken := false
 	for c := range l.clients {
-		if app != "" && c.app != app {
+		if c.app != app {
 			continue
 		}
 		if c.push(cmd, t) {
@@ -473,7 +545,7 @@ func (l *Link) HintsShown() bool {
 // sendHints queues the hints line for every add-on if it changed. The
 // caller holds l.mu.
 func (l *Link) sendHints() {
-	msg := hintsMsg{Type: "hints", Profile: l.hintProfile, Show: l.hintShow, Hints: l.hintList}
+	msg := hintsMsg{Type: "hints", Profile: l.hintProfile, Show: l.hintShow, Hints: l.hintList, Target: appName(l.target)}
 	line, err := json.Marshal(msg)
 	if err != nil || len(line) >= maxLine {
 		l.log.Warn("control hints don't fit in one message; sending none", "bytes", len(line), "error", err)
@@ -499,6 +571,8 @@ type hintsMsg struct {
 	Profile string        `json:"profile"`
 	Show    bool          `json:"show"`
 	Hints   []config.Hint `json:"hints"`
+	// Target names the app commands go to, "" with none
+	Target string `json:"target"`
 }
 
 // take empties c's queue and returns it as lines ready to write.
@@ -642,7 +716,8 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// add registers c and returns its app's data. The caller holds l.mu.
+// add registers c and returns its app's data; the first app to connect is
+// the target. The caller holds l.mu.
 func (l *Link) add(c *client) *appData {
 	l.clients[c] = true
 	a := l.apps[c.app]
@@ -651,6 +726,9 @@ func (l *Link) add(c *client) *appData {
 		l.apps[c.app] = a
 	}
 	a.clients++
+	if l.target == "" {
+		l.setTarget(c.app)
+	}
 	return a
 }
 
@@ -666,6 +744,14 @@ func (l *Link) remove(c *client) {
 		a.clients--
 		if a.clients <= 0 {
 			delete(l.apps, c.app) // what it said goes with it
+			if l.target == c.app {
+				// Fall back to another connected app, if there is one
+				next := ""
+				if apps := l.connectedApps(); len(apps) > 0 {
+					next = apps[0].App
+				}
+				l.setTarget(next)
+			}
 		}
 	}
 	l.mu.Unlock()

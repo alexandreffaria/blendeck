@@ -49,22 +49,23 @@ class HintsTest(unittest.TestCase):
     def test_newest_wins_and_empty_clears(self):
         old = {"type": "hints", "profile": "A", "hints": [{"control": "K", "name": "Cut"}]}
         new = {"type": "hints", "profile": "B", "hints": []}
-        self.assertEqual(protocol.hints([old, new]), ("B", [], False))
+        self.assertEqual(protocol.hints([old, new]), ("B", [], False, ""))
 
     def test_same_name_held_is_kept(self):
         msg = {"type": "hints", "hints": [{"control": "K", "name": "Zoom", "held": [{"modifier": "Fn", "name": "Zoom"}]}]}
-        self.assertEqual(protocol.hints([msg]), ("", [("K", "Zoom · Fn: Zoom")], False))
+        self.assertEqual(protocol.hints([msg]), ("", [("K", "Zoom · Fn: Zoom")], False, ""))
 
     def test_malformed_is_left_out(self):
         for bad in (None, 3, "x", {"a": 1}, [None, 3, "x", [], {}, {"control": 5, "name": "x"}, {"control": "K"},
                                              {"control": "K", "name": 7, "held": "no"},
                                              {"control": "K", "held": [None, {"modifier": "Fn"}, {"name": "x"}, {"modifier": 1, "name": 2}]}]):
-            self.assertEqual(protocol.hints([{"type": "hints", "profile": ["x"], "hints": bad}]), ("", [], False), bad)
+            self.assertEqual(protocol.hints([{"type": "hints", "profile": ["x"], "hints": bad}]), ("", [], False, ""), bad)
 
     def test_caps(self):
         long = "x" * 500
         many = [{"control": long, "name": "a\nb\t c", "held": [{"modifier": "M%d" % i, "name": long} for i in range(9)]} for _ in range(500)]
-        profile, lines, _ = protocol.hints([{"type": "hints", "profile": long, "hints": many}])
+        profile, lines, _, target = protocol.hints([{"type": "hints", "profile": long, "hints": many, "target": long}])
+        self.assertEqual(len(target), protocol.MAX_HINT_LEN)
         self.assertEqual(len(profile), protocol.MAX_HINT_LEN)
         self.assertEqual(len(lines), protocol.MAX_HINTS)
         control, text = lines[0]
@@ -72,6 +73,19 @@ class HintsTest(unittest.TestCase):
         self.assertTrue(text.startswith("a b c · M0: "))
         self.assertEqual(text.count("·"), protocol.MAX_HINT_HELD)
         self.assertNotIn("\n", text)
+
+
+    def test_target(self):
+        msg = {"type": "hints", "profile": "Video editing", "hints": []}
+        for target, want in (("nomnom", "nomnom"), ("Blender", "Blender"), ("", ""), (None, ""), (5, ""), (["x"], ""), ("a" + chr(10) + "b", "a b")):
+            self.assertEqual(protocol.hints([dict(msg, target=target)])[3], want, target)
+        self.assertEqual(protocol.hints([msg])[3], "", "a bridge before 0.21.0 doesn't say")
+
+    def test_title(self):
+        self.assertEqual(protocol.hint_title("Video editing", "nomnom"), "Video editing · Driving: nomnom")
+        self.assertEqual(protocol.hint_title("Video editing", ""), "Video editing")
+        self.assertEqual(protocol.hint_title("", "Blender"), "Consort · Driving: Blender")
+        self.assertEqual(protocol.hint_title("", ""), "Consort")
 
 
 class HintRowsTest(unittest.TestCase):

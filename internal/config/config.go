@@ -95,6 +95,11 @@ const (
 	// clips meet it opens a gap instead of rolling the cut (decision
 	// 202611150cft). The trim knob with Fn held.
 	ActionTrimShrink = "timeline.trim_shrink"
+	// ActionSwitchApp moves the controller to the next connected app
+	// (Blender, nomnom, ...), once per button press: the controls then
+	// drive that app only (decision 20261117h3jl). It has no step and no
+	// encoder.
+	ActionSwitchApp = "app.switch"
 )
 
 // Modifier is a button that changes what other controls do while held (Fn).
@@ -187,6 +192,7 @@ func Default() Config {
 				{ID: "move-after-fine", Name: "Move selected and later strips (fine)", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionMoveAfter, Step: 1},
 				{ID: "trim", Name: "Trim handle at playhead", Control: Control{Type: "cc", Channel: 1, Number: -1}, Encoder: EncoderTwos, Action: ActionTrim, Step: 1},
 				{ID: "trim-shrink", Name: "Trim, shrinking one side", Control: Control{Type: "cc", Channel: 1, Number: -1}, Modifier: "Fn", Encoder: EncoderTwos, Action: ActionTrimShrink, Step: 1},
+				{ID: "switch-app", Name: "Switch app", Control: Control{Type: "note", Channel: 1, Number: -1}, Action: ActionSwitchApp},
 			},
 		}},
 	}
@@ -311,8 +317,8 @@ func (c *Config) Validate() error {
 				if err := validEncoder(b); err != nil {
 					return err
 				}
-			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause, ActionForward, ActionReverse, ActionViewAll, ActionSave:
-				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause", ActionForward: "play forward", ActionReverse: "play backwards", ActionViewAll: "view whole timeline", ActionSave: "save file"}[b.Action]
+			case ActionCut, ActionUndo, ActionRippleDelete, ActionPlayPause, ActionForward, ActionReverse, ActionViewAll, ActionSave, ActionSwitchApp:
+				what := map[string]string{ActionCut: "cutting", ActionUndo: "undo", ActionRippleDelete: "ripple delete", ActionPlayPause: "play / pause", ActionForward: "play forward", ActionReverse: "play backwards", ActionViewAll: "view whole timeline", ActionSave: "save file", ActionSwitchApp: "switch app"}[b.Action]
 				if b.Control.Type != "note" && b.Control.Type != "cc" {
 					return fmt.Errorf("binding %q: %s needs a button (note or cc)", b.Name, what)
 				}

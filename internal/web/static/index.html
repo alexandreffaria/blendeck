@@ -383,6 +383,7 @@ tr.flash td { animation: flash 600ms ease-out; }
         <div class="device">
           <ul class="apps" id="apps"></ul>
           <p class="hint" id="appsNone">No app connected. Blender connects through the Consort extension while this program runs.</p>
+          <p class="hint">The controls drive one app at a time. With two open, a button bound to Switch app moves them to the other.</p>
         </div>
       </section>
 
@@ -407,7 +408,7 @@ tr.flash td { animation: flash 600ms ease-out; }
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
-const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.view_all': 'View whole timeline', 'file.save': 'Save file', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips', 'timeline.trim': 'Trim handle at playhead', 'timeline.trim_shrink': 'Trim, shrinking one side' };
+const ACTIONS = { 'timeline.scrub': 'Scrub timeline', 'timeline.zoom': 'Zoom timeline', 'timeline.pan': 'Pan timeline', 'timeline.view_all': 'View whole timeline', 'file.save': 'Save file', 'timeline.cut': 'Cut at playhead', 'timeline.ripple_delete': 'Ripple delete', 'edit.undo': 'Undo', 'playback.toggle': 'Play / pause', 'playback.reverse': 'Play backwards / faster', 'playback.forward': 'Play forward / faster', 'timeline.jump_edit': 'Jump between video edits', 'timeline.jump_cut': 'Jump between all cuts', 'timeline.move_after': 'Move selected and later strips', 'timeline.move_before': 'Move selected and earlier strips', 'timeline.trim': 'Trim handle at playhead', 'timeline.trim_shrink': 'Trim, shrinking one side', 'app.switch': 'Switch app' };
 // What a binding's step means for each knob action, its limit
 // (config.MaxStep, config.MaxZoomStep, config.MaxPanStep) and the step a new binding starts
 // with. Actions not here are button actions: no step, no encoder.
@@ -660,14 +661,16 @@ function renderLive() {
 }
 
 // Every connected app, by name: in the header pill (Blender with its frame)
-// and in the Apps sheet.
+// and in the Apps sheet, which marks the one the controls drive (the
+// target; the Switch app button moves it). With two or more apps the pill
+// says which, too.
 function renderApps(b) {
   const apps = b.apps || [];
-  const names = apps.map((a) => a.app === 'blender' ? `Blender · frame ${b.frame}` : a.name);
+  const names = apps.map((a) => (a.app === 'blender' ? `Blender · frame ${b.frame}` : a.name) + (a.target && apps.length > 1 ? ' (driving)' : ''));
   $('blenderPill').className = 'pill ' + (apps.length ? 'ok' : 'bad');
   $('blenderText').textContent = names.length ? names.join(' · ') : 'No app connected';
   $('apps').innerHTML = apps.map((a) =>
-    `<li><span class="dot"></span>${esc(a.name)} — connected${a.clients > 1 ? ` (${a.clients} windows)` : ''}</li>`).join('');
+    `<li><span class="dot"></span>${esc(a.name)} — connected${a.clients > 1 ? ` (${a.clients} windows)` : ''}${a.target ? ' <span class="mod-chip" title="The controls drive this app">Driving</span>' : ''}</li>`).join('');
   $('appsNone').hidden = apps.length > 0;
 }
 
@@ -707,7 +710,9 @@ function describe(ev) {
     const name = b ? esc(b.name) : esc(h.binding);
     if (!h.command) return name;
     let what;
-    if (h.command.type === 'cut') {
+    if (h.command.type === 'switch_app') {
+      return `${name} → <span class="${ev.switched ? 'sent' : 'lost'}">${ev.switched ? 'driving ' + esc(ev.switched) : 'no app connected'}</span>`;
+    } else if (h.command.type === 'cut') {
       what = 'cut';
     } else if (h.command.type === 'undo') {
       what = 'undo';
@@ -740,7 +745,7 @@ function describe(ev) {
       const f = h.command.frames;
       what = `${f > 0 ? '+' : ''}${f} frames`;
     }
-    return `${name} → <span class="${ev.delivered ? 'sent' : 'lost'}">${what}${ev.delivered ? '' : ' (Blender not connected)'}</span>`;
+    return `${name} → <span class="${ev.delivered ? 'sent' : 'lost'}">${what}${ev.delivered ? '' : ' (no app connected)'}</span>`;
   }
   const c = ctlOfMessage(ev.message);
   if (c && p.bindings.some((b) => sameCtl(b.control, c))) return '<span class="hint">bound in unsaved changes</span>';

@@ -29,7 +29,8 @@ import (
 // the selected strips and every strip before them. {"type":"trim","frames":N}
 // moves the clip handles at the playhead N frames (left when negative),
 // and the playhead with them; with "shrink":true only the clips turned into
-// get shorter.
+// get shorter. {"type":"switch_app"} (SwitchApp) is the bridge's own: it
+// moves the controller to the next app and is never sent to one.
 type Command struct {
 	Type   string `json:"type"`
 	Frames int    `json:"frames,omitempty"`
@@ -38,6 +39,9 @@ type Command struct {
 	Before bool   `json:"before,omitempty"`
 	Shrink bool   `json:"shrink,omitempty"`
 }
+
+// SwitchApp is the Command type of the Switch app button.
+const SwitchApp = "switch_app"
 
 // Hit says what a message did, for the live monitor.
 type Hit struct {
@@ -327,6 +331,11 @@ func (e *Engine) Handle(m midi.Message) (hit Hit, learned *Learned) {
 		// Once per press, like cut: a release must not toggle it back
 		if pressed(m) {
 			hit.Command = &Command{Type: "play_pause"}
+		}
+	case config.ActionSwitchApp:
+		// Once per press, like cut: a release must not switch again
+		if pressed(m) {
+			hit.Command = &Command{Type: SwitchApp}
 		}
 	case config.ActionForward, config.ActionReverse:
 		// Once per press: each press is one step faster

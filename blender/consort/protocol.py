@@ -172,10 +172,12 @@ def _held_text(plain, name):
 
 def hints(messages):
     """What the controls do, from the newest {"type":"hints"} in messages:
-    (profile, [(control, text), ...], show) with one pair per control, like
-    ("D2", "Scrub timeline · Fn: fine"); show says whether to draw the
-    list now. None when messages hold no hints, so what there is stays. Anything malformed is left out
-    rather than raising: the bridge may be newer or older than this."""
+    (profile, [(control, text), ...], show, target) with one pair per
+    control, like ("D2", "Scrub timeline · Fn: fine"); show says whether to
+    draw the list now, and target names the app the controls drive ("" when
+    the bridge doesn't say). None when messages hold no hints, so what there
+    is stays. Anything malformed is left out rather than raising: the bridge
+    may be newer or older than this."""
     found = None
     for m in messages:
         if m.get("type") == "hints":
@@ -201,7 +203,16 @@ def hints(messages):
                 parts.append("%s: %s" % (modifier, _held_text(plain, name)))
         if control and parts:
             lines.append((control, " · ".join(parts)))
-    return _hint_text(found.get("profile")), lines, found.get("show") is True
+    return _hint_text(found.get("profile")), lines, found.get("show") is True, _hint_text(found.get("target"))
+
+
+def hint_title(profile, target):
+    """The hints' title: the profile, and the app the controls drive, like
+    "Video editing · Driving: nomnom" (decision 20261117h3jl)."""
+    title = profile or "Consort"
+    if target:
+        title += " · Driving: " + target
+    return title
 
 
 def hint_rows(count, height, line_height):
