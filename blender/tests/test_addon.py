@@ -454,7 +454,7 @@ def _install_fake_bpy():
     prefs = _Prefs()
     scene = _Scene()
     bpy.context = types.SimpleNamespace(
-        preferences=types.SimpleNamespace(addons={"synergy": types.SimpleNamespace(preferences=prefs)}),
+        preferences=types.SimpleNamespace(addons={"consort": types.SimpleNamespace(preferences=prefs)}),
         scene=scene,
         sequencer_scene=None,
         window_manager=types.SimpleNamespace(windows=[]),
@@ -476,7 +476,7 @@ def _install_fake_bpy():
 
 
 PREFS, SCENE = _install_fake_bpy()
-import synergy as addon  # noqa: E402
+import consort as addon  # noqa: E402
 
 
 def free_port():

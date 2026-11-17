@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/midi"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/midi"
 )
 
 func knob(v int) midi.Message {

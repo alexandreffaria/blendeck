@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/engine"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/engine"
 )
 
 func start(t *testing.T) (*Link, string) {

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexandreffaria/synergy/internal/app"
-	"github.com/alexandreffaria/synergy/internal/autostart"
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/link"
-	"github.com/alexandreffaria/synergy/internal/midi"
+	"github.com/alexandreffaria/consort/internal/app"
+	"github.com/alexandreffaria/consort/internal/autostart"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/link"
+	"github.com/alexandreffaria/consort/internal/midi"
 )
 
 type fakeAutostart struct {
@@ -127,7 +127,7 @@ func TestAutostartSetFails(t *testing.T) {
 }
 
 func TestAutostartTakenByAnotherProgram(t *testing.T) {
-	f := &fakeAutostart{supported: true, setErr: fmt.Errorf("%w: %q starts x.exe", autostart.ErrTaken, "Synergy")}
+	f := &fakeAutostart{supported: true, setErr: fmt.Errorf("%w: %q starts x.exe", autostart.ErrTaken, "Consort")}
 	h := newAutostartServer(t, f)
 	rec := do(h, "PUT", "/api/autostart", "127.0.0.1:7870", "application/json", `{"enabled":true}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "x.exe") {

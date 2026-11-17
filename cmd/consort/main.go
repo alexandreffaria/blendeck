@@ -1,4 +1,4 @@
-// Command synergy is the bridge between a MIDI controller and Blender: it
+// Command consort is the bridge between a MIDI controller and Blender: it
 // reads the controller, maps it through the active profile, sends commands to
 // the Blender add-on, and serves the page for setting it all up.
 //
@@ -24,27 +24,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandreffaria/synergy/internal/app"
-	"github.com/alexandreffaria/synergy/internal/autostart"
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/link"
-	"github.com/alexandreffaria/synergy/internal/logfile"
-	"github.com/alexandreffaria/synergy/internal/midi"
-	"github.com/alexandreffaria/synergy/internal/tray"
-	"github.com/alexandreffaria/synergy/internal/web"
+	"github.com/alexandreffaria/consort/internal/app"
+	"github.com/alexandreffaria/consort/internal/autostart"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/link"
+	"github.com/alexandreffaria/consort/internal/logfile"
+	"github.com/alexandreffaria/consort/internal/midi"
+	"github.com/alexandreffaria/consort/internal/tray"
+	"github.com/alexandreffaria/consort/internal/web"
 )
 
 var version = "dev"
 
-// maxLog caps synergy.log; one older copy is kept as synergy.log.1.
+// maxLog caps consort.log; one older copy is kept as consort.log.1.
 const maxLog = 1 << 20
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "synergy:", err)
+		fmt.Fprintln(os.Stderr, "consort:", err)
 		// Built for Windows there is no console to read that in.
 		if runtime.GOOS == "windows" {
-			tray.Alert("Synergy couldn't start:\n\n" + err.Error())
+			tray.Alert("Consort couldn't start:\n\n" + err.Error())
 		}
 		os.Exit(1)
 	}
@@ -60,7 +60,7 @@ func run() error {
 
 	for _, a := range []string{*webAddr, *linkAddr} {
 		if !isLoopback(a) {
-			return fmt.Errorf("%s is not a loopback address; Synergy only listens on this computer", a)
+			return fmt.Errorf("%s is not a loopback address; Consort only listens on this computer", a)
 		}
 	}
 	url := "http://" + *webAddr + "/"
@@ -82,7 +82,7 @@ func run() error {
 		level = slog.LevelDebug
 	}
 	out := console{os.Stderr}
-	logPath := filepath.Join(filepath.Dir(*configPath), "synergy.log")
+	logPath := filepath.Join(filepath.Dir(*configPath), "consort.log")
 	var logw io.Writer = out
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	lf, logErr := logfile.Open(logPath, maxLog)
@@ -108,24 +108,24 @@ func run() error {
 
 	linkLn, err := net.Listen("tcp", *linkAddr)
 	if err != nil {
-		return fmt.Errorf("listen for Blender on %s (is Synergy already running?): %w", *linkAddr, err)
+		return fmt.Errorf("listen for Blender on %s (is Consort already running?): %w", *linkAddr, err)
 	}
 	webLn, err := net.Listen("tcp", *webAddr)
 	if err != nil {
 		linkLn.Close()
-		return fmt.Errorf("listen for the settings page on %s (is Synergy already running?): %w", *webAddr, err)
+		return fmt.Errorf("listen for the settings page on %s (is Consort already running?): %w", *webAddr, err)
 	}
 
 	conn := midi.NewConn(log, cfg.Device)
 	lnk := link.New(log)
 	a := app.New(log, store, conn, lnk, midi.Inputs)
-	start := autostart.New("Synergy", autostartExe(), "-no-browser")
+	start := autostart.New("Consort", autostartExe(), "-no-browser")
 	// Before the rename the sign-in entry was called Blendeck: move it, so
 	// Start with Windows stays on under the new name.
 	if moved, err := start.Migrate("Blendeck", "blendeck.exe"); err != nil {
 		log.Warn("left the old Blendeck sign-in entry as it is", "error", err)
 	} else if moved {
-		log.Info("moved the Blendeck sign-in entry to Synergy", "command", start.Command())
+		log.Info("moved the Blendeck sign-in entry to Consort", "command", start.Command())
 	}
 
 	// Everything that holds a device, socket or file stops when ctx ends;
@@ -180,14 +180,14 @@ func run() error {
 			// Keep running without it; the page still works. Built for
 			// Windows there would be no other sign it's running.
 			log.Error("no tray icon", "error", err)
-			go tray.Alert("Synergy is running, but couldn't put its icon in the notification area:\n" +
-				err.Error() + "\n\nThe page is at " + url + ". To quit Synergy, end synergy.exe in Task Manager.")
+			go tray.Alert("Consort is running, but couldn't put its icon in the notification area:\n" +
+				err.Error() + "\n\nThe page is at " + url + ". To quit Consort, end consort.exe in Task Manager.")
 		default:
 			cancel() // Quit, or Close below
 		}
 	}()
 
-	log.Info("synergy running", "version", version, "page", url, "config", store.Path(), "blender_link", *linkAddr)
+	log.Info("consort running", "version", version, "page", url, "config", store.Path(), "blender_link", *linkAddr)
 	if !*noBrowser {
 		openBrowser(url)
 	}
@@ -229,7 +229,7 @@ func tooltip(s app.Snapshot) string {
 	if s.Blender.Connected {
 		blender = "connected"
 	}
-	return "Synergy\nController: " + ctl + "\nBlender: " + blender
+	return "Consort\nController: " + ctl + "\nBlender: " + blender
 }
 
 // console writes to stderr when there is one; built for Windows there isn't,
@@ -281,11 +281,11 @@ func defaultConfigPath() string {
 }
 
 // userConfigPath is the config in the user config folder dir. Before the
-// rename to Synergy it lived under "blendeck": while there is no new one, the
+// rename to Consort it lived under "blendeck": while there is no new one, the
 // old one is kept in use (with the log next to it), so profiles, bindings and
 // learned controls carry over.
 func userConfigPath(dir string) string {
-	path := filepath.Join(dir, "synergy", "config.json")
+	path := filepath.Join(dir, "consort", "config.json")
 	if old := filepath.Join(dir, "blendeck", "config.json"); !fileExists(path) && fileExists(old) {
 		return old
 	}

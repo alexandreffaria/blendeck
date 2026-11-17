@@ -15,7 +15,7 @@ import (
 var ErrUnsupported = errors.New("starting with the system isn't supported here")
 
 // ErrTaken is returned when the sign-in entry's name already starts another
-// program (say, Symless's Synergy): it is left as it is.
+// program (another app of that name): it is left as it is.
 var ErrTaken = errors.New("another program's sign-in entry already has this name")
 
 // RunKey is where Windows looks for programs to start at sign-in.

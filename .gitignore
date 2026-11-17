@@ -1,7 +1,7 @@
-/synergy.exe
-/synergy
-/synergy.log*
-# left over from before the rename to Synergy
+/consort.exe
+/consort
+/consort.log*
+# left over from before the rename to Consort
 /blendeck.exe
 /blendeck.log*
 /dist/

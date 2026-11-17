@@ -1,12 +1,12 @@
 schema_version = "1.0.0"
 
-id = "synergy"
+id = "consort"
 version = "0.19.0"
-name = "Synergy"
+name = "Consort"
 tagline = "Drive the video editor from a MIDI controller like the Loupedeck+"
-maintainer = "Synergy contributors"
+maintainer = "Consort contributors"
 type = "add-on"
-website = "https://github.com/alexandreffaria/synergy"
+website = "https://github.com/alexandreffaria/consort"
 tags = ["Sequencer", "User Interface"]
 
 blender_version_min = "4.2.0"
@@ -14,4 +14,4 @@ blender_version_min = "4.2.0"
 license = ["SPDX:MIT"]
 
 [permissions]
-network = "Talks to the Synergy bridge on this computer (127.0.0.1)"
+network = "Talks to the Consort bridge on this computer (127.0.0.1)"

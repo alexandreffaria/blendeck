@@ -47,8 +47,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/engine"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/engine"
 )
 
 // DefaultAddr is where the add-on looks for the bridge.

@@ -35,7 +35,7 @@ jobs:
         if: runner.os == 'Windows'
       - name: Build
         if: runner.os == 'Windows'
-        run: go build -trimpath -o synergy.exe ./cmd/synergy
+        run: go build -trimpath -o consort.exe ./cmd/consort
 
   addon:
     name: Blender add-on
@@ -47,10 +47,10 @@ jobs:
           python-version: "3.11"
       - run: python -I -m unittest discover -s blender/tests -v
       - name: Compiles
-        run: python -m py_compile blender/synergy/*.py
+        run: python -m py_compile blender/consort/*.py
       - name: Package
         run: python -I scripts/build_addon.py
       - uses: actions/upload-artifact@v4
         with:
-          name: synergy-addon
-          path: dist/synergy-addon.zip
+          name: consort-addon
+          path: dist/consort-addon.zip

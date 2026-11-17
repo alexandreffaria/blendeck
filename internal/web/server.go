@@ -17,10 +17,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alexandreffaria/synergy/internal/app"
-	"github.com/alexandreffaria/synergy/internal/autostart"
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/engine"
+	"github.com/alexandreffaria/consort/internal/app"
+	"github.com/alexandreffaria/consort/internal/autostart"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/engine"
 )
 
 //go:embed static
@@ -154,7 +154,7 @@ func (s *Server) handlePutAutostart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.autostart == nil || !s.autostart.Supported() {
-		writeError(w, http.StatusConflict, "starting with the system isn't available for this copy of Synergy")
+		writeError(w, http.StatusConflict, "starting with the system isn't available for this copy of Consort")
 		return
 	}
 	if err := s.autostart.Set(*req.Enabled); errors.Is(err, autostart.ErrTaken) {

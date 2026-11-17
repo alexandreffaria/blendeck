@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alexandreffaria/synergy/internal/app"
-	"github.com/alexandreffaria/synergy/internal/link"
-	"github.com/alexandreffaria/synergy/internal/midi"
+	"github.com/alexandreffaria/consort/internal/app"
+	"github.com/alexandreffaria/consort/internal/link"
+	"github.com/alexandreffaria/consort/internal/midi"
 )
 
 func TestTooltip(t *testing.T) {
@@ -16,13 +16,13 @@ func TestTooltip(t *testing.T) {
 		want string
 	}{
 		{app.Snapshot{MIDI: midi.Status{State: "connected", Device: "Loupedeck+"}, Blender: link.State{Connected: true}},
-			"Synergy\nController: Loupedeck+\nBlender: connected"},
+			"Consort\nController: Loupedeck+\nBlender: connected"},
 		{app.Snapshot{MIDI: midi.Status{State: "searching", Device: "Loupedeck+"}},
-			"Synergy\nController: looking for Loupedeck+\nBlender: not connected"},
+			"Consort\nController: looking for Loupedeck+\nBlender: not connected"},
 		{app.Snapshot{MIDI: midi.Status{State: "searching"}},
-			"Synergy\nController: none picked\nBlender: not connected"},
+			"Consort\nController: none picked\nBlender: not connected"},
 		{app.Snapshot{MIDI: midi.Status{State: "error", Device: "X", Error: "busy"}},
-			"Synergy\nController: error\nBlender: not connected"},
+			"Consort\nController: error\nBlender: not connected"},
 	}
 	for _, c := range cases {
 		if got := tooltip(c.s); got != c.want {
@@ -41,7 +41,7 @@ func TestLoopback(t *testing.T) {
 
 func TestUserConfigPathKeepsTheOldConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "synergy", "config.json")
+	path := filepath.Join(dir, "consort", "config.json")
 	old := filepath.Join(dir, "blendeck", "config.json")
 	if got := userConfigPath(dir); got != path {
 		t.Fatalf("nothing yet: %s, want %s", got, path)

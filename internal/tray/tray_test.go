@@ -49,7 +49,7 @@ func TestIconImageRejectsJunk(t *testing.T) {
 }
 
 func TestClipKeepsWholeCharacters(t *testing.T) {
-	if got := string(utf16.Decode(clip("Synergy", 128))); got != "Synergy" {
+	if got := string(utf16.Decode(clip("Consort", 128))); got != "Consort" {
 		t.Fatalf("clip = %q", got)
 	}
 	if got := clip("abcdef", 4); string(utf16.Decode(got)) != "abc" {

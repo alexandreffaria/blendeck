@@ -18,7 +18,7 @@ import (
 	"os"
 )
 
-const out = "internal/tray/synergy.ico"
+const out = "internal/tray/consort.ico"
 
 // The mascot's colors (the page's --amber, --amber-ink, --mint, --blush).
 var (

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandreffaria/synergy/internal/config"
-	"github.com/alexandreffaria/synergy/internal/engine"
-	"github.com/alexandreffaria/synergy/internal/link"
-	"github.com/alexandreffaria/synergy/internal/midi"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/engine"
+	"github.com/alexandreffaria/consort/internal/link"
+	"github.com/alexandreffaria/consort/internal/midi"
 )
 
 func newTestApp(t *testing.T) *App {

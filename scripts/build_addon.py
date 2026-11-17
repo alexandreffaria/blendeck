@@ -1,4 +1,4 @@
-"""Packs blender/synergy into dist/synergy-addon.zip, ready for Blender's
+"""Packs blender/consort into dist/consort-addon.zip, ready for Blender's
 "Install from Disk"."""
 
 import os
@@ -6,8 +6,8 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "blender", "synergy")
-OUT = os.path.join(ROOT, "dist", "synergy-addon.zip")
+SRC = os.path.join(ROOT, "blender", "consort")
+OUT = os.path.join(ROOT, "dist", "consort-addon.zip")
 
 
 def main():

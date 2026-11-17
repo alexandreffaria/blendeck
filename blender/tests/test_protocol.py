@@ -2,7 +2,7 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "synergy"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "consort"))
 
 import protocol  # noqa: E402
 
@@ -908,7 +908,7 @@ class ManifestTest(unittest.TestCase):
         import re
         import tomllib
 
-        here = os.path.join(os.path.dirname(__file__), "..", "synergy")
+        here = os.path.join(os.path.dirname(__file__), "..", "consort")
         with open(os.path.join(here, "blender_manifest.toml"), "rb") as f:
             manifest = tomllib.load(f)
         for key in ("schema_version", "id", "version", "name", "tagline", "maintainer", "type", "blender_version_min", "license"):

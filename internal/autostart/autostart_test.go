@@ -3,17 +3,17 @@ package autostart
 import "testing"
 
 func TestCommandQuotesPathsWithSpaces(t *testing.T) {
-	e := New("Synergy", `C:\Program Files\Synergy\synergy.exe`, "-no-browser")
-	if got, want := e.Command(), `"C:\Program Files\Synergy\synergy.exe" -no-browser`; got != want {
+	e := New("Consort", `C:\Program Files\Consort\consort.exe`, "-no-browser")
+	if got, want := e.Command(), `"C:\Program Files\Consort\consort.exe" -no-browser`; got != want {
 		t.Fatalf("command = %s, want %s", got, want)
 	}
-	if got := New("x", `C:\b\synergy.exe`).Command(); got != `C:\b\synergy.exe` {
+	if got := New("x", `C:\b\consort.exe`).Command(); got != `C:\b\consort.exe` {
 		t.Fatalf("command = %s", got)
 	}
 }
 
 func TestNoExeIsUnsupported(t *testing.T) {
-	e := New("Synergy", "")
+	e := New("Consort", "")
 	if e.Supported() {
 		t.Fatal("an entry with no exe is supported")
 	}
@@ -43,20 +43,20 @@ func TestCommandExe(t *testing.T) {
 }
 
 func TestMigrateUnsupportedDoesNothing(t *testing.T) {
-	if moved, err := New("Synergy", "").Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
+	if moved, err := New("Consort", "").Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
 		t.Fatalf("Migrate = %v, %v", moved, err)
 	}
 }
 
 func TestOwns(t *testing.T) {
-	e := New("Synergy", `C:\Tools\synergy.exe`, "-no-browser")
+	e := New("Consort", `C:\Tools\consort.exe`, "-no-browser")
 	for v, want := range map[string]bool{
-		`C:\Tools\synergy.exe -no-browser`:              true,
-		`c:\tools\SYNERGY.exe`:                          true, // this exe, whatever it passes
-		`"C:\Old Place\synergy.exe" -no-browser`:        true, // a moved copy
-		`"C:\Program Files\Synergy\synergy.exe" --tray`: false,
-		`"C:\Program Files\Synergy\synergy.exe"`:        false,
-		`C:\Program Files\Symless\synergy-service.exe`:  false,
+		`C:\Tools\consort.exe -no-browser`:              true,
+		`c:\tools\CONSORT.exe`:                          true, // this exe, whatever it passes
+		`"C:\Old Place\consort.exe" -no-browser`:        true, // a moved copy
+		`"C:\Program Files\Consort\consort.exe" --tray`: false,
+		`"C:\Program Files\Consort\consort.exe"`:        false,
+		`C:\Program Files\Other\consort-service.exe`:    false,
 	} {
 		if got := e.owns(v); got != want {
 			t.Errorf("owns(%q) = %v, want %v", v, got, want)

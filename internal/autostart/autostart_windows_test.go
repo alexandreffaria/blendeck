@@ -12,15 +12,15 @@ import (
 // testEntry works under a throwaway key instead of the real Run key.
 func testEntry(t *testing.T, exe string) *Entry {
 	t.Helper()
-	key := fmt.Sprintf(`Software\SynergyTest-%d`, os.Getpid())
+	key := fmt.Sprintf(`Software\ConsortTest-%d`, os.Getpid())
 	t.Cleanup(func() { _ = registry.DeleteKey(registry.CURRENT_USER, key) })
-	e := New("Synergy", exe, "-no-browser")
+	e := New("Consort", exe, "-no-browser")
 	e.key = key
 	return e
 }
 
 func TestSetOnOff(t *testing.T) {
-	e := testEntry(t, `C:\Tools\Blend Deck\synergy.exe`)
+	e := testEntry(t, `C:\Tools\Blend Deck\consort.exe`)
 	if on, err := e.Enabled(); on || err != nil {
 		t.Fatalf("before: Enabled = %v, %v", on, err)
 	}
@@ -33,7 +33,7 @@ func TestSetOnOff(t *testing.T) {
 	if on, err := e.Enabled(); !on || err != nil {
 		t.Fatalf("after on: Enabled = %v, %v", on, err)
 	}
-	if v, err := e.read(); err != nil || v != `"C:\Tools\Blend Deck\synergy.exe" -no-browser` {
+	if v, err := e.read(); err != nil || v != `"C:\Tools\Blend Deck\consort.exe" -no-browser` {
 		t.Fatalf("value = %q, %v", v, err)
 	}
 	if err := e.Set(false); err != nil {
@@ -45,11 +45,11 @@ func TestSetOnOff(t *testing.T) {
 }
 
 func TestEntryForAnotherCopyIsOff(t *testing.T) {
-	old := testEntry(t, `C:\old\synergy.exe`)
+	old := testEntry(t, `C:\old\consort.exe`)
 	if err := old.Set(true); err != nil {
 		t.Fatal(err)
 	}
-	moved := New("Synergy", `C:\new\synergy.exe`, "-no-browser")
+	moved := New("Consort", `C:\new\consort.exe`, "-no-browser")
 	moved.key = old.key
 	if on, _ := moved.Enabled(); on {
 		t.Fatal("an entry for another copy counts as on")
@@ -78,10 +78,10 @@ func oldEntry(t *testing.T, key, command string) {
 func TestMigrateMovesTheOldEntry(t *testing.T) {
 	for _, old := range []string{
 		`"C:\Tools\Blend Deck\blendeck.exe" -no-browser`, // the old exe, maybe elsewhere
-		`C:\Tools\synergy.exe -no-browser`,               // this exe already, by its old name
+		`C:\Tools\consort.exe -no-browser`,               // this exe already, by its old name
 	} {
-		e := testEntry(t, `C:\Tools\synergy.exe`)
-		e.name = "Synergy"
+		e := testEntry(t, `C:\Tools\consort.exe`)
+		e.name = "Consort"
 		oldEntry(t, e.key, old)
 		moved, err := e.Migrate("Blendeck", "blendeck.exe")
 		if !moved || err != nil {
@@ -100,8 +100,8 @@ func TestMigrateMovesTheOldEntry(t *testing.T) {
 }
 
 func TestMigrateLeavesOthersAlone(t *testing.T) {
-	e := testEntry(t, `C:\Tools\synergy.exe`)
-	e.name = "Synergy"
+	e := testEntry(t, `C:\Tools\consort.exe`)
+	e.name = "Consort"
 	if moved, err := e.Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
 		t.Fatalf("no old entry: Migrate = %v, %v", moved, err)
 	}
@@ -122,7 +122,7 @@ func TestMigrateLeavesOthersAlone(t *testing.T) {
 
 	// A `go run` binary has no entry of its own: the old one stays.
 	oldEntry(t, e.key, `C:\Tools\blendeck.exe -no-browser`)
-	gone := New("Synergy", "")
+	gone := New("Consort", "")
 	gone.key = e.key
 	if moved, err := gone.Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
 		t.Fatalf("unsupported: Migrate = %v, %v", moved, err)
@@ -132,8 +132,8 @@ func TestMigrateLeavesOthersAlone(t *testing.T) {
 	}
 }
 
-// symless is a "Synergy" value another program (Symless's Synergy) keeps.
-const symless = `"C:\Program Files\Synergy\synergy.exe" --tray`
+// foreign is a "Consort" value another program of that name keeps.
+const foreign = `"C:\Program Files\Consort\consort.exe" --tray`
 
 func setValue(t *testing.T, key, name, command string) {
 	t.Helper()
@@ -147,16 +147,16 @@ func setValue(t *testing.T, key, name, command string) {
 	}
 }
 
-func TestMigrateLeavesAnotherProgramsSynergyAlone(t *testing.T) {
-	e := testEntry(t, `C:\Tools\synergy.exe`)
-	e.name = "Synergy"
-	setValue(t, e.key, "Synergy", symless)
+func TestMigrateLeavesAnotherProgramsConsortAlone(t *testing.T) {
+	e := testEntry(t, `C:\Tools\consort.exe`)
+	e.name = "Consort"
+	setValue(t, e.key, "Consort", foreign)
 	oldEntry(t, e.key, `C:\Tools\blendeck.exe -no-browser`)
 	moved, err := e.Migrate("Blendeck", "blendeck.exe")
 	if moved || !errors.Is(err, ErrTaken) {
 		t.Fatalf("Migrate = %v, %v; want ErrTaken", moved, err)
 	}
-	if v, _ := e.readValue("Synergy"); v != symless {
+	if v, _ := e.readValue("Consort"); v != foreign {
 		t.Fatalf("the other program's value changed: %q", v)
 	}
 	if v, _ := e.readValue("Blendeck"); v == "" {
@@ -165,9 +165,9 @@ func TestMigrateLeavesAnotherProgramsSynergyAlone(t *testing.T) {
 }
 
 func TestSetNeverTouchesAnotherProgramsValue(t *testing.T) {
-	e := testEntry(t, `C:\Tools\synergy.exe`)
-	e.name = "Synergy"
-	setValue(t, e.key, "Synergy", symless)
+	e := testEntry(t, `C:\Tools\consort.exe`)
+	e.name = "Consort"
+	setValue(t, e.key, "Consort", foreign)
 	if on, _ := e.Enabled(); on {
 		t.Fatal("another program's value counts as on")
 	}
@@ -177,24 +177,24 @@ func TestSetNeverTouchesAnotherProgramsValue(t *testing.T) {
 	if err := e.Set(false); err != nil {
 		t.Fatalf("Set(false) = %v", err)
 	}
-	if v, _ := e.readValue("Synergy"); v != symless {
+	if v, _ := e.readValue("Consort"); v != foreign {
 		t.Fatalf("the other program's value changed: %q", v)
 	}
 
 	// A copy of this program elsewhere (same file name and arguments) is
 	// still ours: turning it on points it here, turning it off removes it.
-	setValue(t, e.key, "Synergy", `"C:\Old Place\synergy.exe" -no-browser`)
+	setValue(t, e.key, "Consort", `"C:\Old Place\consort.exe" -no-browser`)
 	if err := e.Set(true); err != nil {
 		t.Fatal(err)
 	}
 	if on, _ := e.Enabled(); !on {
 		t.Fatal("turning on didn't point it here")
 	}
-	setValue(t, e.key, "Synergy", `"C:\Old Place\synergy.exe" -no-browser`)
+	setValue(t, e.key, "Consort", `"C:\Old Place\consort.exe" -no-browser`)
 	if err := e.Set(false); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := e.readValue("Synergy"); v != "" {
+	if v, _ := e.readValue("Consort"); v != "" {
 		t.Fatalf("our old copy's value stayed: %q", v)
 	}
 }
