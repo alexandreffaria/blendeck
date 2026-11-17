@@ -192,7 +192,7 @@ func cmds(c *client) []engine.Command {
 func (c *client) add(cmd engine.Command) bool { return c.push(cmd, 0) }
 
 func newClient() *client {
-	return &client{wake: make(chan struct{}, 1), done: make(chan struct{})}
+	return &client{app: Blender, wake: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
 // Knob turns in a row become one command; a press between them keeps its
@@ -297,7 +297,7 @@ func TestBusyAddonLosesNothing(t *testing.T) {
 	c := newClient()
 	c.conn = ours
 	l.mu.Lock()
-	l.clients[c] = true
+	l.add(c)
 	l.mu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -361,7 +361,7 @@ func TestWriterStopsWhenAddonIsRemoved(t *testing.T) {
 	c := newClient()
 	c.conn = ours
 	l.mu.Lock()
-	l.clients[c] = true
+	l.add(c)
 	l.mu.Unlock()
 	stopped := make(chan struct{})
 	go func() { l.writeLoop(context.Background(), c); close(stopped) }()
@@ -443,7 +443,7 @@ func TestLatencyReport(t *testing.T) {
 	}
 	eventually(t, "old reports forgotten", func() bool { return l.State().Latency.WorstMinute == 5 })
 	l.mu.Lock()
-	kept := len(l.recent)
+	kept := len(l.apps[Blender].recent)
 	l.mu.Unlock()
 	if kept != latencyKept {
 		t.Fatalf("kept %d reports", kept)
@@ -580,7 +580,7 @@ func TestSlowPictureCauses(t *testing.T) {
 	fmt.Fprintln(conn, `{"type":"latency","samples":5,"picture_max":500,"slow":true}`)
 	eventually(t, "slow again", func() bool { return l.State().Latency.Slow })
 	l.mu.Lock()
-	l.slowAt = l.slowAt.Add(-slowKept - time.Second)
+	l.apps[Blender].slowAt = l.apps[Blender].slowAt.Add(-slowKept - time.Second)
 	l.mu.Unlock()
 	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
 		t.Fatalf("still slow after slowKept: %+v", lat)
@@ -605,5 +605,164 @@ func TestSlowPictureCauses(t *testing.T) {
 	eventually(t, "report after reconnect", func() bool { return l.State().Latency != nil })
 	if lat := l.State().Latency; lat.Slow || lat.Causes != nil {
 		t.Fatalf("the last add-on's warning came back: %+v", lat)
+	}
+}
+
+func dial(t *testing.T, addr, hello string) net.Conn {
+	t.Helper()
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	fmt.Fprintln(c, hello)
+	return c
+}
+
+// readCommand reads lines from r until a command (not hints) comes.
+func readCommand(t *testing.T, c net.Conn, r *bufio.Reader) engine.Command {
+	t.Helper()
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got engine.Command
+		if err := json.Unmarshal(line, &got); err != nil {
+			t.Fatalf("line %q: %v", line, err)
+		}
+		if got.Type != "hints" {
+			return got
+		}
+	}
+}
+
+// A hello names its app; without one it is Blender's, as the add-on sent it
+// before it named itself.
+func TestHelloNamesItsApp(t *testing.T) {
+	for _, c := range []struct{ hello, want string }{
+		{`{"type":"hello","blender":"5.1.0","addon":"0.19.0"}`, Blender},
+		{`{"type":"hello","app":"blender","blender":"5.1.0","addon":"0.20.0"}`, Blender},
+		{`{"type":"hello","app":"","blender":"5.1.0"}`, Blender},
+		{`{"type":"hello","app":"nomnom"}`, "nomnom"},
+		{`{"type":"hello","app":"NomNom"}`, "nomnom"},
+		{`{"type":"hello","app":"other-app_2.0"}`, "other-app_2.0"},
+	} {
+		l, addr := start(t)
+		conn := dial(t, addr, c.hello)
+		eventually(t, c.hello, func() bool { return len(l.State().Apps) == 1 })
+		if got := l.State().Apps[0].App; got != c.want {
+			t.Errorf("%s: app %q, want %q", c.hello, got, c.want)
+		}
+		if l.State().Connected != (c.want == Blender) {
+			t.Errorf("%s: Blender connected = %v", c.hello, l.State().Connected)
+		}
+		conn.Close()
+		eventually(t, "gone", func() bool { return len(l.State().Apps) == 0 })
+	}
+}
+
+// An app that isn't a short plain name is refused like a bad hello.
+func TestHelloWithBadAppRefused(t *testing.T) {
+	for _, hello := range []string{
+		`{"type":"hello","app":"<b>x</b>"}`,
+		`{"type":"hello","app":"has space"}`,
+		`{"type":"hello","app":"` + strings.Repeat("a", maxAppLen+1) + `"}`,
+		`{"type":"hello","app":5}`,
+	} {
+		l, addr := start(t)
+		c := dial(t, addr, hello)
+		if !closedByPeer(t, c) {
+			t.Errorf("%s: kept open", hello)
+		}
+		if s := l.State(); len(s.Apps) != 0 || s.Connected {
+			t.Errorf("%s: state = %+v", hello, s)
+		}
+	}
+}
+
+// With Blender and nomnom both connected, each keeps what it said: nomnom's
+// state and latency never show as Blender's, both are listed, and a command
+// goes to both (until a button picks one; SendTo already can).
+func TestTwoApps(t *testing.T) {
+	l, addr := start(t)
+	blender := dial(t, addr, `{"type":"hello","blender":"5.1.0","addon":"0.19.0"}`)
+	nomnom := dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	eventually(t, "both connected", func() bool { return len(l.State().Apps) == 2 })
+	want := []App{{App: Blender, Name: "Blender", Clients: 1}, {App: "nomnom", Name: "nomnom", Clients: 1}}
+	if got := l.State().Apps; !reflect.DeepEqual(got, want) {
+		t.Fatalf("apps = %+v", got)
+	}
+
+	fmt.Fprintln(blender, `{"type":"state","scene":"Edit","frame":42,"start":1,"end":250,"fps":24}`)
+	eventually(t, "Blender state", func() bool { return l.State().Frame == 42 })
+	fmt.Fprintln(nomnom, `{"type":"state","scene":"clip","frame":7,"start":0,"end":9,"fps":30}`)
+	fmt.Fprintln(nomnom, `{"type":"latency","samples":3,"total_max":99}`)
+	fmt.Fprintln(nomnom, `{"type":"ping"}`)
+	eventually(t, "nomnom's messages read", func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		a := l.apps["nomnom"]
+		return a.state.Frame == 7 && a.latency != nil
+	})
+	s := l.State()
+	if s.Frame != 42 || s.Scene != "Edit" || s.FPS != 24 || s.Blender != "5.1.0" || s.Latency != nil || !s.Connected || s.Clients != 1 {
+		t.Fatalf("Blender's state = %+v", s)
+	}
+
+	if !l.Send(engine.Command{Type: "scrub", Frames: 3}) {
+		t.Fatal("Send found no receiver")
+	}
+	br, nr := bufio.NewReader(blender), bufio.NewReader(nomnom)
+	for name, got := range map[string]engine.Command{"Blender": readCommand(t, blender, br), "nomnom": readCommand(t, nomnom, nr)} {
+		if got != (engine.Command{Type: "scrub", Frames: 3}) {
+			t.Errorf("%s got %+v", name, got)
+		}
+	}
+
+	// SendTo reaches one app only
+	if !l.SendTo("nomnom", engine.Command{Type: "zoom", Clicks: 1}) {
+		t.Fatal("SendTo found no nomnom")
+	}
+	if l.SendTo("premiere", engine.Command{Type: "cut"}) {
+		t.Fatal("SendTo reported an app that isn't connected")
+	}
+	l.SendTo(Blender, engine.Command{Type: "zoom", Clicks: -1})
+	if got := readCommand(t, nomnom, nr); got != (engine.Command{Type: "zoom", Clicks: 1}) {
+		t.Errorf("nomnom got %+v", got)
+	}
+	if got := readCommand(t, blender, br); got != (engine.Command{Type: "zoom", Clicks: -1}) {
+		t.Errorf("Blender got %+v", got)
+	}
+
+	// nomnom leaving keeps Blender's state; Blender leaving keeps nomnom listed
+	nomnom.Close()
+	eventually(t, "nomnom gone", func() bool { return len(l.State().Apps) == 1 })
+	if s := l.State(); s.Frame != 42 || !s.Connected || s.Apps[0].App != Blender {
+		t.Fatalf("after nomnom left: %+v", s)
+	}
+	nomnom = dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	eventually(t, "nomnom back", func() bool { return len(l.State().Apps) == 2 })
+	blender.Close()
+	eventually(t, "Blender gone", func() bool { return !l.State().Connected })
+	if s := l.State(); s.Frame != 0 || s.Scene != "" || len(s.Apps) != 1 || s.Apps[0].App != "nomnom" {
+		t.Fatalf("after Blender left: %+v", s)
+	}
+}
+
+// Two Blender windows count as one app with two clients.
+func TestAppCountsItsWindows(t *testing.T) {
+	l, addr := start(t)
+	dialHello(t, addr)
+	second := dial(t, addr, `{"type":"hello","app":"blender","blender":"5.1.0","addon":"0.20.0"}`)
+	eventually(t, "both windows", func() bool { return l.State().Clients == 2 })
+	if got := l.State().Apps; len(got) != 1 || got[0].Clients != 2 {
+		t.Fatalf("apps = %+v", got)
+	}
+	second.Close()
+	eventually(t, "one window", func() bool { return l.State().Clients == 1 })
+	if got := l.State().Apps; len(got) != 1 || got[0].Clients != 1 {
+		t.Fatalf("apps = %+v", got)
 	}
 }

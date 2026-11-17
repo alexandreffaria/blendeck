@@ -17,6 +17,12 @@ func TestTooltip(t *testing.T) {
 	}{
 		{app.Snapshot{MIDI: midi.Status{State: "connected", Device: "Loupedeck+"}, Blender: link.State{Connected: true}},
 			"Consort\nController: Loupedeck+\nBlender: connected"},
+		{app.Snapshot{MIDI: midi.Status{State: "connected", Device: "Loupedeck+"}, Blender: link.State{Connected: true,
+			Apps: []link.App{{App: "blender", Name: "Blender", Clients: 1}, {App: "nomnom", Name: "nomnom", Clients: 1}}}},
+			"Consort\nController: Loupedeck+\nBlender: connected\nnomnom: connected"},
+		{app.Snapshot{MIDI: midi.Status{State: "connected", Device: "Loupedeck+"}, Blender: link.State{
+			Apps: []link.App{{App: "nomnom", Name: "nomnom", Clients: 1}}}},
+			"Consort\nController: Loupedeck+\nBlender: not connected\nnomnom: connected"},
 		{app.Snapshot{MIDI: midi.Status{State: "searching", Device: "Loupedeck+"}},
 			"Consort\nController: looking for Loupedeck+\nBlender: not connected"},
 		{app.Snapshot{MIDI: midi.Status{State: "searching"}},

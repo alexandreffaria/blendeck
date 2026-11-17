@@ -1,15 +1,18 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alexandreffaria/consort/internal/app"
 	"github.com/alexandreffaria/consort/internal/config"
@@ -489,6 +492,76 @@ func TestIndexHasControlNames(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
 	for _, want := range []string{`id="controls"`, "data-cname", fmt.Sprintf("MAX_NAME = %d", config.MaxControlNameLen)} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("page is missing %q", want)
+		}
+	}
+}
+
+// With Blender and nomnom connected, the page's state names both, and
+// Blender's own state stays Blender's.
+func TestStateNamesConnectedApps(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := config.Open(filepath.Join(t.TempDir(), "c.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lnk := link.New(log)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go lnk.Serve(ctx, ln)
+	a := app.New(log, store, midi.NewConn(log, "Loupedeck+"), lnk, func() ([]string, error) { return nil, nil })
+	h := New(log, a, "test", "127.0.0.1:7870").Handler()
+
+	for _, hello := range []string{
+		`{"type":"hello","blender":"5.1.0","addon":"0.19.0"}` + "\n" + `{"type":"state","scene":"Edit","frame":42,"start":1,"end":250,"fps":24}`,
+		`{"type":"hello","app":"nomnom"}` + "\n" + `{"type":"state","scene":"clip","frame":7}`,
+	} {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		fmt.Fprintln(c, hello)
+	}
+
+	var st struct {
+		Live struct {
+			Blender struct {
+				Connected bool       `json:"connected"`
+				Frame     int        `json:"frame"`
+				Apps      []link.App `json:"apps"`
+			} `json:"blender"`
+		} `json:"live"`
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rec := do(h, "GET", "/api/state", "127.0.0.1:7870", "", "")
+		if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.Live.Blender.Apps) == 2 && st.Live.Blender.Frame == 42 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("state = %s", rec.Body)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	b := st.Live.Blender
+	if !b.Connected || b.Apps[0].Name != "Blender" || b.Apps[1].Name != "nomnom" {
+		t.Fatalf("live.blender = %+v", b)
+	}
+}
+
+func TestIndexNamesApps(t *testing.T) {
+	h := newServer(t)
+	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
+	for _, want := range []string{`id="apps"`, "function renderApps", "— connected"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("page is missing %q", want)
 		}

@@ -2390,6 +2390,7 @@ class AddonTest(unittest.TestCase):
             addon.tick()
         lines = read_lines(conn)
         self.assertEqual(lines[0]["type"], "hello")
+        self.assertEqual(lines[0]["app"], "blender")  # the bridge tells it apart from other apps
         self.assertEqual(lines[1], {"type": "state", "scene": "Edit", "frame": 10, "start": 1, "end": 100, "fps": 24.0})
 
         conn.sendall(b'{"type":"scrub","frames":10}\n{"type":"scrub","frames":-3}\n')

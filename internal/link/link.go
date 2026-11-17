@@ -1,9 +1,10 @@
-// Package link is the local TCP connection to the Blender add-on. The bridge
-// listens; the add-on connects and reconnects by itself. Both sides speak
-// newline-delimited JSON objects with a "type" field.
+// Package link is the local TCP connection to the apps Consort drives: the
+// Blender add-on, and other apps such as nomnom. The bridge listens; each app
+// connects and reconnects by itself. Both sides speak newline-delimited JSON
+// objects with a "type" field.
 //
 // Bridge to add-on:  {"type":"scrub","frames":10} or {"type":"zoom","clicks":-1}
-// Add-on to bridge:  {"type":"hello","blender":"5.1.0","addon":"0.1.0"} first,
+// Add-on to bridge:  {"type":"hello","app":"blender","blender":"5.1.0","addon":"0.1.0"} first,
 //
 //	then {"type":"state","scene":"Scene","frame":120,"start":1,"end":250,"fps":24}
 //	on every change and {"type":"ping"} at least every PingEvery.
@@ -31,6 +32,12 @@
 // "show" says whether Blender shows the list now: true while a modifier
 // has been held on its own for a moment (decision 202611167kkw).
 //
+// The hello's "app" names the app that connected ("blender", "nomnom"); a
+// hello without one is Blender's, as add-ons before 0.20.0 sent it. What an
+// app says about itself (state, latency) is kept per app, so one app never
+// overwrites another's; State reports Blender's and lists every app.
+// Commands and hints go to every connected app (SendTo picks one app).
+//
 // A connection counts as an add-on only once its first line is a hello, sent
 // within HelloTimeout. That keeps stray connections (a web page's request to
 // this port, a port scanner) from taking a slot or posting a fake state.
@@ -44,6 +51,8 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,10 +90,51 @@ var (
 	WriteWait = 2 * time.Second
 )
 
-// State is what the bridge knows about the connected Blender.
+// Blender is the app a hello without "app" comes from.
+const Blender = "blender"
+
+// maxAppLen caps an app's id in its hello.
+const maxAppLen = 32
+
+// appNames are how the page and the tray name the apps Consort knows; any
+// other app goes by its id.
+var appNames = map[string]string{Blender: "Blender", "nomnom": "nomnom"}
+
+// appID checks the app a hello names: "" is Blender, letters are lowered,
+// and anything but a short id of letters, digits, '.', '_' and '-' is
+// refused.
+func appID(s string) (string, bool) {
+	if s == "" {
+		return Blender, true
+	}
+	if len(s) > maxAppLen {
+		return "", false
+	}
+	s = strings.ToLower(s)
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// App is one connected app: its id from the hello, the name to show for it
+// and how many of its windows are connected.
+type App struct {
+	App     string `json:"app"`
+	Name    string `json:"name"`
+	Clients int    `json:"clients"`
+}
+
+// State is what the bridge knows about the connected Blender, and which
+// apps are connected. Connected, Clients and everything below Dropped are
+// Blender's; Apps lists every connected app, Blender first, then by id;
+// Dropped counts the commands dropped for any of them.
 type State struct {
 	Connected bool    `json:"connected"`
 	Clients   int     `json:"clients"`
+	Apps      []App   `json:"apps"`
 	Dropped   int64   `json:"dropped"`
 	Blender   string  `json:"blender,omitempty"`
 	Addon     string  `json:"addon,omitempty"`
@@ -167,6 +217,7 @@ type queued struct {
 }
 
 type client struct {
+	app   string // from the hello: Blender, "nomnom", ...
 	conn  net.Conn
 	queue []queued      // waiting to be written; guarded by Link.mu
 	hints []byte        // a hints line not written yet; guarded by Link.mu
@@ -217,22 +268,12 @@ func (c *client) push(cmd engine.Command, t int64) bool {
 	return true
 }
 
-// Link accepts add-on connections and fans commands out to them.
-type Link struct {
-	log     *slog.Logger
-	mu      sync.Mutex
-	clients map[*client]bool
-	pending int
-	state   State
-	dropped int64
-	// hints is the line that tells an add-on what each control does: sent
-	// to each one as it connects and to all when it changes. Never
-	// modified once set, so clients share it. hintProfile, hintList and
-	// hintShow are what it was made from.
-	hints       []byte
-	hintProfile string
-	hintList    []config.Hint
-	hintShow    bool
+// appData is what one app has said about itself, kept while any of its
+// windows is connected.
+type appData struct {
+	clients int
+	// state holds what the hello and the latest state message said
+	state State
 	// latency is the latest report and when it came; recent holds the
 	// worst total of the last latencyKept reports, oldest first
 	latency   *Latency
@@ -245,28 +286,58 @@ type Link struct {
 	slowAt     time.Time
 }
 
-// New makes a Link. Call Serve to start accepting.
-func New(log *slog.Logger) *Link {
-	return &Link{log: log.With("component", "link"), clients: map[*client]bool{}}
+// Link accepts add-on connections and fans commands out to them.
+type Link struct {
+	log     *slog.Logger
+	mu      sync.Mutex
+	clients map[*client]bool
+	// apps holds each connected app's data by its id; an app goes with its
+	// last window
+	apps    map[string]*appData
+	pending int
+	dropped int64
+	// hints is the line that tells an add-on what each control does: sent
+	// to each one as it connects and to all when it changes. Never
+	// modified once set, so clients share it. hintProfile, hintList and
+	// hintShow are what it was made from.
+	hints       []byte
+	hintProfile string
+	hintList    []config.Hint
+	hintShow    bool
 }
 
-// State returns what the most recent add-on message said.
+// New makes a Link. Call Serve to start accepting.
+func New(log *slog.Logger) *Link {
+	return &Link{log: log.With("component", "link"), clients: map[*client]bool{}, apps: map[string]*appData{}}
+}
+
+// State returns what Blender's most recent messages said, and which apps
+// are connected.
 func (l *Link) State() State {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s := l.state
-	s.Clients = len(l.clients)
-	s.Connected = s.Clients > 0
+	var s State
+	if a := l.apps[Blender]; a != nil {
+		s = a.report(time.Now())
+	}
+	s.Apps = l.connectedApps()
 	s.Dropped = l.dropped
-	if l.latency != nil && s.Connected {
-		now := time.Now()
-		lat := *l.latency
-		if !l.slowAt.IsZero() && now.Sub(l.slowAt) <= slowKept {
-			lat.Slow, lat.SlowMS = true, l.slowMS
-			lat.Causes = append([]string(nil), l.slowCauses...)
+	return s
+}
+
+// report is what a has said, as State returns it.
+func (a *appData) report(now time.Time) State {
+	s := a.state
+	s.Clients = a.clients
+	s.Connected = a.clients > 0
+	if a.latency != nil && s.Connected {
+		lat := *a.latency
+		if !a.slowAt.IsZero() && now.Sub(a.slowAt) <= slowKept {
+			lat.Slow, lat.SlowMS = true, a.slowMS
+			lat.Causes = append([]string(nil), a.slowCauses...)
 		}
-		lat.AgeMS = now.Sub(l.latencyAt).Milliseconds()
-		for _, r := range l.recent {
+		lat.AgeMS = now.Sub(a.latencyAt).Milliseconds()
+		for _, r := range a.recent {
 			if now.Sub(r.at) <= time.Minute && r.worst > lat.WorstMinute {
 				lat.WorstMinute = r.worst
 			}
@@ -274,6 +345,26 @@ func (l *Link) State() State {
 		s.Latency = &lat
 	}
 	return s
+}
+
+// connectedApps lists the connected apps, Blender first, then by id. The
+// caller holds l.mu.
+func (l *Link) connectedApps() []App {
+	out := []App{}
+	for id, a := range l.apps {
+		name := appNames[id]
+		if name == "" {
+			name = id
+		}
+		out = append(out, App{App: id, Name: name, Clients: a.clients})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].App == Blender) != (out[j].App == Blender) {
+			return out[i].App == Blender
+		}
+		return out[i].App < out[j].App
+	})
+	return out
 }
 
 // ms bounds a duration an add-on reported: never negative, never NaN, at
@@ -288,8 +379,8 @@ func ms(v float64) float64 {
 	return v
 }
 
-// setLatency records an add-on's report.
-func (l *Link) setLatency(m incoming) {
+// setLatency records a report from one of app's windows.
+func (l *Link) setLatency(app string, m incoming) {
 	lat := &Latency{
 		Samples:    max(0, min(m.Samples, 1_000_000)),
 		WaitMed:    ms(m.WaitMed),
@@ -304,31 +395,41 @@ func (l *Link) setLatency(m incoming) {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	a := l.apps[app]
+	if a == nil {
+		return // its last window just went
+	}
 	switch {
 	case m.Slow && lat.PictureMax > 0:
-		l.slowMS, l.slowCauses, l.slowAt = lat.PictureMax, knownCauses(m.Causes), now
+		a.slowMS, a.slowCauses, a.slowAt = lat.PictureMax, knownCauses(m.Causes), now
 	case lat.PictureMax > 0:
 		// A picture was timed and it wasn't slow: over
-		l.slowMS, l.slowCauses, l.slowAt = 0, nil, time.Time{}
+		a.slowMS, a.slowCauses, a.slowAt = 0, nil, time.Time{}
 	}
-	l.latency, l.latencyAt = lat, now
-	if len(l.recent) >= latencyKept {
-		l.recent = append(l.recent[:0], l.recent[1:]...)
+	a.latency, a.latencyAt = lat, now
+	if len(a.recent) >= latencyKept {
+		a.recent = append(a.recent[:0], a.recent[1:]...)
 	}
-	l.recent = append(l.recent, latencyAt{at: now, worst: lat.TotalMax})
+	a.recent = append(a.recent, latencyAt{at: now, worst: lat.TotalMax})
 }
 
-// Send queues cmd for every connected add-on. It reports whether at least
-// one add-on took it. An add-on that isn't reading keeps its commands in
-// order, knob turns in a row merged into one; a command is dropped and
-// counted only once MaxQueued are waiting (MaxQueued + PressReserve for a
-// button press).
-func (l *Link) Send(cmd engine.Command) bool {
+// Send queues cmd for every connected app; see SendTo.
+func (l *Link) Send(cmd engine.Command) bool { return l.SendTo("", cmd) }
+
+// SendTo queues cmd for every connected window of app, or of every app when
+// app is "". It reports whether at least one window took it. A window that
+// isn't reading keeps its commands in order, knob turns in a row merged
+// into one; a command is dropped and counted only once MaxQueued are
+// waiting (MaxQueued + PressReserve for a button press).
+func (l *Link) SendTo(app string, cmd engine.Command) bool {
 	t := time.Now().UnixMilli()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	taken := false
 	for c := range l.clients {
+		if app != "" && c.app != app {
+			continue
+		}
 		if c.push(cmd, t) {
 			taken = true
 		} else {
@@ -452,6 +553,7 @@ func (l *Link) Serve(ctx context.Context, ln net.Listener) error {
 // incoming covers every field an add-on message may carry.
 type incoming struct {
 	Type    string  `json:"type"`
+	App     string  `json:"app"`
 	Blender string  `json:"blender"`
 	Addon   string  `json:"addon"`
 	Scene   string  `json:"scene"`
@@ -482,6 +584,8 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 	_ = conn.SetReadDeadline(time.Now().Add(HelloTimeout))
 	var hello incoming
 	ok := sc.Scan() && json.Unmarshal(sc.Bytes(), &hello) == nil && hello.Type == "hello"
+	app, named := appID(hello.App)
+	ok = ok && named
 
 	l.mu.Lock()
 	l.pending--
@@ -496,16 +600,16 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	c := &client{conn: conn, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	c := &client{app: app, conn: conn, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	if l.hints != nil {
 		c.hints = l.hints
 		c.wake <- struct{}{} // buffered and new: never blocks
 	}
-	l.clients[c] = true
-	l.state.Blender = truncate(hello.Blender)
-	l.state.Addon = truncate(hello.Addon)
+	a := l.add(c)
+	a.state.Blender = truncate(hello.Blender)
+	a.state.Addon = truncate(hello.Addon)
 	l.mu.Unlock()
-	l.log.Info("add-on connected", "remote", conn.RemoteAddr(), "blender", hello.Blender, "addon", hello.Addon)
+	l.log.Info("app connected", "app", app, "remote", conn.RemoteAddr(), "blender", hello.Blender, "addon", hello.Addon)
 
 	go l.writeLoop(ctx, c)
 	defer l.remove(c)
@@ -523,17 +627,31 @@ func (l *Link) handle(ctx context.Context, conn net.Conn) {
 			continue
 		}
 		if m.Type == "latency" {
-			l.setLatency(m)
+			l.setLatency(app, m)
 			continue
 		}
 		if m.Type != "state" {
 			continue // ping, or something newer than this bridge knows
 		}
 		l.mu.Lock()
-		l.state.Scene = truncate(m.Scene)
-		l.state.Frame, l.state.Start, l.state.End, l.state.FPS = m.Frame, m.Start, m.End, m.FPS
+		if a := l.apps[app]; a != nil {
+			a.state.Scene = truncate(m.Scene)
+			a.state.Frame, a.state.Start, a.state.End, a.state.FPS = m.Frame, m.Start, m.End, m.FPS
+		}
 		l.mu.Unlock()
 	}
+}
+
+// add registers c and returns its app's data. The caller holds l.mu.
+func (l *Link) add(c *client) *appData {
+	l.clients[c] = true
+	a := l.apps[c.app]
+	if a == nil {
+		a = &appData{}
+		l.apps[c.app] = a
+	}
+	a.clients++
+	return a
 }
 
 func (l *Link) remove(c *client) {
@@ -544,14 +662,15 @@ func (l *Link) remove(c *client) {
 	}
 	delete(l.clients, c)
 	close(c.done)
-	if len(l.clients) == 0 {
-		l.state = State{}
-		l.latency, l.recent = nil, nil
-		l.slowMS, l.slowCauses, l.slowAt = 0, nil, time.Time{}
+	if a := l.apps[c.app]; a != nil {
+		a.clients--
+		if a.clients <= 0 {
+			delete(l.apps, c.app) // what it said goes with it
+		}
 	}
 	l.mu.Unlock()
 	_ = c.conn.Close()
-	l.log.Info("add-on disconnected", "remote", c.conn.RemoteAddr())
+	l.log.Info("app disconnected", "app", c.app, "remote", c.conn.RemoteAddr())
 }
 
 // writeLoop writes c's queue whenever it has something. An add-on that has

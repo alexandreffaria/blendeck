@@ -229,7 +229,13 @@ func tooltip(s app.Snapshot) string {
 	if s.Blender.Connected {
 		blender = "connected"
 	}
-	return "Consort\nController: " + ctl + "\nBlender: " + blender
+	tip := "Consort\nController: " + ctl + "\nBlender: " + blender
+	for _, a := range s.Blender.Apps {
+		if a.App != link.Blender {
+			tip += "\n" + a.Name + ": connected"
+		}
+	}
+	return tip
 }
 
 // console writes to stderr when there is one; built for Windows there isn't,
