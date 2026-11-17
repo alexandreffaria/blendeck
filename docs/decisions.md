@@ -9,10 +9,13 @@ With Blender and nomnom both open, the controls drive one of them at a
 time, and a button bound to Switch app moves them to the other (with more
 apps, to the next one, round and back). The tray's tooltip, the page's
 Apps panel and the title of the Fn list say which app is driven. The owner
-picked it over every command going to both apps. With one app open it is
-the one driven; when the driven app closes, the controls go to another
-that is open, and stay there when it comes back. Nothing is saved: each
-start drives the first app to connect.
+picked it over the other two options on the card: the editor used last,
+or the active profile picking the app.
+
+Not part of the decision, chosen when building it (#46 tracks whether to
+change it): with one app open it is the one driven; when the driven app
+closes, the controls go to another that is open, and stay there when it
+comes back. Nothing is saved: each start drives the first app to connect.
 
 ## Holding Fn shows what the controls do (202611167kkw)
 
