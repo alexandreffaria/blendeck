@@ -25,8 +25,11 @@ type Event struct {
 	Time    time.Time    `json:"time"`
 	Message midi.Message `json:"message"`
 	Hit     engine.Hit   `json:"hit"`
-	// Delivered is false when a command was made but no Blender was connected
+	// Delivered is false when a command was made but no app was connected
+	// to take it
 	Delivered bool `json:"delivered"`
+	// Switched names the app the Switch app button moved to
+	Switched string `json:"switched,omitempty"`
 }
 
 // Learned is the control captured by the latest learn, and the modifiers
@@ -55,10 +58,14 @@ type App struct {
 	// hintMod is the modifier being held on its own, with nothing else
 	// touched since its press at hintAt; "" when there is none. Once it has
 	// been held for HintDelay the add-on shows the hints (hintShown).
-	hintMu    sync.Mutex
-	hintMod   string
-	hintAt    time.Time
-	hintShown bool
+	// switchUntil is when the hints shown for a press of Switch app go
+	// again; shown says what the add-ons were last told.
+	hintMu      sync.Mutex
+	hintMod     string
+	hintAt      time.Time
+	hintShown   bool
+	switchUntil time.Time
+	shown       bool
 
 	mu      sync.Mutex
 	events  []Event // ring buffer, oldest first once full
@@ -97,6 +104,10 @@ func (a *App) RunID() string { return a.run }
 // can shorten it.
 var HintDelay = 500 * time.Millisecond
 
+// SwitchShow is how long the hints, which name the app the controls drive,
+// show after a press of Switch app. A variable so tests can shorten it.
+var SwitchShow = 1500 * time.Millisecond
+
 // hintOn follows one controller message for the hints: a modifier's press
 // starts the wait, and anything else (its release, any other control,
 // bound or not) ends it and hides the hints.
@@ -119,6 +130,7 @@ func (a *App) hintOn(m midi.Message, hit engine.Hit, now time.Time) {
 func (a *App) hintTick(now time.Time) {
 	a.hintMu.Lock()
 	defer a.hintMu.Unlock()
+	a.showHints(now) // a switch's time may be up
 	if a.hintMod == "" || a.hintShown || now.Sub(a.hintAt) < HintDelay {
 		return
 	}
@@ -129,7 +141,7 @@ func (a *App) hintTick(now time.Time) {
 		return
 	}
 	a.hintShown = true
-	a.link.ShowHints(true)
+	a.showHints(now)
 }
 
 // hintOff ends the wait and hides the hints: the device went away, so the
@@ -141,12 +153,37 @@ func (a *App) hintOff() {
 	a.hideHints()
 }
 
-// hideHints hides the hints if they are shown. The caller holds hintMu.
+// hideHints hides the hints a held modifier showed, if they are shown;
+// those shown for a switch stay their time. The caller holds hintMu.
 func (a *App) hideHints() {
-	if a.hintShown {
-		a.hintShown = false
-		a.link.ShowHints(false)
+	a.hintShown = false
+	a.showHints(time.Now())
+}
+
+// showHints tells the add-ons to show the hints while a modifier has been
+// held long enough or a switch is fresh, and to hide them otherwise. The
+// caller holds hintMu.
+func (a *App) showHints(now time.Time) {
+	show := a.hintShown || now.Before(a.switchUntil)
+	if show != a.shown {
+		a.shown = show
+		a.link.ShowHints(show)
 	}
+}
+
+// switchApp moves the controls to the next connected app and shows the
+// hints, which name it, for SwitchShow. It returns the app's name, "" when
+// none is connected.
+func (a *App) switchApp(now time.Time) string {
+	_, name := a.link.Switch()
+	if name == "" {
+		return ""
+	}
+	a.hintMu.Lock()
+	defer a.hintMu.Unlock()
+	a.switchUntil = now.Add(SwitchShow)
+	a.showHints(now)
+	return name
 }
 
 // Run handles controller messages until ctx ends. When the device goes away,
@@ -180,14 +217,18 @@ func (a *App) Run(ctx context.Context, messages <-chan midi.Message) {
 func (a *App) Handle(m midi.Message) {
 	hit, learned := a.engine.Handle(m)
 	a.hintOn(m, hit, time.Now())
-	delivered := false
-	if hit.Command != nil {
+	delivered, switched := false, ""
+	switch {
+	case hit.Command != nil && hit.Command.Type == engine.SwitchApp:
+		switched = a.switchApp(time.Now())
+		delivered = switched != ""
+	case hit.Command != nil:
 		delivered = a.link.Send(*hit.Command)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.seq++
-	ev := Event{Seq: a.seq, Time: time.Now(), Message: m, Hit: hit, Delivered: delivered}
+	ev := Event{Seq: a.seq, Time: time.Now(), Message: m, Hit: hit, Delivered: delivered, Switched: switched}
 	if len(a.events) < EventLogSize {
 		a.events = append(a.events, ev)
 	} else {
@@ -269,8 +310,9 @@ func (a *App) SetConfig(cfg config.Config) error {
 // Devices lists the MIDI inputs.
 func (a *App) Devices() ([]string, error) { return a.devices() }
 
-// Test sends cmd to Blender as if a control had made it.
-func (a *App) Test(cmd engine.Command) bool { return a.link.Send(cmd) }
+// Test sends cmd to Blender as if a control had made it, whichever app the
+// controls drive: the page's test buttons are Blender's.
+func (a *App) Test(cmd engine.Command) bool { return a.link.SendTo(link.Blender, cmd) }
 
 // ConfigPath is where the config is saved.
 func (a *App) ConfigPath() string { return a.store.Path() }

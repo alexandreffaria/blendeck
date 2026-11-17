@@ -684,13 +684,14 @@ func TestHelloWithBadAppRefused(t *testing.T) {
 
 // With Blender and nomnom both connected, each keeps what it said: nomnom's
 // state and latency never show as Blender's, both are listed, and a command
-// goes to both (until a button picks one; SendTo already can).
+// goes to the target only (SendTo picks any).
 func TestTwoApps(t *testing.T) {
 	l, addr := start(t)
 	blender := dial(t, addr, `{"type":"hello","blender":"5.1.0","addon":"0.19.0"}`)
+	eventually(t, "Blender connected", func() bool { return l.State().Connected })
 	nomnom := dial(t, addr, `{"type":"hello","app":"nomnom"}`)
 	eventually(t, "both connected", func() bool { return len(l.State().Apps) == 2 })
-	want := []App{{App: Blender, Name: "Blender", Clients: 1}, {App: "nomnom", Name: "nomnom", Clients: 1}}
+	want := []App{{App: Blender, Name: "Blender", Clients: 1, Target: true}, {App: "nomnom", Name: "nomnom", Clients: 1}}
 	if got := l.State().Apps; !reflect.DeepEqual(got, want) {
 		t.Fatalf("apps = %+v", got)
 	}
@@ -715,10 +716,8 @@ func TestTwoApps(t *testing.T) {
 		t.Fatal("Send found no receiver")
 	}
 	br, nr := bufio.NewReader(blender), bufio.NewReader(nomnom)
-	for name, got := range map[string]engine.Command{"Blender": readCommand(t, blender, br), "nomnom": readCommand(t, nomnom, nr)} {
-		if got != (engine.Command{Type: "scrub", Frames: 3}) {
-			t.Errorf("%s got %+v", name, got)
-		}
+	if got := readCommand(t, blender, br); got != (engine.Command{Type: "scrub", Frames: 3}) {
+		t.Errorf("Blender got %+v", got)
 	}
 
 	// SendTo reaches one app only
@@ -764,5 +763,185 @@ func TestAppCountsItsWindows(t *testing.T) {
 	eventually(t, "one window", func() bool { return l.State().Clients == 1 })
 	if got := l.State().Apps; len(got) != 1 || got[0].Clients != 1 {
 		t.Fatalf("apps = %+v", got)
+	}
+}
+
+// lines reads what c was sent within a moment: hints and commands.
+func lines(t *testing.T, c net.Conn, r *bufio.Reader) []string {
+	t.Helper()
+	var out []string
+	for {
+		c.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return out
+		}
+		out = append(out, line)
+	}
+}
+
+// commandsIn keeps the commands of lines, leaving the hints out.
+func commandsIn(t *testing.T, ls []string) []engine.Command {
+	t.Helper()
+	var out []engine.Command
+	for _, line := range ls {
+		var got engine.Command
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatalf("line %q: %v", line, err)
+		}
+		if got.Type != "hints" {
+			out = append(out, got)
+		}
+	}
+	return out
+}
+
+// Commands go to the target app only: the other app gets none of them,
+// and Switch moves them over (decision 20261117h3jl).
+func TestCommandsGoToTheTargetOnly(t *testing.T) {
+	l, addr := start(t)
+	blender := dialHello(t, addr)
+	eventually(t, "Blender connected", func() bool { return l.State().Connected })
+	nomnom := dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	eventually(t, "both connected", func() bool { return len(l.State().Apps) == 2 })
+	br, nr := bufio.NewReader(blender), bufio.NewReader(nomnom)
+	if id, name := l.Target(); id != Blender || name != "Blender" || l.State().Target != Blender {
+		t.Fatalf("target %q %q, want the first app to connect", id, name)
+	}
+
+	l.Send(engine.Command{Type: "cut"})
+	if got := commandsIn(t, lines(t, blender, br)); !reflect.DeepEqual(got, []engine.Command{{Type: "cut"}}) {
+		t.Fatalf("Blender got %+v", got)
+	}
+	if got := commandsIn(t, lines(t, nomnom, nr)); got != nil {
+		t.Fatalf("nomnom got %+v while Blender is the target", got)
+	}
+
+	if id, name := l.Switch(); id != "nomnom" || name != "nomnom" {
+		t.Fatalf("switched to %q %q", id, name)
+	}
+	l.Send(engine.Command{Type: "undo"})
+	if got := commandsIn(t, lines(t, nomnom, nr)); !reflect.DeepEqual(got, []engine.Command{{Type: "undo"}}) {
+		t.Fatalf("nomnom got %+v", got)
+	}
+	if got := commandsIn(t, lines(t, blender, br)); got != nil {
+		t.Fatalf("Blender got %+v after the switch", got)
+	}
+	want := []App{{App: Blender, Name: "Blender", Clients: 1}, {App: "nomnom", Name: "nomnom", Clients: 1, Target: true}}
+	if s := l.State(); !reflect.DeepEqual(s.Apps, want) || s.Target != "nomnom" {
+		t.Fatalf("state after the switch: %+v", s)
+	}
+}
+
+// Switch cycles through the connected apps in the order State lists them,
+// back to the first after the last; with one app it stays, with none there
+// is nothing.
+func TestSwitchCycles(t *testing.T) {
+	l, addr := start(t)
+	if id, name := l.Switch(); id != "" || name != "" {
+		t.Fatalf("switched to %q %q with nothing connected", id, name)
+	}
+	if l.Send(engine.Command{Type: "cut"}) {
+		t.Fatal("sent with nothing connected")
+	}
+	dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	eventually(t, "nomnom", func() bool { return len(l.State().Apps) == 1 })
+	if id, _ := l.Target(); id != "nomnom" {
+		t.Fatalf("one app connected is the target by itself; got %q", id)
+	}
+	if id, _ := l.Switch(); id != "nomnom" {
+		t.Fatalf("switch with one app went to %q", id)
+	}
+	dial(t, addr, `{"type":"hello","app":"premiere"}`)
+	dialHello(t, addr)
+	eventually(t, "three apps", func() bool { return len(l.State().Apps) == 3 })
+	if id, _ := l.Target(); id != "nomnom" {
+		t.Fatalf("an app connecting took the target: %q", id)
+	}
+	var got []string
+	for range 4 {
+		_, name := l.Switch()
+		got = append(got, name)
+	}
+	if want := []string{"premiere", "Blender", "nomnom", "premiere"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("switched through %q, want %q", got, want)
+	}
+}
+
+// When the target's last window goes, another connected app is the target;
+// when nothing is left there is none, and the next app to connect is it.
+func TestTargetFallsBack(t *testing.T) {
+	l, addr := start(t)
+	blender := dialHello(t, addr)
+	eventually(t, "Blender", func() bool { return l.State().Connected })
+	second := dialHello(t, addr)
+	eventually(t, "two windows", func() bool { return l.State().Clients == 2 })
+	nomnom := dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	eventually(t, "nomnom", func() bool { return len(l.State().Apps) == 2 })
+
+	second.Close() // Blender still has a window: still the target
+	eventually(t, "one window", func() bool { return l.State().Clients == 1 })
+	if id, _ := l.Target(); id != Blender {
+		t.Fatalf("target %q with a Blender window left", id)
+	}
+	blender.Close()
+	eventually(t, "Blender gone", func() bool { return !l.State().Connected })
+	if id, _ := l.Target(); id != "nomnom" {
+		t.Fatalf("target %q after Blender left, want nomnom", id)
+	}
+	nr := bufio.NewReader(nomnom)
+	l.Send(engine.Command{Type: "cut"})
+	if got := commandsIn(t, lines(t, nomnom, nr)); !reflect.DeepEqual(got, []engine.Command{{Type: "cut"}}) {
+		t.Fatalf("nomnom got %+v", got)
+	}
+
+	back := dialHello(t, addr) // Blender coming back doesn't take it back
+	eventually(t, "Blender back", func() bool { return l.State().Connected })
+	if id, _ := l.Target(); id != "nomnom" {
+		t.Fatalf("target %q after Blender came back", id)
+	}
+	nomnom.Close()
+	eventually(t, "nomnom gone", func() bool { return len(l.State().Apps) == 1 })
+	if id, _ := l.Target(); id != Blender {
+		t.Fatalf("target %q after nomnom left", id)
+	}
+	back.Close()
+	eventually(t, "nothing", func() bool { return len(l.State().Apps) == 0 })
+	if id, name := l.Target(); id != "" || name != "" || l.State().Target != "" {
+		t.Fatalf("target %q %q with nothing connected", id, name)
+	}
+	if l.Send(engine.Command{Type: "cut"}) {
+		t.Fatal("sent with nothing connected")
+	}
+	dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	eventually(t, "nomnom again", func() bool { id, _ := l.Target(); return id == "nomnom" })
+}
+
+// The hints name the target, and every app hears when it changes.
+func TestHintsNameTheTarget(t *testing.T) {
+	l, addr := start(t)
+	l.SetHints("Video editing", nil)
+	blender := dialHello(t, addr)
+	blender.SetReadDeadline(time.Now().Add(3 * time.Second))
+	br := bufio.NewReader(blender)
+	if m := readHints(t, br); m.Target != "Blender" {
+		t.Fatalf("on connect: %+v", m)
+	}
+	eventually(t, "Blender", func() bool { return l.State().Connected })
+	nomnom := dial(t, addr, `{"type":"hello","app":"nomnom"}`)
+	nomnom.SetReadDeadline(time.Now().Add(3 * time.Second))
+	nr := bufio.NewReader(nomnom)
+	if m := readHints(t, nr); m.Target != "Blender" {
+		t.Fatalf("nomnom on connect: %+v", m)
+	}
+	l.Switch()
+	for name, r := range map[string]*bufio.Reader{"Blender": br, "nomnom": nr} {
+		if m := readHints(t, r); m.Target != "nomnom" || m.Profile != "Video editing" {
+			t.Fatalf("%s after the switch: %+v", name, m)
+		}
+	}
+	nomnom.Close()
+	if m := readHints(t, br); m.Target != "Blender" {
+		t.Fatalf("after nomnom left: %+v", m)
 	}
 }

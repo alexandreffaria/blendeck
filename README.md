@@ -28,6 +28,7 @@ and keeps profiles.
 | A sixth knob you pick | Trims the clip handles at the playhead a frame per click, and the playhead rides along. On a clip's start, left shows more of its beginning and right less; on a clip's end, right shows more of its end and left less. Every clip on any channel with a handle there moves, so a picture and its sound stay in sync; where two clips meet, the cut between them rolls. A handle stops at the end of the clip's footage, at the next clip on its channel, and one frame from the clip's other end; locked strips stay put, and with no handle at the playhead nothing happens. One turn of the knob is one Ctrl+Z. To lengthen a clip: open a gap with the move knob, jump to the clip's start or end, and turn | Only shortens the clip you turn into: right moves only clip starts, left only ends. Where two clips meet it opens a gap instead of rolling the cut, and the neighbor never changes; a lone handle turned outwards stays put |
 | A seventh button you pick | Zooms and slides every timeline to show the whole edit, like Home over the strips: every strip in view. Only the view changes; the playhead and playback stay as they are | The same |
 | An eighth button you pick | Saves the .blend file in place, like Ctrl+S, after any edit sent with it. A file never saved opens Blender's Save As window, as Ctrl+S does, in the first Blender window; you pick the name and folder. Nothing while you drag a strip or render; the panel shows when it last saved or why it didn't | The same |
+| A ninth button you pick | Switch app: with Blender and nomnom (or another app) both connected, moves the controls to the next one; every knob and button then drives that app only. The tray's tooltip says which ("Driving: nomnom"), the page's Apps panel marks it, and the Fn list shows it in its title; after a press the list shows for a moment over Blender's timeline so you see where the controls went. With one app connected it is the one driven, and when the driven app closes the controls go to the other. Nothing is saved: each start drives the first app to connect | The same |
 
 More come one at a time.
 
@@ -38,8 +39,9 @@ delete only those. Turn it off in the add-on's preferences or its panel.
 
 **Forgot a control? Hold Fn**: with Fn held on its own for half a second,
 a list of every control and what it does (and does with Fn) shows over the
-timeline, using the names you gave the controls on the page. It goes when
-you let go or use any control.
+timeline, using the names you gave the controls on the page, under the
+app the controls drive ("Driving: Blender"). It goes when you let go or
+use any control.
 
 **The timeline recenters when playback stops**: whatever stops it (play /
 pause, the end of the play range, Space or undo in Blender), every timeline
@@ -72,7 +74,9 @@ slides so the playhead is in the middle, at the same zoom.
    with Fn held,
    and on "Pan timeline" and turn the knob you want for sliding the view,
    and on "View whole timeline" and press the button you want for it,
-   and on "Save file" and press the button you want for saving.
+   and on "Save file" and press the button you want for saving,
+   and on "Switch app" and press the button you want for moving the
+   controls between Blender and nomnom.
    A `config.json` from an older version has no row for a new control:
    **Add binding**, pick its action, and learn it.
 
@@ -116,13 +120,16 @@ bridge drops it and the add-on reconnects by itself a second later.
 - **Bindings**: control → action, with frames (scrub, moving strips, trimming), zoom steps (zoom) or percent of the view (pan) per click and the knob's
   encoding (most send 1 / 127 for one click right / left). Jumping between
   edits or cuts has an encoding and is always one per click. Button actions
-  (cut, undo, ripple delete, playback, view whole timeline, save) have neither.
+  (cut, undo, ripple delete, playback, view whole timeline, save, switch app) have neither.
 - **Modifiers**: buttons like Fn that switch bindings while held.
 - **Profiles**: named sets of bindings; the selected one is active.
 - **Controls**: name each control after its label on the device ("Knob 1",
   "Wheel"), and the page shows that name instead of its MIDI number in the
   bindings, the modifiers and the monitor. Every profile shares the names.
-- **Blender**: connection, scene, playhead, and test buttons.
+- **Apps**: every connected app; the one the controls drive is marked
+  **Driving**.
+- **Blender**: connection, scene, playhead, and test buttons (they always
+  go to Blender, whichever app the controls drive).
 
 - **Startup**: Start with Windows (also in the tray menu).
 
@@ -133,7 +140,7 @@ Flags: `-config path`, `-addr 127.0.0.1:7870`, `-link 127.0.0.1:7871`,
 
 `consort.exe` has no console window. It sits in the notification area as
 the knob mascot: hover it to see whether the controller and Blender are
-connected, click it for the page, right-click it for **Open settings page**,
+connected and which app the controls drive, click it for the page, right-click it for **Open settings page**,
 **Start with Windows** and **Quit Consort** (which closes the MIDI device,
 the Blender link and the page cleanly). Starting it again while it runs
 just opens the page.

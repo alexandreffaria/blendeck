@@ -16,7 +16,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.20.0"
+ADDON_VERSION = "0.21.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -43,7 +43,7 @@ class _Link:
     move_undo = 0.0  # when the move or trim knob last changed strips with no undo step yet (0: none waiting)
     undo_message = "Move strips"  # what that waiting undo step is called
     note = ""  # what the last save press did, shown in the panel
-    hints = None  # (profile, [(control, text)], show): what the controls do, from the bridge
+    hints = None  # (profile, [(control, text)], show, target): what the controls do, from the bridge
 
 
 link = _Link()
@@ -144,17 +144,19 @@ def _unwatch_timeline():
 
 def _draw_hints():
     """Draws what the controls do over the timeline while the bridge says
-    to show it: a modifier held on its own (decision 202611167kkw). Blender
-    calls this on every redraw of a video editor's timeline. Never raises,
-    and says so only once if drawing fails."""
+    to show it: a modifier held on its own (decision 202611167kkw), or the
+    Switch app button just pressed. The title names the app the controls
+    drive (decision 20261117h3jl), so a switch away from Blender shows here
+    too. Blender calls this on every redraw of a video editor's timeline.
+    Never raises, and says so only once if drawing fails."""
     try:
         hints = link.hints
-        if not hints or not hints[2] or not hints[1]:
+        if not hints or not hints[2] or not (hints[1] or hints[3]):
             return
         region = bpy.context.region
         if region is None:
             return
-        _draw_hint_box(region, hints[0] or "Consort", hints[1])
+        _draw_hint_box(region, protocol.hint_title(hints[0], hints[3]), hints[1])
     except Exception as e:
         if not hints_draw.failed:
             hints_draw.failed = True
@@ -174,6 +176,8 @@ def _draw_hint_box(region, title, lines):
 
     rows = protocol.hint_rows(len(lines), region.height - 2 * margin - 2 * pad - line, line)
     columns = [lines[i:i + rows] for i in range(0, len(lines), rows)]
+    if not lines:
+        rows = 0  # the title alone: which app the controls drive
     widths = []  # per column: its control names' width, its texts' width
     for column in columns:
         widths.append((

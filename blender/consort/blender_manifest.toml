@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "consort"
-version = "0.20.0"
+version = "0.21.0"
 name = "Consort"
 tagline = "Drive the video editor from a MIDI controller like the Loupedeck+"
 maintainer = "Consort contributors"
