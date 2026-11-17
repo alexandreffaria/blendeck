@@ -197,7 +197,7 @@ it, then zooms. (Blender's own zoom keys zoom around the view's middle.)
 
 The save button on a file that has no name yet opens Blender's Save As
 window, as Ctrl+S does, in the first Blender window; you pick the name and
-folder. A press while that window is open does nothing more. The Blendeck
+folder. A press while that window is open does nothing more. The Synergy
 panel says the window is open, then "Saved at ..." or that Save As was
 cancelled.
 

@@ -1,5 +1,9 @@
+/synergy.exe
+/synergy
+/synergy.log*
+# left over from before the rename to Synergy
 /blendeck.exe
-/blendeck
+/blendeck.log*
 /dist/
 /config.json
 *.tmp

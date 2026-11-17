@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/midi"
 )
 
 func knob(v int) midi.Message {

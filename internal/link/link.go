@@ -47,8 +47,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/engine"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/engine"
 )
 
 // DefaultAddr is where the add-on looks for the bridge.

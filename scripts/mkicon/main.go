@@ -18,7 +18,7 @@ import (
 	"os"
 )
 
-const out = "internal/tray/blendeck.ico"
+const out = "internal/tray/synergy.ico"
 
 // The mascot's colors (the page's --amber, --amber-ink, --mint, --blush).
 var (

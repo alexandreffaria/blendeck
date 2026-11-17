@@ -1,4 +1,4 @@
-"""Wire format and playhead math for the Blendeck link. No bpy here, so it can
+"""Wire format and playhead math for the Synergy link. No bpy here, so it can
 be tested without Blender."""
 
 import ipaddress

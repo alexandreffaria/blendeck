@@ -11,15 +11,15 @@ import (
 // testEntry works under a throwaway key instead of the real Run key.
 func testEntry(t *testing.T, exe string) *Entry {
 	t.Helper()
-	key := fmt.Sprintf(`Software\BlendeckTest-%d`, os.Getpid())
+	key := fmt.Sprintf(`Software\SynergyTest-%d`, os.Getpid())
 	t.Cleanup(func() { _ = registry.DeleteKey(registry.CURRENT_USER, key) })
-	e := New("Blendeck", exe, "-no-browser")
+	e := New("Synergy", exe, "-no-browser")
 	e.key = key
 	return e
 }
 
 func TestSetOnOff(t *testing.T) {
-	e := testEntry(t, `C:\Tools\Blend Deck\blendeck.exe`)
+	e := testEntry(t, `C:\Tools\Blend Deck\synergy.exe`)
 	if on, err := e.Enabled(); on || err != nil {
 		t.Fatalf("before: Enabled = %v, %v", on, err)
 	}
@@ -32,7 +32,7 @@ func TestSetOnOff(t *testing.T) {
 	if on, err := e.Enabled(); !on || err != nil {
 		t.Fatalf("after on: Enabled = %v, %v", on, err)
 	}
-	if v, err := e.read(); err != nil || v != `"C:\Tools\Blend Deck\blendeck.exe" -no-browser` {
+	if v, err := e.read(); err != nil || v != `"C:\Tools\Blend Deck\synergy.exe" -no-browser` {
 		t.Fatalf("value = %q, %v", v, err)
 	}
 	if err := e.Set(false); err != nil {
@@ -44,11 +44,11 @@ func TestSetOnOff(t *testing.T) {
 }
 
 func TestEntryForAnotherCopyIsOff(t *testing.T) {
-	old := testEntry(t, `C:\old\blendeck.exe`)
+	old := testEntry(t, `C:\old\synergy.exe`)
 	if err := old.Set(true); err != nil {
 		t.Fatal(err)
 	}
-	moved := New("Blendeck", `C:\new\blendeck.exe`, "-no-browser")
+	moved := New("Synergy", `C:\new\synergy.exe`, "-no-browser")
 	moved.key = old.key
 	if on, _ := moved.Enabled(); on {
 		t.Fatal("an entry for another copy counts as on")
@@ -58,5 +58,75 @@ func TestEntryForAnotherCopyIsOff(t *testing.T) {
 	}
 	if on, _ := moved.Enabled(); !on {
 		t.Fatal("turning it on didn't point it at this copy")
+	}
+}
+
+// oldEntry writes a Run value under the name the program had before.
+func oldEntry(t *testing.T, key, command string) {
+	t.Helper()
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer k.Close()
+	if err := k.SetStringValue("Blendeck", command); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigrateMovesTheOldEntry(t *testing.T) {
+	for _, old := range []string{
+		`"C:\Tools\Blend Deck\blendeck.exe" -no-browser`, // the old exe, maybe elsewhere
+		`C:\Tools\synergy.exe -no-browser`,               // this exe already, by its old name
+	} {
+		e := testEntry(t, `C:\Tools\synergy.exe`)
+		e.name = "Synergy"
+		oldEntry(t, e.key, old)
+		moved, err := e.Migrate("Blendeck", "blendeck.exe")
+		if !moved || err != nil {
+			t.Fatalf("%s: Migrate = %v, %v", old, moved, err)
+		}
+		if on, err := e.Enabled(); !on || err != nil {
+			t.Fatalf("%s: the new entry isn't on: %v, %v", old, on, err)
+		}
+		if v, err := e.readValue("Blendeck"); v != "" || err != nil {
+			t.Fatalf("%s: the old entry is still there: %q, %v", old, v, err)
+		}
+		if moved, err := e.Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
+			t.Fatalf("%s: a second Migrate = %v, %v", old, moved, err)
+		}
+	}
+}
+
+func TestMigrateLeavesOthersAlone(t *testing.T) {
+	e := testEntry(t, `C:\Tools\synergy.exe`)
+	e.name = "Synergy"
+	if moved, err := e.Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
+		t.Fatalf("no old entry: Migrate = %v, %v", moved, err)
+	}
+	if on, _ := e.Enabled(); on {
+		t.Fatal("no old entry, but the new one was turned on")
+	}
+
+	oldEntry(t, e.key, `"C:\Other\something.exe" /quiet`)
+	if moved, err := e.Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
+		t.Fatalf("another program's entry: Migrate = %v, %v", moved, err)
+	}
+	if v, _ := e.readValue("Blendeck"); v == "" {
+		t.Fatal("another program's entry was removed")
+	}
+	if on, _ := e.Enabled(); on {
+		t.Fatal("another program's entry turned the new one on")
+	}
+
+	// A `go run` binary has no entry of its own: the old one stays.
+	oldEntry(t, e.key, `C:\Tools\blendeck.exe -no-browser`)
+	gone := New("Synergy", "")
+	gone.key = e.key
+	if moved, err := gone.Migrate("Blendeck", "blendeck.exe"); moved || err != nil {
+		t.Fatalf("unsupported: Migrate = %v, %v", moved, err)
+	}
+	if v, _ := e.readValue("Blendeck"); v == "" {
+		t.Fatal("unsupported, but the old entry was removed")
 	}
 }

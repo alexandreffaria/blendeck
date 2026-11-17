@@ -1,12 +1,12 @@
 schema_version = "1.0.0"
 
-id = "blendeck"
-version = "0.18.0"
-name = "Blendeck"
+id = "synergy"
+version = "0.19.0"
+name = "Synergy"
 tagline = "Drive the video editor from a MIDI controller like the Loupedeck+"
-maintainer = "Blendeck contributors"
+maintainer = "Synergy contributors"
 type = "add-on"
-website = "https://github.com/alexandreffaria/blendeck"
+website = "https://github.com/alexandreffaria/synergy"
 tags = ["Sequencer", "User Interface"]
 
 blender_version_min = "4.2.0"
@@ -14,4 +14,4 @@ blender_version_min = "4.2.0"
 license = ["SPDX:MIT"]
 
 [permissions]
-network = "Talks to the Blendeck bridge on this computer (127.0.0.1)"
+network = "Talks to the Synergy bridge on this computer (127.0.0.1)"

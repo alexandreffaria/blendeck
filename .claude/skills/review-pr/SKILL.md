@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Second review of a Blendeck pull request against .github/REVIEW_CHECKLIST.md before it's merged. Use when asked to review a PR, run the checklist, or "/review-pr <number>".
+description: Second review of a Synergy pull request against .github/REVIEW_CHECKLIST.md before it's merged. Use when asked to review a PR, run the checklist, or "/review-pr <number>".
 argument-hint: <pr-number>
 ---
 
@@ -23,7 +23,7 @@ Don't push commits to the PR; report.
    "Before you push" commands there:
    ```sh
    git fetch origin main pull/$ARGUMENTS/head:review/pr-$ARGUMENTS
-   git worktree add ../blendeck-review-$ARGUMENTS review/pr-$ARGUMENTS
+   git worktree add ../synergy-review-$ARGUMENTS review/pr-$ARGUMENTS
    bash scripts/pr-guard.sh origin/main review/pr-$ARGUMENTS
    ```
    Remove the worktree when done (`git worktree remove`).

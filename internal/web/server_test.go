@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexandreffaria/blendeck/internal/app"
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/link"
-	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/synergy/internal/app"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/link"
+	"github.com/alexandreffaria/synergy/internal/midi"
 )
 
 func newServer(t *testing.T) http.Handler {
@@ -307,7 +307,7 @@ func TestPutConfigShuttleBindings(t *testing.T) {
 func TestIndexServed(t *testing.T) {
 	h := newServer(t)
 	rec := do(h, "GET", "/", "127.0.0.1:7870", "", "")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<title>Blendeck</title>") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<title>Synergy</title>") {
 		t.Fatalf("%d", rec.Code)
 	}
 }

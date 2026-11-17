@@ -1,12 +1,12 @@
-# Blendeck
+# Synergy
 
 Drives Blender's video editor from a Loupedeck+ (or any MIDI controller).
 Three parts:
 
-- `cmd/blendeck` + `internal/`: the Go bridge. Reads MIDI (winmm, no cgo),
+- `cmd/synergy` + `internal/`: the Go bridge. Reads MIDI (winmm, no cgo),
   maps it through the active profile (`internal/engine`), sends commands to
   Blender (`internal/link`), serves the setup page (`internal/web`).
-- `blender/blendeck`: the Blender extension. Connects to the bridge on
+- `blender/synergy`: the Blender extension. Connects to the bridge on
   127.0.0.1:7871 and applies commands. `protocol.py` has no `bpy` so it can be
   tested without Blender.
 - `internal/web/static/index.html`: the page (monitor, learn, profiles).
@@ -48,5 +48,5 @@ GOOS=linux go vet ./...   # the non-Windows build still compiles
 python -I -m unittest discover -s blender/tests
 ```
 
-To try it for real: `./build.ps1`, run `blendeck.exe`, install
-`dist/blendeck-addon.zip` in Blender (Get Extensions › Install from Disk).
+To try it for real: `./build.ps1`, run `synergy.exe`, install
+`dist/synergy-addon.zip` in Blender (Get Extensions › Install from Disk).

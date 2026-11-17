@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/engine"
-	"github.com/alexandreffaria/blendeck/internal/link"
-	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/engine"
+	"github.com/alexandreffaria/synergy/internal/link"
+	"github.com/alexandreffaria/synergy/internal/midi"
 )
 
 // EventLogSize is how many recent events the monitor keeps.

@@ -19,6 +19,7 @@ const RunKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 // Entry is one program's sign-in entry.
 type Entry struct {
 	name    string
+	exe     string
 	command string
 	key     string
 }
@@ -26,7 +27,7 @@ type Entry struct {
 // New makes the entry name that starts exe with args. An empty exe makes an
 // entry that is not Supported.
 func New(name, exe string, args ...string) *Entry {
-	e := &Entry{name: name, key: RunKey}
+	e := &Entry{name: name, exe: exe, key: RunKey}
 	if exe != "" {
 		e.command = quote(exe)
 		for _, a := range args {
@@ -49,7 +50,7 @@ func (e *Entry) Enabled() (bool, error) {
 	if !e.Supported() {
 		return false, nil
 	}
-	v, err := e.read()
+	v, err := e.readValue(e.name)
 	if err != nil || v == "" {
 		return false, err
 	}
@@ -65,7 +66,55 @@ func (e *Entry) Set(on bool) error {
 	if on {
 		return e.write()
 	}
-	return e.remove()
+	return e.deleteValue(e.name)
+}
+
+// Migrate moves an entry the program left under an older name (before a
+// rename) to this one, so it keeps starting at sign-in under one name, not
+// two or none. The old entry moves only when it starts this exe or one named
+// like oldExes (say, the old program's file, maybe in another folder); an
+// entry of that name for some other program is left alone, and so is
+// everything when Set can't work. It says whether it moved one.
+func (e *Entry) Migrate(oldName string, oldExes ...string) (bool, error) {
+	if !e.Supported() || oldName == "" || strings.EqualFold(oldName, e.name) {
+		return false, nil
+	}
+	v, err := e.readValue(oldName)
+	if err != nil || v == "" {
+		return false, err
+	}
+	exe := commandExe(v)
+	ours := strings.EqualFold(exe, e.exe) || strings.EqualFold(baseName(exe), baseName(e.exe))
+	for _, o := range oldExes {
+		ours = ours || strings.EqualFold(baseName(exe), o)
+	}
+	if !ours {
+		return false, nil
+	}
+	if err := e.write(); err != nil {
+		return false, err
+	}
+	return true, e.deleteValue(oldName)
+}
+
+// commandExe is the program a Run value starts: the quoted first part, or
+// everything up to the first space.
+func commandExe(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if rest, ok := strings.CutPrefix(cmd, `"`); ok {
+		exe, _, _ := strings.Cut(rest, `"`)
+		return exe
+	}
+	exe, _, _ := strings.Cut(cmd, " ")
+	return exe
+}
+
+// baseName is a path's last part, for Windows paths on any system.
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `\/`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // quote wraps s in double quotes when it has spaces, the way Windows command

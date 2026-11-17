@@ -1,4 +1,4 @@
-"""Packs blender/blendeck into dist/blendeck-addon.zip, ready for Blender's
+"""Packs blender/synergy into dist/synergy-addon.zip, ready for Blender's
 "Install from Disk"."""
 
 import os
@@ -6,8 +6,8 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "blender", "blendeck")
-OUT = os.path.join(ROOT, "dist", "blendeck-addon.zip")
+SRC = os.path.join(ROOT, "blender", "synergy")
+OUT = os.path.join(ROOT, "dist", "synergy-addon.zip")
 
 
 def main():

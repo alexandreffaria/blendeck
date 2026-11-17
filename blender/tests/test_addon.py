@@ -20,6 +20,7 @@ class _Prefs:
     clamp = True
     scrub_audio = False  # tests that want it turn it on
     follow_selection = False  # tests that want it turn it on
+    carried_over = False
 
 
 # Blender's frame_change_post: called with the scene after every frame_set
@@ -453,7 +454,7 @@ def _install_fake_bpy():
     prefs = _Prefs()
     scene = _Scene()
     bpy.context = types.SimpleNamespace(
-        preferences=types.SimpleNamespace(addons={"blendeck": types.SimpleNamespace(preferences=prefs)}),
+        preferences=types.SimpleNamespace(addons={"synergy": types.SimpleNamespace(preferences=prefs)}),
         scene=scene,
         sequencer_scene=None,
         window_manager=types.SimpleNamespace(windows=[]),
@@ -475,7 +476,7 @@ def _install_fake_bpy():
 
 
 PREFS, SCENE = _install_fake_bpy()
-import blendeck as addon  # noqa: E402
+import synergy as addon  # noqa: E402
 
 
 def free_port():
@@ -2795,6 +2796,61 @@ class AddonTest(unittest.TestCase):
         finally:
             conn.close()
             bridge.close()
+
+class OldAddonTest(unittest.TestCase):
+    """The add-on before the rename was the Blendeck extension, which Blender
+    keeps as another add-on until it is uninstalled."""
+
+    OLD = "bl_ext.user_default.blendeck"
+
+    def setUp(self):
+        addon._close("reset")
+        self.saved = {n: getattr(PREFS, n) for n in addon.CARRIED_PREFS}
+        PREFS.enabled = True
+        PREFS.host = "127.0.0.1"
+        PREFS.carried_over = False
+
+    def tearDown(self):
+        addon.bpy.context.preferences.addons.pop(self.OLD, None)
+        addon._close("reset")
+        for n, v in self.saved.items():
+            setattr(PREFS, n, v)
+        PREFS.carried_over = False
+
+    def test_waits_for_the_old_addon_and_takes_its_settings(self):
+        bridge = Bridge()
+        self.addCleanup(bridge.close)
+        PREFS.port = 1
+        old = types.SimpleNamespace(
+            enabled=True, host="127.0.0.1", port=bridge.port, clamp=False, scrub_audio=True, follow_selection=True
+        )
+        addon.bpy.context.preferences.addons[self.OLD] = types.SimpleNamespace(preferences=old)
+        for _ in range(5):
+            addon.tick()
+        self.assertEqual(addon.link.status, addon.OLD_ADDON_ON)
+        self.assertIsNone(addon.link.sock)
+        self.assertIsNone(addon.link.pending)
+        self.assertEqual((PREFS.port, PREFS.clamp, PREFS.scrub_audio, PREFS.follow_selection), (bridge.port, False, True, True))
+        self.assertTrue(PREFS.carried_over)
+
+        # Copied once: a change made here afterwards stays
+        PREFS.clamp = True
+        addon.tick()
+        self.assertTrue(PREFS.clamp)
+
+        # Once it is uninstalled this one connects, and says hello as before
+        del addon.bpy.context.preferences.addons[self.OLD]
+        conn = bridge.accept()
+        self.addCleanup(conn.close)
+        self.assertTrue(tick_until(lambda: addon.link.sock is not None))
+        hello = read_lines(conn)[0]
+        self.assertEqual((hello["type"], hello["addon"]), ("hello", addon.ADDON_VERSION))
+
+    def test_without_the_old_addon_nothing_is_carried(self):
+        addon.tick()
+        self.assertFalse(PREFS.carried_over)
+        self.assertNotEqual(addon.link.status, addon.OLD_ADDON_ON)
+
 
 class MeterTest(unittest.TestCase):
     """The latency meter (_measure), on clocks the test moves."""

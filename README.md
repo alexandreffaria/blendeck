@@ -1,9 +1,10 @@
-# Blendeck
+# Synergy
 
 Use a Loupedeck+ (or any MIDI controller) with Blender's video editor.
+(It was called Blendeck until it started driving more than Blender.)
 
 The Loupedeck software doesn't support Blender, but the Loupedeck+ shows up
-as a plain MIDI device. Blendeck reads it directly: a small program (the
+as a plain MIDI device. Synergy reads it directly: a small program (the
 bridge) turns knob clicks and button presses into Blender commands, and a
 Blender extension carries them out. A page on `http://127.0.0.1:7870` shows
 every message the device sends, lets you assign controls by touching them,
@@ -49,10 +50,10 @@ slides so the playhead is in the middle, at the same zoom.
 1. Close the Loupedeck software if it's running; only one program can open
    the device.
 2. Build (needs Go 1.26+ and Python 3): `.\build.ps1`. This makes
-   `blendeck.exe` and `dist\blendeck-addon.zip`.
+   `synergy.exe` and `dist\synergy-addon.zip`.
 3. In Blender 4.2 or newer: Edit › Preferences › Get Extensions › ⌄ ›
-   Install from Disk, and pick `dist\blendeck-addon.zip`.
-4. Run `blendeck.exe`. The page opens. Under **Bindings**, click **Learn**
+   Install from Disk, and pick `dist\synergy-addon.zip`.
+4. Run `synergy.exe`. The page opens. Under **Bindings**, click **Learn**
    on "Scrub timeline" and turn the knob. Under **Modifiers**, click
    **Learn** on Fn and press Fn. Then **Learn** on "Scrub timeline (fine)"
    while holding Fn, and **Save**. Do the same for "Zoom timeline" and
@@ -75,10 +76,29 @@ slides so the playhead is in the middle, at the same zoom.
    A `config.json` from an older version has no row for a new control:
    **Add binding**, pick its action, and learn it.
 
-The add-on's panel is in the video editor's sidebar (N), tab Blendeck. Its
+The add-on's panel is in the video editor's sidebar (N), tab Synergy. Its
 preferences have the bridge's address and "Stop at scene start and end".
 If Blender is busy for more than 15 seconds (a long save or render), the
 bridge drops it and the add-on reconnects by itself a second later.
+
+### Coming from Blendeck
+
+- Build again (`.\build.ps1`) and run `synergy.exe` from the same folder:
+  it reads the same `config.json` next to it, so profiles, bindings and
+  learned controls stay. On other systems, a config in the old
+  `blendeck` config folder keeps being used while there is no `synergy`
+  one. The old `blendeck.exe` and `blendeck.log` can be deleted.
+- **Start with Windows** carries over: on its first start, `synergy.exe`
+  moves a "Blendeck" sign-in entry that starts `blendeck.exe` (or this
+  exe) to one called "Synergy" that starts `synergy.exe`.
+- Blender sees the add-on as a new extension. Install
+  `dist\synergy-addon.zip`, then uninstall the old Blendeck extension.
+  While the old one is still enabled, Synergy copies its settings (the
+  bridge's address and the checkboxes) once and doesn't connect, so no
+  command is applied twice; its panel says so. If you uninstall Blendeck
+  first, set those again in Synergy's preferences.
+- The bridge still talks to an old Blendeck add-on (the link didn't
+  change), so the order doesn't matter.
 
 ## The page
 
@@ -86,7 +106,7 @@ bridge drops it and the add-on reconnects by itself a second later.
   commands took from the bridge to Blender's preview having drawn them, and
   the worst of the last minute. Hover it for the parts: waiting for Blender,
   drawing the picture, and how long Blender was busy. When a picture takes
-  over 150 ms, the page and the Blendeck panel in Blender say so, with what
+  over 150 ms, the page and the Synergy panel in Blender say so, with what
   is set that causes it: Use Proxies off in the preview, Prefetch Frames on,
   or Cache Window on.
 - **Monitor**: every MIDI message, live, with what it did. Use it to see
@@ -109,10 +129,10 @@ Flags: `-config path`, `-addr 127.0.0.1:7870`, `-link 127.0.0.1:7871`,
 
 ## Running in the background
 
-`blendeck.exe` has no console window. It sits in the notification area as
+`synergy.exe` has no console window. It sits in the notification area as
 the knob mascot: hover it to see whether the controller and Blender are
 connected, click it for the page, right-click it for **Open settings page**,
-**Start with Windows** and **Quit Blendeck** (which closes the MIDI device,
+**Start with Windows** and **Quit Synergy** (which closes the MIDI device,
 the Blender link and the page cleanly). Starting it again while it runs
 just opens the page.
 
@@ -121,12 +141,12 @@ just opens the page.
 that starts this copy of the exe with `-no-browser` when you sign in. If you
 move the exe, turn it on again from the new place.
 
-It logs to `blendeck.log` next to `config.json`; past 1 MB it moves to
-`blendeck.log.1` and starts over. If it can't start (say, another program
+It logs to `synergy.log` next to `config.json`; past 1 MB it moves to
+`synergy.log.1` and starts over. If it can't start (say, another program
 holds the ports), it says why in a message box.
 
 The tray icon is drawn from the page's mascot by `go run ./scripts/mkicon`
-(into `internal/tray/blendeck.ico`); run it again if the mascot changes.
+(into `internal/tray/synergy.ico`); run it again if the mascot changes.
 
 ## Platforms
 

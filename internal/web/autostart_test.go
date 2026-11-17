@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alexandreffaria/blendeck/internal/app"
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/link"
-	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/synergy/internal/app"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/link"
+	"github.com/alexandreffaria/synergy/internal/midi"
 )
 
 type fakeAutostart struct {

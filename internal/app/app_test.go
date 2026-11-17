@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/engine"
-	"github.com/alexandreffaria/blendeck/internal/link"
-	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/engine"
+	"github.com/alexandreffaria/synergy/internal/link"
+	"github.com/alexandreffaria/synergy/internal/midi"
 )
 
 func newTestApp(t *testing.T) *App {

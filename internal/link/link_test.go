@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/engine"
+	"github.com/alexandreffaria/synergy/internal/config"
+	"github.com/alexandreffaria/synergy/internal/engine"
 )
 
 func start(t *testing.T) (*Link, string) {
