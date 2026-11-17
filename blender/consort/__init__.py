@@ -16,7 +16,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.19.0"
+ADDON_VERSION = "0.20.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -452,7 +452,7 @@ def _finish_connect():
     link.out = b""
     link.last_state = None  # the bridge starts from nothing: send the state again
     _set_status("Connected")
-    _send({"type": "hello", "blender": bpy.app.version_string, "addon": ADDON_VERSION})
+    _send({"type": "hello", "app": "blender", "blender": bpy.app.version_string, "addon": ADDON_VERSION})
     return True
 
 

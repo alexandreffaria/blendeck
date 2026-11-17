@@ -72,6 +72,9 @@ header { position: sticky; top: 0; z-index: 5; background: rgba(22,24,29,.9); ba
 .pill.ok .dot { background: var(--mint); box-shadow: 0 0 0 3px var(--mint-tint); }
 .pill.bad .dot { background: var(--coral); box-shadow: 0 0 0 3px var(--coral-tint); }
 .pill.wait .dot { background: var(--amber); animation: pulse-dot 1.4s ease-in-out infinite; }
+.apps { list-style: none; display: grid; gap: 6px; font-size: 13px; color: var(--dim); }
+.apps li { display: flex; align-items: center; gap: 8px; }
+.apps .dot { background: var(--mint); box-shadow: 0 0 0 3px var(--mint-tint); }
 @keyframes pulse-dot { 50% { opacity: .35; } }
 .mod-chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--amber); color: var(--amber-ink); font-weight: 700; }
 
@@ -375,6 +378,14 @@ tr.flash td { animation: flash 600ms ease-out; }
         </div>
       </section>
 
+      <section class="sheet">
+        <div class="sheet-head"><h3>Apps</h3></div>
+        <div class="device">
+          <ul class="apps" id="apps"></ul>
+          <p class="hint" id="appsNone">No app connected. Blender connects through the Consort extension while this program runs.</p>
+        </div>
+      </section>
+
       <section class="sheet" id="autostartSheet" hidden>
         <div class="sheet-head"><h3>Startup</h3></div>
         <div class="device">
@@ -633,9 +644,7 @@ function renderLive() {
   $('dropped').textContent = lost ? `${lost} dropped` : '';
 
   const b = l.blender;
-  const bp = $('blenderPill');
-  bp.className = 'pill ' + (b.connected ? 'ok' : 'bad');
-  $('blenderText').textContent = b.connected ? `Blender · frame ${b.frame}` : 'Blender not connected';
+  renderApps(b);
   $('blenderOn').hidden = !b.connected; $('blenderOff').hidden = b.connected;
   $('tests').disabled = !b.connected;
   $('mascot').classList.toggle('sleepy', l.midi.state !== 'connected');
@@ -648,6 +657,18 @@ function renderLive() {
   }
   renderLatency(b.connected ? b.latency : null);
   $('held').innerHTML = l.held.map((h) => `<span class="mod-chip">${esc(h)}</span>`).join(' ');
+}
+
+// Every connected app, by name: in the header pill (Blender with its frame)
+// and in the Apps sheet.
+function renderApps(b) {
+  const apps = b.apps || [];
+  const names = apps.map((a) => a.app === 'blender' ? `Blender · frame ${b.frame}` : a.name);
+  $('blenderPill').className = 'pill ' + (apps.length ? 'ok' : 'bad');
+  $('blenderText').textContent = names.length ? names.join(' · ') : 'No app connected';
+  $('apps').innerHTML = apps.map((a) =>
+    `<li><span class="dot"></span>${esc(a.name)} — connected${a.clients > 1 ? ` (${a.clients} windows)` : ''}</li>`).join('');
+  $('appsNone').hidden = apps.length > 0;
 }
 
 // What the add-on measured over about a second, while controls were used:
