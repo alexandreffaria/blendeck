@@ -3,13 +3,16 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alexandreffaria/synergy/internal/app"
+	"github.com/alexandreffaria/synergy/internal/autostart"
 	"github.com/alexandreffaria/synergy/internal/config"
 	"github.com/alexandreffaria/synergy/internal/link"
 	"github.com/alexandreffaria/synergy/internal/midi"
@@ -119,6 +122,15 @@ func TestAutostartSetFails(t *testing.T) {
 	h := newAutostartServer(t, f)
 	rec := do(h, "PUT", "/api/autostart", "127.0.0.1:7870", "application/json", `{"enabled":true}`)
 	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAutostartTakenByAnotherProgram(t *testing.T) {
+	f := &fakeAutostart{supported: true, setErr: fmt.Errorf("%w: %q starts x.exe", autostart.ErrTaken, "Synergy")}
+	h := newAutostartServer(t, f)
+	rec := do(h, "PUT", "/api/autostart", "127.0.0.1:7870", "application/json", `{"enabled":true}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "x.exe") {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

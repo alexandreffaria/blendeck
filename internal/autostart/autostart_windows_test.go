@@ -1,6 +1,7 @@
 package autostart
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -128,5 +129,72 @@ func TestMigrateLeavesOthersAlone(t *testing.T) {
 	}
 	if v, _ := e.readValue("Blendeck"); v == "" {
 		t.Fatal("unsupported, but the old entry was removed")
+	}
+}
+
+// symless is a "Synergy" value another program (Symless's Synergy) keeps.
+const symless = `"C:\Program Files\Synergy\synergy.exe" --tray`
+
+func setValue(t *testing.T, key, name, command string) {
+	t.Helper()
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer k.Close()
+	if err := k.SetStringValue(name, command); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigrateLeavesAnotherProgramsSynergyAlone(t *testing.T) {
+	e := testEntry(t, `C:\Tools\synergy.exe`)
+	e.name = "Synergy"
+	setValue(t, e.key, "Synergy", symless)
+	oldEntry(t, e.key, `C:\Tools\blendeck.exe -no-browser`)
+	moved, err := e.Migrate("Blendeck", "blendeck.exe")
+	if moved || !errors.Is(err, ErrTaken) {
+		t.Fatalf("Migrate = %v, %v; want ErrTaken", moved, err)
+	}
+	if v, _ := e.readValue("Synergy"); v != symless {
+		t.Fatalf("the other program's value changed: %q", v)
+	}
+	if v, _ := e.readValue("Blendeck"); v == "" {
+		t.Fatal("the old entry was removed")
+	}
+}
+
+func TestSetNeverTouchesAnotherProgramsValue(t *testing.T) {
+	e := testEntry(t, `C:\Tools\synergy.exe`)
+	e.name = "Synergy"
+	setValue(t, e.key, "Synergy", symless)
+	if on, _ := e.Enabled(); on {
+		t.Fatal("another program's value counts as on")
+	}
+	if err := e.Set(true); !errors.Is(err, ErrTaken) {
+		t.Fatalf("Set(true) = %v; want ErrTaken", err)
+	}
+	if err := e.Set(false); err != nil {
+		t.Fatalf("Set(false) = %v", err)
+	}
+	if v, _ := e.readValue("Synergy"); v != symless {
+		t.Fatalf("the other program's value changed: %q", v)
+	}
+
+	// A copy of this program elsewhere (same file name and arguments) is
+	// still ours: turning it on points it here, turning it off removes it.
+	setValue(t, e.key, "Synergy", `"C:\Old Place\synergy.exe" -no-browser`)
+	if err := e.Set(true); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := e.Enabled(); !on {
+		t.Fatal("turning on didn't point it here")
+	}
+	setValue(t, e.key, "Synergy", `"C:\Old Place\synergy.exe" -no-browser`)
+	if err := e.Set(false); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := e.readValue("Synergy"); v != "" {
+		t.Fatalf("our old copy's value stayed: %q", v)
 	}
 }

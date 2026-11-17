@@ -6,12 +6,17 @@ package autostart
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
 // ErrUnsupported is returned by Set where there is no entry to set: other
 // systems, or a binary that `go run` will delete.
 var ErrUnsupported = errors.New("starting with the system isn't supported here")
+
+// ErrTaken is returned when the sign-in entry's name already starts another
+// program (say, Symless's Synergy): it is left as it is.
+var ErrTaken = errors.New("another program's sign-in entry already has this name")
 
 // RunKey is where Windows looks for programs to start at sign-in.
 const RunKey = `Software\Microsoft\Windows\CurrentVersion\Run`
@@ -20,6 +25,7 @@ const RunKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 type Entry struct {
 	name    string
 	exe     string
+	args    string // the command after the exe
 	command string
 	key     string
 }
@@ -29,10 +35,12 @@ type Entry struct {
 func New(name, exe string, args ...string) *Entry {
 	e := &Entry{name: name, exe: exe, key: RunKey}
 	if exe != "" {
-		e.command = quote(exe)
-		for _, a := range args {
-			e.command += " " + quote(a)
+		quoted := make([]string, len(args))
+		for i, a := range args {
+			quoted[i] = quote(a)
 		}
+		e.args = strings.Join(quoted, " ")
+		e.command = strings.TrimSpace(quote(exe) + " " + e.args)
 	}
 	return e
 }
@@ -58,15 +66,36 @@ func (e *Entry) Enabled() (bool, error) {
 }
 
 // Set adds the entry (on) or removes it (off). Removing an entry that isn't
-// there is fine.
+// there is fine. A value under the entry's name that starts another program
+// is never changed: turning on returns ErrTaken, turning off leaves it.
 func (e *Entry) Set(on bool) error {
 	if !e.Supported() {
 		return ErrUnsupported
+	}
+	v, err := e.readValue(e.name)
+	if err != nil {
+		return err
+	}
+	if v != "" && !e.owns(v) {
+		if on {
+			return fmt.Errorf("%w: %q starts %s", ErrTaken, e.name, v)
+		}
+		return nil
 	}
 	if on {
 		return e.write()
 	}
 	return e.deleteValue(e.name)
+}
+
+// owns says whether a Run value is this program's: it starts this exe, or
+// another copy of it (same file name, same arguments; say, one since moved).
+func (e *Entry) owns(v string) bool {
+	exe, args := commandExe(v), commandArgs(v)
+	if strings.EqualFold(exe, e.exe) {
+		return true
+	}
+	return strings.EqualFold(baseName(exe), baseName(e.exe)) && args == e.args
 }
 
 // Migrate moves an entry the program left under an older name (before a
@@ -84,12 +113,21 @@ func (e *Entry) Migrate(oldName string, oldExes ...string) (bool, error) {
 		return false, err
 	}
 	exe := commandExe(v)
-	ours := strings.EqualFold(exe, e.exe) || strings.EqualFold(baseName(exe), baseName(e.exe))
+	ours := strings.EqualFold(exe, e.exe)
 	for _, o := range oldExes {
 		ours = ours || strings.EqualFold(baseName(exe), o)
 	}
 	if !ours {
 		return false, nil
+	}
+	// The new name may belong to another program already: then neither
+	// entry changes, and the caller says why.
+	cur, err := e.readValue(e.name)
+	if err != nil {
+		return false, err
+	}
+	if cur != "" && !e.owns(cur) {
+		return false, fmt.Errorf("%w: %q starts %s", ErrTaken, e.name, cur)
 	}
 	if err := e.write(); err != nil {
 		return false, err
@@ -107,6 +145,17 @@ func commandExe(cmd string) string {
 	}
 	exe, _, _ := strings.Cut(cmd, " ")
 	return exe
+}
+
+// commandArgs is what a Run value passes after the program.
+func commandArgs(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if rest, ok := strings.CutPrefix(cmd, `"`); ok {
+		_, args, _ := strings.Cut(rest, `"`)
+		return strings.TrimSpace(args)
+	}
+	_, args, _ := strings.Cut(cmd, " ")
+	return strings.TrimSpace(args)
 }
 
 // baseName is a path's last part, for Windows paths on any system.

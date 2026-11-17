@@ -90,7 +90,9 @@ bridge drops it and the add-on reconnects by itself a second later.
   one. The old `blendeck.exe` and `blendeck.log` can be deleted.
 - **Start with Windows** carries over: on its first start, `synergy.exe`
   moves a "Blendeck" sign-in entry that starts `blendeck.exe` (or this
-  exe) to one called "Synergy" that starts `synergy.exe`.
+  exe) to one called "Synergy" that starts `synergy.exe`, unless another
+  program already has a "Synergy" entry: then both stay as they are, and
+  the log says why.
 - Blender sees the add-on as a new extension. Install
   `dist\synergy-addon.zip`, then uninstall the old Blendeck extension.
   While the old one is still enabled, Synergy copies its settings (the
@@ -139,7 +141,9 @@ just opens the page.
 **Start with Windows** adds a per-user entry
 (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, no admin rights)
 that starts this copy of the exe with `-no-browser` when you sign in. If you
-move the exe, turn it on again from the new place.
+move the exe, turn it on again from the new place. If another program
+already has a sign-in entry called "Synergy" (Symless's Synergy does), it is
+never changed: turning it on says so instead.
 
 It logs to `synergy.log` next to `config.json`; past 1 MB it moves to
 `synergy.log.1` and starts over. If it can't start (say, another program

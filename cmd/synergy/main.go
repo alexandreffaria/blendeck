@@ -123,7 +123,7 @@ func run() error {
 	// Before the rename the sign-in entry was called Blendeck: move it, so
 	// Start with Windows stays on under the new name.
 	if moved, err := start.Migrate("Blendeck", "blendeck.exe"); err != nil {
-		log.Warn("couldn't move the old Blendeck sign-in entry", "error", err)
+		log.Warn("left the old Blendeck sign-in entry as it is", "error", err)
 	} else if moved {
 		log.Info("moved the Blendeck sign-in entry to Synergy", "command", start.Command())
 	}

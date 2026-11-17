@@ -47,3 +47,19 @@ func TestMigrateUnsupportedDoesNothing(t *testing.T) {
 		t.Fatalf("Migrate = %v, %v", moved, err)
 	}
 }
+
+func TestOwns(t *testing.T) {
+	e := New("Synergy", `C:\Tools\synergy.exe`, "-no-browser")
+	for v, want := range map[string]bool{
+		`C:\Tools\synergy.exe -no-browser`:              true,
+		`c:\tools\SYNERGY.exe`:                          true, // this exe, whatever it passes
+		`"C:\Old Place\synergy.exe" -no-browser`:        true, // a moved copy
+		`"C:\Program Files\Synergy\synergy.exe" --tray`: false,
+		`"C:\Program Files\Synergy\synergy.exe"`:        false,
+		`C:\Program Files\Symless\synergy-service.exe`:  false,
+	} {
+		if got := e.owns(v); got != want {
+			t.Errorf("owns(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

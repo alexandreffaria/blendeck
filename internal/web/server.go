@@ -7,6 +7,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/alexandreffaria/synergy/internal/app"
+	"github.com/alexandreffaria/synergy/internal/autostart"
 	"github.com/alexandreffaria/synergy/internal/config"
 	"github.com/alexandreffaria/synergy/internal/engine"
 )
@@ -155,7 +157,10 @@ func (s *Server) handlePutAutostart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "starting with the system isn't available for this copy of Synergy")
 		return
 	}
-	if err := s.autostart.Set(*req.Enabled); err != nil {
+	if err := s.autostart.Set(*req.Enabled); errors.Is(err, autostart.ErrTaken) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
