@@ -1,5 +1,9 @@
+/consort.exe
+/consort
+/consort.log*
+# left over from before the rename to Consort
 /blendeck.exe
-/blendeck
+/blendeck.log*
 /dist/
 /config.json
 *.tmp

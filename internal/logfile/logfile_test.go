@@ -18,7 +18,7 @@ func read(t *testing.T, path string) string {
 }
 
 func TestRotatesPastTheCap(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "blendeck.log")
+	path := filepath.Join(t.TempDir(), "consort.log")
 	l, err := Open(path, 10)
 	if err != nil {
 		t.Fatal(err)

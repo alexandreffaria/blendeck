@@ -1,6 +1,6 @@
-"""Blendeck: drive Blender from a MIDI controller through the Blendeck bridge.
+"""Consort: drive Blender from a MIDI controller through the Consort bridge.
 
-The bridge (blendeck.exe) reads the controller and listens on localhost; this
+The bridge (consort.exe) reads the controller and listens on localhost; this
 add-on connects to it, applies the commands it sends, and reports the playhead
 back so the bridge's page can show it."""
 
@@ -16,7 +16,7 @@ import bpy
 
 from . import protocol
 
-ADDON_VERSION = "0.18.0"
+ADDON_VERSION = "0.19.0"
 TICK = 0.01  # seconds between polls while connected
 RETRY = 1.0  # seconds between connection attempts
 PING = 5.0  # the bridge drops an add-on that says nothing for 15 s
@@ -98,7 +98,7 @@ def _watch_preview():
         if meter.handle is None:
             meter.handle = bpy.types.SpaceSequenceEditor.draw_handler_add(_on_preview_draw, (), "PREVIEW", "POST_PIXEL")
     except Exception as e:
-        print("Blendeck: the latency meter can't see the preview:", e)
+        print("Consort: the latency meter can't see the preview:", e)
 
 
 def _unwatch_preview():
@@ -106,7 +106,7 @@ def _unwatch_preview():
         if meter.handle is not None:
             bpy.types.SpaceSequenceEditor.draw_handler_remove(meter.handle, "PREVIEW")
     except Exception as e:
-        print("Blendeck: preview watch not removed:", e)
+        print("Consort: preview watch not removed:", e)
     meter.handle = None
 
 
@@ -130,7 +130,7 @@ def _watch_timeline():
         if hints_draw.handle is None:
             hints_draw.handle = bpy.types.SpaceSequenceEditor.draw_handler_add(_draw_hints, (), "WINDOW", "POST_PIXEL")
     except Exception as e:
-        print("Blendeck: the hints can't be drawn:", e)
+        print("Consort: the hints can't be drawn:", e)
 
 
 def _unwatch_timeline():
@@ -138,7 +138,7 @@ def _unwatch_timeline():
         if hints_draw.handle is not None:
             bpy.types.SpaceSequenceEditor.draw_handler_remove(hints_draw.handle, "WINDOW")
     except Exception as e:
-        print("Blendeck: hints drawing not removed:", e)
+        print("Consort: hints drawing not removed:", e)
     hints_draw.handle = None
 
 
@@ -154,11 +154,11 @@ def _draw_hints():
         region = bpy.context.region
         if region is None:
             return
-        _draw_hint_box(region, hints[0] or "Blendeck", hints[1])
+        _draw_hint_box(region, hints[0] or "Consort", hints[1])
     except Exception as e:
         if not hints_draw.failed:
             hints_draw.failed = True
-            print("Blendeck: hints not drawn:", e)
+            print("Consort: hints not drawn:", e)
 
 
 def _draw_hint_box(region, title, lines):
@@ -231,7 +231,7 @@ def _slow_causes():
                 if getattr(space, "view_type", "") in ("PREVIEW", "SEQUENCER_PREVIEW") and not getattr(space, "use_proxies", True):
                     proxies_off = True
     except Exception as e:
-        print("Blendeck: couldn't read why the picture is slow:", e)
+        print("Consort: couldn't read why the picture is slow:", e)
     return protocol.slow_causes(proxies_off, prefetch_on, cache_window)
 
 
@@ -250,7 +250,7 @@ def _slow_check(report):
             meter.slow = note
             _redraw()
     except Exception as e:
-        print("Blendeck: slow picture check:", e)
+        print("Consort: slow picture check:", e)
 
 
 def _playhead():
@@ -317,7 +317,7 @@ def _measure(messages, started, wall, moved):
                 if moved and meter.pending is None:
                     meter.pending = (started, waited)
     except Exception as e:
-        print("Blendeck: latency meter:", e)
+        print("Consort: latency meter:", e)
 
 
 CONNECT_TIMEOUT = 1.0
@@ -327,6 +327,38 @@ MAX_OUT = 64 * 1024
 def _prefs():
     addon = bpy.context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
+
+
+# Before the rename to Consort this add-on was the Blendeck extension, which
+# Blender treats as another add-on.
+OLD_ADDON = "blendeck"
+OLD_ADDON_ON = "Uninstall the old Blendeck extension: Consort replaces it"
+CARRIED_PREFS = ("enabled", "host", "port", "clamp", "scrub_audio", "follow_selection")
+
+
+def _old_addon():
+    """The old Blendeck add-on's entry while it is enabled, or None."""
+    for name, addon in bpy.context.preferences.addons.items():
+        if name == OLD_ADDON or name.endswith("." + OLD_ADDON):
+            return addon
+    return None
+
+
+def _old_addon_on(prefs):
+    """True while the old Blendeck add-on is still enabled: both connected,
+    every cut and undo would happen twice, so this one waits. Its settings
+    are copied here the first time it is seen."""
+    old = _old_addon()
+    if old is None:
+        return False
+    if not prefs.carried_over and getattr(old, "preferences", None) is not None:
+        for name in CARRIED_PREFS:
+            try:
+                setattr(prefs, name, getattr(old.preferences, name))
+            except Exception as e:
+                print("Consort: Blendeck's setting not carried over:", name, e)
+        prefs.carried_over = True
+    return True
 
 
 def _scene():
@@ -539,7 +571,7 @@ def _zoom(clicks):
             with bpy.context.temp_override(window=win, area=area, region=region):
                 _zoom_one(region, op, times)
         except Exception as e:
-            print("Blendeck: zoom skipped:", e)
+            print("Consort: zoom skipped:", e)
 
 
 def _pan(percent):
@@ -556,7 +588,7 @@ def _pan(percent):
             with bpy.context.temp_override(window=win, area=area, region=region):
                 bpy.ops.view2d.pan(deltax=pixels, deltay=0)
         except Exception as e:
-            print("Blendeck: pan skipped:", e)
+            print("Consort: pan skipped:", e)
 
 
 def _view_all():
@@ -568,7 +600,7 @@ def _view_all():
             with bpy.context.temp_override(window=win, area=area, region=region):
                 bpy.ops.sequencer.view_all()
         except Exception as e:
-            print("Blendeck: view all skipped:", e)
+            print("Consort: view all skipped:", e)
 
 
 def _recenter():
@@ -587,7 +619,7 @@ def _recenter():
             with bpy.context.temp_override(window=win, area=area, region=region):
                 bpy.ops.view2d.pan(deltax=pixels, deltay=0)
         except Exception as e:
-            print("Blendeck: recenter skipped:", e)
+            print("Consort: recenter skipped:", e)
 
 
 class _Stopped:
@@ -611,7 +643,7 @@ def _watch_stop(recenter=True):
             _recenter()
         stopped.running = running
     except Exception as e:
-        print("Blendeck: recenter skipped:", e)
+        print("Consort: recenter skipped:", e)
 
 
 def _level(ed):
@@ -678,7 +710,7 @@ def _cut(scene, follow=False):
         targets = [items[i] for i in protocol.cut_targets(_spans(items, channels), frame)]
     except Exception as e:
         # An editor this add-on doesn't understand: no cut, link kept
-        print("Blendeck: cut skipped:", e)
+        print("Consort: cut skipped:", e)
         return 0
     done = 0
     for strip in targets:
@@ -695,12 +727,12 @@ def _cut(scene, follow=False):
                     if right is not None:
                         right.select = True
         except Exception as e:
-            print("Blendeck: cut skipped a strip:", e)
+            print("Consort: cut skipped a strip:", e)
     if done:
         try:
             bpy.ops.ed.undo_push(message="Cut at playhead")
         except Exception as e:
-            print("Blendeck: no undo step for the cut:", e)
+            print("Consort: no undo step for the cut:", e)
         _redraw()
     return done
 
@@ -740,14 +772,14 @@ def _undo():
         if why is None:
             ctx, why = _undo_context()
         if why is not None:
-            print("Blendeck: undo skipped:", why)
+            print("Consort: undo skipped:", why)
             return False
         with bpy.context.temp_override(**ctx):
             if not bpy.ops.ed.undo.poll():
                 return False  # nothing left to undo
             done = "FINISHED" in bpy.ops.ed.undo()
     except Exception as e:
-        print("Blendeck: undo skipped:", e)
+        print("Consort: undo skipped:", e)
         return False
     _redraw()
     return done
@@ -761,7 +793,7 @@ def _note(text):
         try:
             _redraw()
         except Exception as e:
-            print("Blendeck: panel not redrawn:", e)
+            print("Consort: panel not redrawn:", e)
 
 
 SAVE_AS = "Save As window open: pick a name and folder"
@@ -788,7 +820,7 @@ def _save():
         if why is None:
             ctx, why = _undo_context()
         if why is not None:
-            print("Blendeck: save skipped:", why)
+            print("Consort: save skipped:", why)
             _note("Not saved: " + why)
             return False
         if not bpy.data.filepath:
@@ -799,7 +831,7 @@ def _save():
         with bpy.context.temp_override(**ctx):
             done = "FINISHED" in bpy.ops.wm.save_mainfile()
     except Exception as e:
-        print("Blendeck: save failed:", e)
+        print("Consort: save failed:", e)
         _note("Not saved: %s" % e)
         return False
     _note(("Saved at " + time.strftime("%H:%M:%S")) if done else "Not saved")
@@ -821,7 +853,7 @@ def _save_as_done():
                 return  # still open
         _note("Not saved: Save As was cancelled")
     except Exception as e:
-        print("Blendeck: save note skipped:", e)
+        print("Consort: save note skipped:", e)
 
 
 def _span(strip):
@@ -852,7 +884,7 @@ def _delete_op(scene, strips, items, delete, ctx):
     try:
         goners = {items[i].name for i in delete}
     except Exception as e:
-        print("Blendeck: ripple delete skipped:", e)
+        print("Consort: ripple delete skipped:", e)
         return 0, True
     before = {}
     try:
@@ -867,7 +899,7 @@ def _delete_op(scene, strips, items, delete, ctx):
                 raise RuntimeError("the video editor shows another scene")
             bpy.ops.sequencer.delete("EXEC_DEFAULT", False)
     except Exception as e:
-        print("Blendeck: ripple delete couldn't remove the strips:", e)
+        print("Consort: ripple delete couldn't remove the strips:", e)
     # A deleted strip's Python object is freed: only look strips up again
     left = set()
     try:
@@ -876,7 +908,7 @@ def _delete_op(scene, strips, items, delete, ctx):
             if s.name in before:
                 s.select = before[s.name]
     except Exception as e:
-        print("Blendeck: ripple delete couldn't restore the selection:", e)
+        print("Consort: ripple delete couldn't restore the selection:", e)
     stayed = goners & left
     return len(goners) - len(stayed), bool(stayed)
 
@@ -895,7 +927,7 @@ def _delete_each(strips, items, delete):
             removed += 1
         except Exception as e:
             failed = True
-            print("Blendeck: ripple delete couldn't remove a strip:", e)
+            print("Consort: ripple delete couldn't remove a strip:", e)
     return removed, failed
 
 
@@ -917,7 +949,7 @@ def _ripple_delete(scene):
         spans = _linked_spans(items, channels)
         plan = protocol.ripple_plan(spans, frame)
     except Exception as e:
-        print("Blendeck: ripple delete skipped:", e)
+        print("Consort: ripple delete skipped:", e)
         return 0
     if plan is None:
         return 0
@@ -936,17 +968,17 @@ def _ripple_delete(scene):
             try:
                 _move_left(strip, plan.shift)
             except Exception as e:
-                print("Blendeck: ripple delete couldn't move a strip:", e)
+                print("Consort: ripple delete couldn't move a strip:", e)
         if plan.playhead is not None:
             try:
                 _seek(scene, plan.playhead)
             except Exception as e:
-                print("Blendeck: ripple delete left the playhead:", e)
+                print("Consort: ripple delete left the playhead:", e)
     if removed:
         try:
             bpy.ops.ed.undo_push(message="Ripple delete")
         except Exception as e:
-            print("Blendeck: no undo step for the ripple delete:", e)
+            print("Consort: no undo step for the ripple delete:", e)
         _redraw()
     return removed
 
@@ -967,7 +999,7 @@ def _move(scene, frames, before=False):
         spans = _linked_spans(items, channels)
         plan = protocol.move_plan(spans, frames, before)
     except Exception as e:
-        print("Blendeck: move skipped:", e)
+        print("Consort: move skipped:", e)
         return False
     if plan is None:
         return False
@@ -980,7 +1012,7 @@ def _move(scene, frames, before=False):
             moved = True
         except Exception as e:
             # Stop here: the rest would close in on a strip that didn't move
-            print("Blendeck: move couldn't move a strip:", e)
+            print("Consort: move couldn't move a strip:", e)
             break
     if moved:
         _knob_turned("Move strips")
@@ -1050,7 +1082,7 @@ def _trim(scene, frames, shrink=False):
             clips.append(protocol.Clip(start, end, locked, s.channel, follows, lo, hi))
         plan = protocol.trim_plan(clips, scene.frame_current, frames, shrink)
     except Exception as e:
-        print("Blendeck: trim skipped:", e)
+        print("Consort: trim skipped:", e)
         return False
     if plan is None:
         return False
@@ -1070,12 +1102,12 @@ def _trim(scene, frames, shrink=False):
         except Exception as e:
             # Put back the handles already moved, last first, so a picture
             # and its sound never end up out of step
-            print("Blendeck: trim couldn't move a handle:", e)
+            print("Consort: trim couldn't move a handle:", e)
             for k, w in reversed(done):
                 try:
                     _set_handle(items[k], w, clips[k].start if w == "start" else clips[k].end)
                 except Exception as e2:
-                    print("Blendeck: trim couldn't put a handle back:", e2)
+                    print("Consort: trim couldn't put a handle back:", e2)
             done = []
             break
     changed = bool(done)
@@ -1083,7 +1115,7 @@ def _trim(scene, frames, shrink=False):
         try:
             _seek(scene, plan.playhead)
         except Exception as e:
-            print("Blendeck: trim left the playhead:", e)
+            print("Consort: trim left the playhead:", e)
         _knob_turned("Trim handle")
         _redraw()
     return changed
@@ -1111,7 +1143,7 @@ def _move_undo(now=None):
     try:
         bpy.ops.ed.undo_push(message=link.undo_message)
     except Exception as e:
-        print("Blendeck: no undo step for the knob:", e)
+        print("Consort: no undo step for the knob:", e)
 
 
 def _follow(scene):
@@ -1131,7 +1163,7 @@ def _follow(scene):
                 strip.select = on
                 changed = True
     except Exception as e:
-        print("Blendeck: selection didn't follow the playhead:", e)
+        print("Consort: selection didn't follow the playhead:", e)
         return False
     if changed:
         _redraw()
@@ -1166,7 +1198,7 @@ def _jump(scene, clicks, sound=False):
         if target is not None and target != scene.frame_current:
             _seek(scene, target)
     except Exception as e:
-        print("Blendeck: jump skipped:", e)
+        print("Consort: jump skipped:", e)
 
 
 def _playing():
@@ -1245,12 +1277,12 @@ def _play_pause(scene):
         ctx, editor, window = (None, False, False) if playing else _play_context(scene)
         what = protocol.play_pause_plan(playing, editor, window)
         if what is None:
-            print("Blendeck: play skipped: no video editor or window shows", scene.name)
+            print("Consort: play skipped: no video editor or window shows", scene.name)
             return None
         if what == "pause":
             ctx, why = _undo_context()
             if why is not None:
-                print("Blendeck: pause skipped:", why)
+                print("Consort: pause skipped:", why)
                 return None
             with bpy.context.temp_override(**ctx):
                 bpy.ops.screen.animation_cancel(restore_frame=False)
@@ -1258,7 +1290,7 @@ def _play_pause(scene):
             with bpy.context.temp_override(**ctx):
                 bpy.ops.screen.animation_play()
     except Exception as e:
-        print("Blendeck: play / pause skipped:", e)
+        print("Consort: play / pause skipped:", e)
         return None
     return what
 
@@ -1351,7 +1383,7 @@ def _stop_playback():
         if _playing():
             _cancel_native()
     except Exception as e:
-        print("Blendeck: playback not stopped:", e)
+        print("Consort: playback not stopped:", e)
 
 
 def _shuttle(scene, direction):
@@ -1377,7 +1409,7 @@ def _shuttle(scene, direction):
         _shuttle_anchor(scene)
         return speed
     except Exception as e:
-        print("Blendeck: forward / backwards skipped:", e)
+        print("Consort: forward / backwards skipped:", e)
         _shuttle_stop()
         return 0
 
@@ -1434,7 +1466,7 @@ def _shuttle_tick(scene):
             return
         _audio_tick(scene, elapsed, fps)
     except Exception as e:
-        print("Blendeck: playback stopped:", e)
+        print("Consort: playback stopped:", e)
         _shuttle_stop()
 
 
@@ -1510,7 +1542,7 @@ def _audio_tick(scene, elapsed, fps):
                 sound = sound.delay(delay)
             audio.sounds[key] = device.play(sound)
     except Exception as e:
-        print("Blendeck: playing on silent:", e)
+        print("Consort: playing on silent:", e)
         _audio_stop()
         audio.failed = True
 
@@ -1568,7 +1600,7 @@ def _scrub_sound(scene, frm):
         _scrub_stop()
         if str(e) != scrub.error:
             scrub.error = str(e)
-            print("Blendeck: scrubbing is silent:", e)
+            print("Consort: scrubbing is silent:", e)
 
 
 def _rendering():
@@ -1595,7 +1627,7 @@ def on_frame_change(scene, depsgraph=None):
             return
         _follow(scene)
     except Exception as e:
-        print("Blendeck:", e)
+        print("Consort:", e)
 
 
 def _apply(messages, prefs):
@@ -1616,7 +1648,7 @@ def _apply(messages, prefs):
     if dropped:
         # Never silently: every press counts (decision 202611163di7), so
         # the ones a flood cost are said
-        print("Blendeck: %d presses dropped: more than %d cuts, undos and ripple deletes waited while Blender was busy" % (dropped, protocol.MAX_PRESSES_PER_TICK))
+        print("Consort: %d presses dropped: more than %d cuts, undos and ripple deletes waited while Blender was busy" % (dropped, protocol.MAX_PRESSES_PER_TICK))
     for kind, frames in protocol.edit_steps(messages):
         if kind in ("move", "move_before"):
             _move(scene, frames, kind == "move_before")
@@ -1687,7 +1719,7 @@ def tick():
     try:
         return _tick()
     except Exception as e:
-        print("Blendeck:", e)
+        print("Consort:", e)
         try:
             _close("Error: %s" % e)
         except Exception:
@@ -1703,6 +1735,11 @@ def _tick():
         if link.sock is not None or link.pending is not None:
             _close("Turned off")
         _set_status("Turned off")
+        return RETRY
+    if link.sock is None and _old_addon_on(prefs):
+        if link.pending is not None:
+            _close(OLD_ADDON_ON)
+        _set_status(OLD_ADDON_ON)
         return RETRY
     if link.sock is None:
         if link.pending is None:
@@ -1729,7 +1766,7 @@ def _tick():
     return TICK
 
 
-class BlendeckPreferences(bpy.types.AddonPreferences):
+class ConsortPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     enabled: bpy.props.BoolProperty(name="Connect to bridge", default=True)
@@ -1750,6 +1787,8 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
         description="Whenever the playhead moves, the strips under it are selected and the rest deselected, so cut and ripple delete act on them. Works with or without the bridge connected",
         default=True,
     )
+    # Set once the old Blendeck add-on's settings were copied here
+    carried_over: bpy.props.BoolProperty(default=False, options={"HIDDEN"})
 
     def draw(self, context):
         col = self.layout.column()
@@ -1763,11 +1802,11 @@ class BlendeckPreferences(bpy.types.AddonPreferences):
         col.label(text="Status: " + link.status)
 
 
-class SEQUENCER_PT_blendeck(bpy.types.Panel):
-    bl_label = "Blendeck"
+class SEQUENCER_PT_consort(bpy.types.Panel):
+    bl_label = "Consort"
     bl_space_type = "SEQUENCE_EDITOR"
     bl_region_type = "UI"
-    bl_category = "Blendeck"
+    bl_category = "Consort"
 
     def draw(self, context):
         prefs = _prefs()
@@ -1785,7 +1824,7 @@ class SEQUENCER_PT_blendeck(bpy.types.Panel):
             col.prop(prefs, "follow_selection")
 
 
-classes = (BlendeckPreferences, SEQUENCER_PT_blendeck)
+classes = (ConsortPreferences, SEQUENCER_PT_consort)
 
 
 def register():

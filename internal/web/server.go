@@ -7,6 +7,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -16,9 +17,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/app"
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/engine"
+	"github.com/alexandreffaria/consort/internal/app"
+	"github.com/alexandreffaria/consort/internal/autostart"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/engine"
 )
 
 //go:embed static
@@ -152,10 +154,13 @@ func (s *Server) handlePutAutostart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.autostart == nil || !s.autostart.Supported() {
-		writeError(w, http.StatusConflict, "starting with the system isn't available for this copy of Blendeck")
+		writeError(w, http.StatusConflict, "starting with the system isn't available for this copy of Consort")
 		return
 	}
-	if err := s.autostart.Set(*req.Enabled); err != nil {
+	if err := s.autostart.Set(*req.Enabled); errors.Is(err, autostart.ErrTaken) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

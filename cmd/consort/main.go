@@ -1,4 +1,4 @@
-// Command blendeck is the bridge between a MIDI controller and Blender: it
+// Command consort is the bridge between a MIDI controller and Blender: it
 // reads the controller, maps it through the active profile, sends commands to
 // the Blender add-on, and serves the page for setting it all up.
 //
@@ -24,27 +24,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/app"
-	"github.com/alexandreffaria/blendeck/internal/autostart"
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/link"
-	"github.com/alexandreffaria/blendeck/internal/logfile"
-	"github.com/alexandreffaria/blendeck/internal/midi"
-	"github.com/alexandreffaria/blendeck/internal/tray"
-	"github.com/alexandreffaria/blendeck/internal/web"
+	"github.com/alexandreffaria/consort/internal/app"
+	"github.com/alexandreffaria/consort/internal/autostart"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/link"
+	"github.com/alexandreffaria/consort/internal/logfile"
+	"github.com/alexandreffaria/consort/internal/midi"
+	"github.com/alexandreffaria/consort/internal/tray"
+	"github.com/alexandreffaria/consort/internal/web"
 )
 
 var version = "dev"
 
-// maxLog caps blendeck.log; one older copy is kept as blendeck.log.1.
+// maxLog caps consort.log; one older copy is kept as consort.log.1.
 const maxLog = 1 << 20
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "blendeck:", err)
+		fmt.Fprintln(os.Stderr, "consort:", err)
 		// Built for Windows there is no console to read that in.
 		if runtime.GOOS == "windows" {
-			tray.Alert("Blendeck couldn't start:\n\n" + err.Error())
+			tray.Alert("Consort couldn't start:\n\n" + err.Error())
 		}
 		os.Exit(1)
 	}
@@ -60,7 +60,7 @@ func run() error {
 
 	for _, a := range []string{*webAddr, *linkAddr} {
 		if !isLoopback(a) {
-			return fmt.Errorf("%s is not a loopback address; Blendeck only listens on this computer", a)
+			return fmt.Errorf("%s is not a loopback address; Consort only listens on this computer", a)
 		}
 	}
 	url := "http://" + *webAddr + "/"
@@ -82,7 +82,7 @@ func run() error {
 		level = slog.LevelDebug
 	}
 	out := console{os.Stderr}
-	logPath := filepath.Join(filepath.Dir(*configPath), "blendeck.log")
+	logPath := filepath.Join(filepath.Dir(*configPath), "consort.log")
 	var logw io.Writer = out
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	lf, logErr := logfile.Open(logPath, maxLog)
@@ -108,18 +108,25 @@ func run() error {
 
 	linkLn, err := net.Listen("tcp", *linkAddr)
 	if err != nil {
-		return fmt.Errorf("listen for Blender on %s (is Blendeck already running?): %w", *linkAddr, err)
+		return fmt.Errorf("listen for Blender on %s (is Consort already running?): %w", *linkAddr, err)
 	}
 	webLn, err := net.Listen("tcp", *webAddr)
 	if err != nil {
 		linkLn.Close()
-		return fmt.Errorf("listen for the settings page on %s (is Blendeck already running?): %w", *webAddr, err)
+		return fmt.Errorf("listen for the settings page on %s (is Consort already running?): %w", *webAddr, err)
 	}
 
 	conn := midi.NewConn(log, cfg.Device)
 	lnk := link.New(log)
 	a := app.New(log, store, conn, lnk, midi.Inputs)
-	start := autostart.New("Blendeck", autostartExe(), "-no-browser")
+	start := autostart.New("Consort", autostartExe(), "-no-browser")
+	// Before the rename the sign-in entry was called Blendeck: move it, so
+	// Start with Windows stays on under the new name.
+	if moved, err := start.Migrate("Blendeck", "blendeck.exe"); err != nil {
+		log.Warn("left the old Blendeck sign-in entry as it is", "error", err)
+	} else if moved {
+		log.Info("moved the Blendeck sign-in entry to Consort", "command", start.Command())
+	}
 
 	// Everything that holds a device, socket or file stops when ctx ends;
 	// wg says when it has.
@@ -173,14 +180,14 @@ func run() error {
 			// Keep running without it; the page still works. Built for
 			// Windows there would be no other sign it's running.
 			log.Error("no tray icon", "error", err)
-			go tray.Alert("Blendeck is running, but couldn't put its icon in the notification area:\n" +
-				err.Error() + "\n\nThe page is at " + url + ". To quit Blendeck, end blendeck.exe in Task Manager.")
+			go tray.Alert("Consort is running, but couldn't put its icon in the notification area:\n" +
+				err.Error() + "\n\nThe page is at " + url + ". To quit Consort, end consort.exe in Task Manager.")
 		default:
 			cancel() // Quit, or Close below
 		}
 	}()
 
-	log.Info("blendeck running", "version", version, "page", url, "config", store.Path(), "blender_link", *linkAddr)
+	log.Info("consort running", "version", version, "page", url, "config", store.Path(), "blender_link", *linkAddr)
 	if !*noBrowser {
 		openBrowser(url)
 	}
@@ -222,7 +229,7 @@ func tooltip(s app.Snapshot) string {
 	if s.Blender.Connected {
 		blender = "connected"
 	}
-	return "Blendeck\nController: " + ctl + "\nBlender: " + blender
+	return "Consort\nController: " + ctl + "\nBlender: " + blender
 }
 
 // console writes to stderr when there is one; built for Windows there isn't,
@@ -268,9 +275,26 @@ func defaultConfigPath() string {
 		}
 	}
 	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "blendeck", "config.json")
+		return userConfigPath(dir)
 	}
 	return "config.json"
+}
+
+// userConfigPath is the config in the user config folder dir. Before the
+// rename to Consort it lived under "blendeck": while there is no new one, the
+// old one is kept in use (with the log next to it), so profiles, bindings and
+// learned controls carry over.
+func userConfigPath(dir string) string {
+	path := filepath.Join(dir, "consort", "config.json")
+	if old := filepath.Join(dir, "blendeck", "config.json"); !fileExists(path) && fileExists(old) {
+		return old
+	}
+	return path
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 // isGoRunTemp is true for binaries built by `go run`, which live in a temp

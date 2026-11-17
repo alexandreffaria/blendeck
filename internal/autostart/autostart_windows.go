@@ -9,7 +9,11 @@ import (
 const supported = true
 
 // read returns the entry's value, or "" when there is none.
-func (e *Entry) read() (string, error) {
+func (e *Entry) read() (string, error) { return e.readValue(e.name) }
+
+// readValue returns the value name under the entry's key, or "" when there is
+// none.
+func (e *Entry) readValue(name string) (string, error) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, e.key, registry.QUERY_VALUE)
 	if errors.Is(err, registry.ErrNotExist) {
 		return "", nil
@@ -18,7 +22,7 @@ func (e *Entry) read() (string, error) {
 		return "", err
 	}
 	defer k.Close()
-	v, _, err := k.GetStringValue(e.name)
+	v, _, err := k.GetStringValue(name)
 	if errors.Is(err, registry.ErrNotExist) {
 		return "", nil
 	}
@@ -34,7 +38,9 @@ func (e *Entry) write() error {
 	return k.SetStringValue(e.name, e.command)
 }
 
-func (e *Entry) remove() error {
+// deleteValue removes the value name under the entry's key; one that isn't
+// there is fine.
+func (e *Entry) deleteValue(name string) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, e.key, registry.SET_VALUE)
 	if errors.Is(err, registry.ErrNotExist) {
 		return nil
@@ -43,7 +49,7 @@ func (e *Entry) remove() error {
 		return err
 	}
 	defer k.Close()
-	if err := k.DeleteValue(e.name); err != nil && !errors.Is(err, registry.ErrNotExist) {
+	if err := k.DeleteValue(name); err != nil && !errors.Is(err, registry.ErrNotExist) {
 		return err
 	}
 	return nil

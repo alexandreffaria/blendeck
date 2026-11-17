@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Blendeck</title>
+<title>Consort</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='4' y='8' width='40' height='34' rx='11' fill='%232b303a'/%3E%3Ccircle cx='24' cy='22' r='11' fill='%23f6b649'/%3E%3Cellipse cx='20' cy='22' rx='1.7' ry='2.1' fill='%2321180a'/%3E%3Cellipse cx='28' cy='22' rx='1.7' ry='2.1' fill='%2321180a'/%3E%3Cpath d='M20.5 26q3.5 2.6 7 0' stroke='%2321180a' stroke-width='1.7' fill='none' stroke-linecap='round'/%3E%3Crect x='12' y='35' width='8' height='3' rx='1.5' fill='%2372e3bd'/%3E%3Crect x='28' y='35' width='8' height='3' rx='1.5' fill='%234a5160'/%3E%3C/svg%3E">
 <style>
 :root {
@@ -220,7 +220,7 @@ tr.flash td { animation: flash 600ms ease-out; }
         </g>
         <text class="zz" x="38" y="9">z</text><text class="zz" x="43" y="4" style="font-size:7px">z</text>
       </svg>
-      <h1>Blendeck</h1><span class="ver" id="version"></span>
+      <h1>Consort</h1><span class="ver" id="version"></span>
     </div>
     <span id="held"></span>
     <span class="pill" id="midiPill"><span class="dot"></span><span id="midiText">Controller</span></span>
@@ -233,7 +233,7 @@ tr.flash td { animation: flash 600ms ease-out; }
     <div id="blenderOff" class="offline">
       <div>
         <h2>Blender isn't connected</h2>
-        <p class="hint">Install the Blendeck extension in Blender (Edit › Preferences › Get Extensions › Install from Disk, pick <code>blendeck-addon.zip</code>). It connects by itself while this program runs.</p>
+        <p class="hint">Install the Consort extension in Blender (Edit › Preferences › Get Extensions › Install from Disk, pick <code>consort-addon.zip</code>). It connects by itself while this program runs.</p>
       </div>
     </div>
     <div id="blenderOn" hidden>
@@ -379,7 +379,7 @@ tr.flash td { animation: flash 600ms ease-out; }
         <div class="sheet-head"><h3>Startup</h3></div>
         <div class="device">
           <label class="check"><input type="checkbox" id="autostart"> Start with Windows</label>
-          <p class="hint">Blendeck waits in the notification area. Click its icon for this page, right-click it to quit.</p>
+          <p class="hint">Consort waits in the notification area. Click its icon for this page, right-click it to quit.</p>
         </div>
       </section>
     </aside>
@@ -1036,7 +1036,7 @@ function connectEvents() {
     if (data.events.some((ev) => ev.hit.modifier)) renderModifiers();
   };
   es.onerror = () => {
-    $('midiPill').className = 'pill bad'; $('midiText').textContent = 'Blendeck not running';
+    $('midiPill').className = 'pill bad'; $('midiText').textContent = 'Consort not running';
     $('blenderPill').className = 'pill bad'; $('blenderText').textContent = '—';
     $('mascot').classList.add('sleepy');
     $('tests').disabled = true;
@@ -1062,7 +1062,7 @@ $('autostart').onchange = async (e) => {
   e.target.disabled = true;
   try {
     renderAutostart(await api('PUT', '/api/autostart', { enabled: want }));
-    toast(want ? 'Blendeck starts with Windows' : 'Blendeck no longer starts with Windows');
+    toast(want ? 'Consort starts with Windows' : 'Consort no longer starts with Windows');
   } catch (err) {
     e.target.checked = !want;
     toast('Could not change it: ' + err.message, true);

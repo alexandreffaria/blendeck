@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandreffaria/blendeck/internal/config"
-	"github.com/alexandreffaria/blendeck/internal/midi"
+	"github.com/alexandreffaria/consort/internal/config"
+	"github.com/alexandreffaria/consort/internal/midi"
 )
 
 // Command is what the bridge sends to Blender: {"type":"scrub","frames":N}

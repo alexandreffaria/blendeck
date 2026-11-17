@@ -83,7 +83,7 @@ const (
 // state is what the tray's thread keeps.
 type state struct{ nid notifyIconData }
 
-var className = windows.StringToUTF16Ptr("BlendeckTray")
+var className = windows.StringToUTF16Ptr("ConsortTray")
 
 type wndClassEx struct {
 	size       uint32
@@ -183,7 +183,7 @@ func (t *Tray) Run() error {
 	}
 	inst, _, _ := procGetModuleHandleW.Call(0)
 	hwnd, _, err := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(className)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Blendeck"))), 0, 0, 0, 0, 0, 0, 0, inst, 0)
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Consort"))), 0, 0, 0, 0, 0, 0, 0, inst, 0)
 	if hwnd == 0 {
 		return fmt.Errorf("create tray window: %w", err)
 	}
@@ -315,7 +315,7 @@ func (t *Tray) showMenu() {
 		appendItem(menu, flags, cmdAutostart, "Start with Windows")
 	}
 	appendItem(menu, mfSeparator, 0, "")
-	appendItem(menu, mfString, cmdQuit, "Quit Blendeck")
+	appendItem(menu, mfString, cmdQuit, "Quit Consort")
 
 	var pt point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
@@ -333,7 +333,7 @@ func (t *Tray) showMenu() {
 		on, _ := a.Enabled()
 		if err := a.Set(!on); err != nil {
 			t.opts.Log.Error("set start with Windows", "error", err)
-			messageBox("Blendeck couldn't change \"Start with Windows\":\n" + err.Error())
+			messageBox("Consort couldn't change \"Start with Windows\":\n" + err.Error())
 		} else {
 			t.opts.Log.Info("start with Windows", "on", !on)
 		}
@@ -370,7 +370,7 @@ func loadIcon(ico []byte) (uintptr, error) {
 
 func messageBox(text string) {
 	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(text))),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Blendeck"))), mbIconWarn)
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Consort"))), mbIconWarn)
 }
 
 // Alert shows a message box; for errors when there is no console to print to.

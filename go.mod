@@ -1,4 +1,4 @@
-module github.com/alexandreffaria/blendeck
+module github.com/alexandreffaria/consort
 
 go 1.26.5
 

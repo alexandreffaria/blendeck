@@ -14,7 +14,7 @@ import (
 
 // Icon is the mascot (scripts/mkicon draws it).
 //
-//go:embed blendeck.ico
+//go:embed consort.ico
 var Icon []byte
 
 // ErrUnsupported is returned by Run where there is no tray.
@@ -60,7 +60,7 @@ func New(opts Options) *Tray {
 		opts.Log = slog.New(slog.DiscardHandler)
 	}
 	if opts.Tooltip == nil {
-		opts.Tooltip = func() string { return "Blendeck" }
+		opts.Tooltip = func() string { return "Consort" }
 	}
 	if opts.OpenPage == nil {
 		opts.OpenPage = func() {}
