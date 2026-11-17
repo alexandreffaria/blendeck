@@ -1,7 +1,7 @@
 # Consort
 
 Use a Loupedeck+ (or any MIDI controller) with Blender's video editor.
-(It was called Blendeck until it started driving more than Blender.)
+(It used to be called Blendeck; it was renamed because it will drive more than Blender.)
 
 The Loupedeck software doesn't support Blender, but the Loupedeck+ shows up
 as a plain MIDI device. Consort reads it directly: a small program (the
